@@ -2152,7 +2152,7 @@ function Login({ onSubmit }: { onSubmit: (event: FormEvent<HTMLFormElement>) => 
           <button className="primary login-button">Entrar no Gerivo</button>
 
           <footer className="login-footer">
-            <span>Gerivo v1.5</span>
+            <span>Gerivo v1.6.1</span>
             <span>© Gerivo — Sistema desenvolvido por Petrick Maciel</span>
           </footer>
         </form>
