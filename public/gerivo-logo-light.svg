@@ -1,0 +1,8 @@
+<svg width="520" height="150" viewBox="0 0 520 150" fill="none" xmlns="http://www.w3.org/2000/svg">
+<defs><linearGradient id="a" x1="18" y1="16" x2="133" y2="137" gradientUnits="userSpaceOnUse"><stop stop-color="#238A74"/><stop offset="1" stop-color="#0D4B40"/></linearGradient></defs>
+<rect x="8" y="8" width="134" height="134" rx="35" fill="url(#a)"/>
+<path d="M108 57C99 43 88 37 73 37C51 37 36 53 36 76C36 99 52 115 75 115C94 115 109 105 116 88V70H74V85H98C93 94 85 99 75 99C61 99 52 90 52 76C52 62 61 53 74 53C84 53 91 57 96 64L108 57Z" fill="white"/>
+<path d="M87 112L119 94" stroke="white" stroke-width="9" stroke-linecap="round"/>
+<text x="168" y="76" fill="white" font-family="Inter,Segoe UI,Arial" font-size="54" font-weight="800" letter-spacing="-2">GERIVO</text>
+<text x="170" y="108" fill="#9FDDD0" font-family="Inter,Segoe UI,Arial" font-size="18" font-weight="700" letter-spacing="1.4">GERIR  •  EVOLUIR</text>
+</svg>
