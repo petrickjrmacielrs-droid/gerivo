@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Gerivo",
-  description: "Seu negócio. Seu sistema.",
+  description: "Gestão que gera resultados.",
   icons: { icon: "/gerivo-mark.png" },
 };
 
@@ -11,7 +11,7 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
-  themeColor: "#061a35",
+  themeColor: "#0B1F3A",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

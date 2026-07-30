@@ -9,14 +9,58 @@ import {
   useRef,
   useState,
 } from "react";
+import { getSupabaseBrowserClient } from "../lib/supabase";
 
-type Page = "dashboard" | "management" | "catalog" | "checklist" | "orders" | "quotes";
-type SettingsTab = "IDENTITY" | "MODULES" | "CHECKLIST" | "QUOTES";
-type IconName = "home" | "clipboard" | "wrench" | "file" | "settings" | "layers" | "menu" | "store" | "user" | "logout" | "chevron" | "eye" | "eyeOff" | "car" | "users" | "modules" | "trash" | "camera";
-type CompanyModule = "CATALOG" | "CHECKLIST" | "ORDERS" | "QUOTES";
+type Page =
+  | "dashboard"
+  | "appointments"
+  | "checklist"
+  | "orders"
+  | "quotes"
+  | "assistant"
+  | "management"
+  | "catalog"
+  | "inventory"
+  | "master";
+type SettingsTab = "IDENTITY" | "MODULES" | "CHECKLIST" | "QUOTES" | "PRICING";
+type IconName =
+  | "home"
+  | "clipboard"
+  | "wrench"
+  | "file"
+  | "settings"
+  | "layers"
+  | "menu"
+  | "store"
+  | "user"
+  | "logout"
+  | "chevron"
+  | "eye"
+  | "eyeOff"
+  | "car"
+  | "users"
+  | "modules"
+  | "trash"
+  | "camera"
+  | "calendar"
+  | "box"
+  | "sparkle"
+  | "chart"
+  | "shield"
+  | "truck"
+  | "image";
+type CompanyModule = "APPOINTMENTS" | "CATALOG" | "INVENTORY" | "CHECKLIST" | "ORDERS" | "QUOTES" | "ASSISTANT";
 type CompanyProfile = "FULL" | "QUOTE_ONLY" | "CUSTOM";
 type QuoteDeliveryMode = "LINK" | "MESSAGE" | "BOTH";
-type ReportMode = "SUMMARY" | "FULL";
+type ReportMode = "SUMMARY" | "FULL" | "MODULAR";
+type ReportConfig = {
+  includeCustomer: boolean;
+  stageIds: StageId[];
+  includeTechnicalReport: boolean;
+  includeGeneralPhotos: boolean;
+  includeItemPhotos: boolean;
+  includeSignatures: boolean;
+};
 type StageId = "checkin" | "checkup" | "quality" | "checkout";
 type CheckupType = "REVISAO" | "DIAGNOSTICO";
 type StartTarget = "CHECKLIST" | "ORDER" | "QUOTE";
@@ -30,7 +74,25 @@ type AttendanceStatus =
   | "AGUARDANDO_CHECKOUT"
   | "CHECKOUT"
   | "CONCLUIDO";
-type ResponseMode = "CONDITION" | "PRESENCE" | "YES_NO" | "WASH";
+type ResponseMode =
+  | "CONDITION"
+  | "PRESENCE"
+  | "YES_NO"
+  | "WASH"
+  | "MATS"
+  | "PRESENCE_DAMAGE"
+  | "AIR_CONDITIONING"
+  | "BELONGINGS"
+  | "TIRE"
+  | "SIDE_TRIM"
+  | "MIRROR"
+  | "OK_DAMAGE_OTHER"
+  | "OK_DAMAGE_NA"
+  | "GOOD_OTHER"
+  | "GOOD_NA"
+  | "TOOLS"
+  | "MILEAGE"
+  | "FUEL";
 type ItemValue =
   | "PENDENTE"
   | "BOM"
@@ -40,9 +102,16 @@ type ItemValue =
   | "SIM"
   | "NAO"
   | "AVARIADO"
+  | "AVARIA"
+  | "INCOMPLETO"
+  | "NORMAL"
+  | "MAL_ODOR"
+  | "NAO_POSSUI"
+  | "OK"
   | "EXPRESSA"
   | "OUTRO";
-type CatalogKind = "SERVICO" | "PRODUTO" | "PECA";
+type CatalogKind = "SERVICO" | "PRODUTO" | "PECA" | "KIT" | "MATERIAL";
+type MarginMode = "GENERAL" | "INDIVIDUAL";
 type ServiceOrderStatus = "ABERTA" | "FECHADA" | "PENDENTE" | "INCOMPLETA";
 type QuoteStatus =
   | "ABERTO"
@@ -58,13 +127,40 @@ type OrderListStatus = "TODOS" | ServiceOrderStatus;
 type QuoteListStatus = "TODOS" | QuoteStatus;
 type PaymentMethod = "PIX" | "DEBITO" | "CREDITO" | "DINHEIRO" | "OUTRO";
 type QuoteMessageTemplate = "PROFISSIONAL" | "DIRETA" | "CONSULTIVA" | "PREVENTIVA";
+type AppointmentStatus = "AGENDADO" | "CONFIRMADO" | "EM_ATENDIMENTO" | "CONCLUIDO" | "CANCELADO";
+type AppointmentSettings = {
+  startTime: string;
+  endTime: string;
+  slotMinutes: 15 | 30 | 60;
+  defaultDurationMinutes: number;
+  professionals: string[];
+  workingDays: number[];
+  allowOverlap: boolean;
+};
+type AppointmentBlock = {
+  id: string;
+  storeId: string;
+  professional: string | null;
+  startsAt: string;
+  endsAt: string;
+  reason: string;
+};
 
-type Store = { id: string; name: string };
+type Store = {
+  id: string;
+  publicCode: number;
+  name: string;
+  companyId: string;
+  companyName: string;
+  segment: string;
+  role: string;
+};
 type ServiceType = { id: string; name: string; active: boolean };
 type CompanyIdentity = {
   displayName: string;
   logo: string;
   sidebarColor: string;
+  selectionColor: string;
 };
 type DocumentLine = {
   id: string;
@@ -101,17 +197,55 @@ type TechnicalReport = {
   conclusion: string;
 };
 type StartFlowState = { open: boolean; target: StartTarget };
-type UserProfile = { preferredName: string; phone: string; email: string; photo: string };
+type UserProfile = {
+  preferredName: string;
+  username: string;
+  phone: string;
+  email: string;
+  photo: string;
+};
 type Photo = { id: string; name: string; dataUrl: string; createdAt: string };
+type Supplier = {
+  id: string;
+  name: string;
+  document: string;
+  phone: string;
+  email: string;
+  paymentTerms: string;
+  leadTimeDays: number;
+  active: boolean;
+};
 type CatalogItem = {
   id: string;
   name: string;
   category: string;
   kind: CatalogKind;
   price: number;
+  cost: number;
+  marginMode: MarginMode;
+  individualMargin: number | null;
+  image: string;
+  referenceImage: string;
+  sku: string;
+  stock: number;
+  minimumStock: number;
+  supplierId: string | null;
   active: boolean;
   standard: boolean;
   serviceTypeId?: string;
+};
+type Appointment = {
+  id: string;
+  storeId: string;
+  customerId: string | null;
+  customer: string;
+  phone: string;
+  title: string;
+  professional: string;
+  startsAt: string;
+  durationMinutes: number;
+  status: AppointmentStatus;
+  notes: string;
 };
 type TemplateItem = {
   key: string;
@@ -184,6 +318,7 @@ type CompanySettings = {
   modules: Record<CompanyModule, boolean>;
   quoteDeliveryMode: QuoteDeliveryMode;
   quoteMessageTemplate: QuoteMessageTemplate;
+  generalMargin: number;
 };
 type ServiceOrder = {
   id: string;
@@ -235,6 +370,10 @@ type StoreData = {
   customers: Customer[];
   vehicles: Vehicle[];
   catalog: CatalogItem[];
+  suppliers: Supplier[];
+  appointments: Appointment[];
+  appointmentSettings: AppointmentSettings;
+  appointmentBlocks: AppointmentBlock[];
   serviceTypes: ServiceType[];
   checklistSettings: ChecklistSettings;
   companySettings: CompanySettings;
@@ -244,121 +383,151 @@ type StoreData = {
   quotes: Quote[];
 };
 
-const STORES: Store[] = [
-  { id: "rs-performance", name: "RS Performance" },
-  { id: "iesa-nissan", name: "IESA Nissan" },
-  { id: "demo", name: "Oficina Demonstração" },
-];
+const EMPTY_STORE_ID = "pending";
+const EMPTY_STORE: Store = {
+  id: EMPTY_STORE_ID,
+  publicCode: 0,
+  name: "Carregando...",
+  companyId: "",
+  companyName: "",
+  segment: "OUTRO",
+  role: "MEMBER",
+};
 
-const NAV: Array<{ id: Page; label: string; icon: IconName; module?: CompanyModule; hidden?: boolean }> = [
+const NAV: Array<{ id: Page; label: string; icon: IconName; module?: CompanyModule; hidden?: boolean; masterOnly?: boolean }> = [
   { id: "dashboard", label: "Tela inicial", icon: "home" },
+  { id: "appointments", label: "Agendamentos", icon: "calendar", module: "APPOINTMENTS" },
   { id: "checklist", label: "Checklist", icon: "clipboard", module: "CHECKLIST" },
   { id: "orders", label: "Ordens de serviço", icon: "wrench", module: "ORDERS" },
   { id: "quotes", label: "Orçamentos", icon: "file", module: "QUOTES" },
+  { id: "assistant", label: "Assistente Gerivo", icon: "sparkle", module: "ASSISTANT" },
   { id: "management", label: "Gestão", icon: "settings" },
-  { id: "catalog", label: "Itens e serviços", icon: "layers", module: "CATALOG", hidden: true },
+  { id: "master", label: "Gerivo MASTER", icon: "shield", masterOnly: true },
+  { id: "catalog", label: "Catálogo", icon: "layers", module: "CATALOG", hidden: true },
+  { id: "inventory", label: "Estoque", icon: "box", module: "INVENTORY", hidden: true },
 ];
 
+function isDeliverySegment(segment: string) {
+  const normalized = segment.toUpperCase();
+  return normalized === "DEMO_DELIVERY" || normalized === "DELIVERY" || normalized === "DELIVERY_COMIDA";
+}
+
+function navigationLabel(item: (typeof NAV)[number], segment: string) {
+  if (item.id === "appointments" && isDeliverySegment(segment)) return "Pedidos";
+  return item.label;
+}
+
 const MODULE_INFO: Record<CompanyModule, { label: string; description: string }> = {
-  CATALOG: { label: "Itens e serviços", description: "Catálogo, preços e serviços padrão da empresa." },
-  CHECKLIST: { label: "Checklist", description: "Check-in, Check-up, Check-out, fotos e relatórios." },
+  APPOINTMENTS: { label: "Agendamentos", description: "Agenda, profissionais, confirmações e capacidade." },
+  CATALOG: { label: "Catálogo", description: "Produtos, serviços, materiais, kits e formação de preço." },
+  INVENTORY: { label: "Estoque", description: "Saldo, compras, fornecedores e movimentações." },
+  CHECKLIST: { label: "Checklist", description: "Check-in, Check-up, qualidade, Check-out e relatórios." },
   ORDERS: { label: "Ordens de serviço", description: "Execução, responsáveis, andamento e entrega." },
-  QUOTES: { label: "Orçamentos", description: "Criação, mensagem comercial e aprovação pelo cliente." },
+  QUOTES: { label: "Orçamentos", description: "Propostas, condições comerciais e aprovação." },
+  ASSISTANT: { label: "Assistente Gerivo", description: "Análises consultivas dos dados autorizados." },
 };
 
+function catalogSeedItem(
+  name: string,
+  category: string,
+  kind: CatalogKind,
+  price: number,
+  serviceTypeId?: string,
+): Omit<CatalogItem, "id" | "active"> {
+  return {
+    name,
+    category,
+    kind,
+    price,
+    cost: kind === "SERVICO" ? 0 : Number((price * 0.62).toFixed(2)),
+    marginMode: "GENERAL",
+    individualMargin: null,
+    image: "",
+    referenceImage: "",
+    sku: "",
+    stock: kind === "SERVICO" ? 0 : 10,
+    minimumStock: kind === "SERVICO" ? 0 : 3,
+    supplierId: null,
+    standard: true,
+    serviceTypeId,
+  };
+}
+
 const STANDARD_SERVICE_LIBRARY: Array<Omit<CatalogItem, "id" | "active">> = [
-  { name: "Troca de óleo do motor", category: "Manutenção", kind: "SERVICO", price: 180, standard: true, serviceTypeId: "manutencao" },
-  { name: "Alinhamento", category: "Pneus e geometria", kind: "SERVICO", price: 120, standard: true, serviceTypeId: "pneus-geometria" },
-  { name: "Balanceamento", category: "Pneus e geometria", kind: "SERVICO", price: 35, standard: true, serviceTypeId: "pneus-geometria" },
-  { name: "Diagnóstico eletrônico", category: "Diagnóstico", kind: "SERVICO", price: 150, standard: true, serviceTypeId: "diagnostico" },
-  { name: "Revisão preventiva", category: "Revisão", kind: "SERVICO", price: 250, standard: true, serviceTypeId: "revisao" },
+  catalogSeedItem("Troca de óleo do motor", "Manutenção", "SERVICO", 180, "manutencao"),
+  catalogSeedItem("Alinhamento", "Pneus e geometria", "SERVICO", 120, "pneus-geometria"),
+  catalogSeedItem("Balanceamento", "Pneus e geometria", "SERVICO", 35, "pneus-geometria"),
+  catalogSeedItem("Diagnóstico eletrônico", "Diagnóstico", "SERVICO", 150, "diagnostico"),
+  catalogSeedItem("Revisão preventiva", "Revisão", "SERVICO", 250, "revisao"),
 ];
 
 const CHECKLIST_TEMPLATE: StageTemplate[] = [
   {
     id: "checkin",
     label: "Check-in",
-    description: "Inspeção interna e volta externa 360° organizada por regiões do veículo.",
+    description: "Recepção do veículo em cinco passos objetivos.",
     groups: [
       {
-        key: "interior",
-        label: "1. Interior e pertences",
+        key: "driver-interior",
+        label: "Passo 1 — Dentro do veículo no motorista",
         items: [
-          { key: "interior-dashboard", label: "Painel e console", mode: "CONDITION", photoRecommended: true },
-          { key: "front-seats", label: "Bancos dianteiros", mode: "CONDITION", photoRecommended: true },
-          { key: "rear-seats", label: "Bancos traseiros", mode: "CONDITION", photoRecommended: true },
-          { key: "mats", label: "Tapetes", mode: "PRESENCE" },
-          { key: "interior-trim", label: "Forros e acabamentos internos", mode: "CONDITION", photoRecommended: true },
-          { key: "sound", label: "Som / multimídia", mode: "CONDITION" },
-          { key: "air-conditioning", label: "Ar-condicionado", mode: "CONDITION" },
-          { key: "belongings", label: "Pertences dentro do veículo?", mode: "YES_NO", photoRecommended: true },
+          { key: "mileage", label: "KM", mode: "MILEAGE" },
+          { key: "fuel", label: "Nível de combustível", mode: "FUEL" },
+          { key: "mats", label: "Tapetes", mode: "MATS" },
+          { key: "sound", label: "Som/Multimídia", mode: "PRESENCE_DAMAGE" },
+          { key: "air-conditioning", label: "Ar condicionado", mode: "AIR_CONDITIONING" },
+          { key: "owner-manual", label: "Manual", mode: "PRESENCE_DAMAGE" },
+          { key: "vehicle-doc", label: "Documento", mode: "PRESENCE_DAMAGE" },
+          { key: "interior-belongings", label: "Pertences?", mode: "BELONGINGS", photoRecommended: true },
         ],
       },
       {
         key: "left-side",
-        label: "2. Lateral esquerda",
+        label: "Passo 2 — Lateral esquerda",
         items: [
-          { key: "wheel-fl", label: "01 · Roda dianteira esquerda", mode: "CONDITION", photoRecommended: true },
-          { key: "body-front-left", label: "02 · Para-lama dianteiro esquerdo", mode: "CONDITION", photoRecommended: true },
-          { key: "door-front-left", label: "03 · Porta dianteira esquerda", mode: "CONDITION", photoRecommended: true },
-          { key: "door-rear-left", label: "04 · Porta traseira esquerda", mode: "CONDITION", photoRecommended: true },
-          { key: "body-rear-left", label: "05 · Lateral traseira esquerda", mode: "CONDITION", photoRecommended: true },
-          { key: "wheel-rl", label: "06 · Roda traseira esquerda", mode: "CONDITION", photoRecommended: true },
-        ],
-      },
-      {
-        key: "rear-trunk",
-        label: "3. Traseira e porta-malas",
-        items: [
-          { key: "body-rear", label: "07 · Para-choque traseiro", mode: "CONDITION", photoRecommended: true },
-          { key: "body-trunk", label: "08 · Tampa traseira / porta-malas", mode: "CONDITION", photoRecommended: true },
-          { key: "taillights", label: "09 · Lanternas traseiras", mode: "CONDITION" },
-          { key: "triangle", label: "Triângulo", mode: "PRESENCE" },
-          { key: "jack", label: "Macaco", mode: "PRESENCE" },
-          { key: "wheel-wrench", label: "Chave de roda", mode: "PRESENCE" },
-        ],
-      },
-      {
-        key: "right-side",
-        label: "4. Lateral direita",
-        items: [
-          { key: "wheel-rr", label: "10 · Roda traseira direita", mode: "CONDITION", photoRecommended: true },
-          { key: "body-rear-right", label: "11 · Lateral traseira direita", mode: "CONDITION", photoRecommended: true },
-          { key: "door-rear-right", label: "12 · Porta traseira direita", mode: "CONDITION", photoRecommended: true },
-          { key: "door-front-right", label: "13 · Porta dianteira direita", mode: "CONDITION", photoRecommended: true },
-          { key: "body-front-right", label: "14 · Para-lama dianteiro direito", mode: "CONDITION", photoRecommended: true },
-          { key: "wheel-fr", label: "15 · Roda dianteira direita", mode: "CONDITION", photoRecommended: true },
+          { key: "left-rear-tire", label: "Pneu traseiro", mode: "TIRE", photoRecommended: true },
+          { key: "left-side-trim", label: "Friso lateral", mode: "SIDE_TRIM" },
+          { key: "left-front-tire", label: "Pneu dianteiro", mode: "TIRE", photoRecommended: true },
+          { key: "left-mirror", label: "Retrovisor", mode: "MIRROR", photoRecommended: true },
         ],
       },
       {
         key: "front",
-        label: "5. Dianteira",
+        label: "Passo 3 — Dianteira",
         items: [
-          { key: "body-front", label: "16 · Para-choque dianteiro", mode: "CONDITION", photoRecommended: true },
-          { key: "body-hood", label: "17 · Capô", mode: "CONDITION", photoRecommended: true },
-          { key: "headlights", label: "18 · Faróis", mode: "CONDITION" },
-          { key: "fog-lights", label: "19 · Faróis de neblina", mode: "CONDITION" },
-          { key: "windshield", label: "20 · Para-brisa", mode: "CONDITION", photoRecommended: true },
-          { key: "wipers", label: "21 · Palhetas do para-brisa", mode: "CONDITION" },
+          { key: "front-bumper", label: "Parachoque", mode: "OK_DAMAGE_OTHER", photoRecommended: true },
+          { key: "hood", label: "Capô", mode: "GOOD_OTHER", photoRecommended: true },
+          { key: "front-lighting", label: "Iluminação", mode: "OK_DAMAGE_OTHER" },
+          { key: "headlights", label: "Farois", mode: "OK_DAMAGE_OTHER", photoRecommended: true },
+          { key: "fog-lights", label: "Farois de neblina", mode: "OK_DAMAGE_NA" },
+          { key: "skid-plate", label: "Protetor de cárter", mode: "YES_NO" },
+          { key: "front-wipers", label: "Palhetas", mode: "GOOD_OTHER" },
+          { key: "windshield", label: "Para-brisa", mode: "OK_DAMAGE_OTHER", photoRecommended: true },
         ],
       },
       {
-        key: "upper",
-        label: "6. Vidros, retrovisores e teto",
+        key: "right-side",
+        label: "Passo 4 — Lateral direita",
         items: [
-          { key: "side-windows", label: "Vidros laterais", mode: "CONDITION", photoRecommended: true },
-          { key: "mirrors", label: "Retrovisores", mode: "CONDITION", photoRecommended: true },
-          { key: "body-roof", label: "Teto", mode: "CONDITION", photoRecommended: true },
+          { key: "right-front-tire", label: "Pneu dianteiro", mode: "TIRE", photoRecommended: true },
+          { key: "right-side-trim", label: "Friso lateral", mode: "SIDE_TRIM" },
+          { key: "right-rear-tire", label: "Pneu traseiro", mode: "TIRE", photoRecommended: true },
+          { key: "right-mirror", label: "Retrovisor", mode: "MIRROR", photoRecommended: true },
         ],
       },
       {
-        key: "information",
-        label: "7. Informações finais",
+        key: "rear",
+        label: "Passo 5 — Traseira",
         items: [
-          { key: "vehicle-doc", label: "Documento do veículo", mode: "PRESENCE" },
-          { key: "owner-manual", label: "Manual do proprietário", mode: "PRESENCE" },
-          { key: "wash-request", label: "Realizar lavagem?", mode: "WASH" },
-          { key: "road-test-in", label: "Teste de rodagem inicial realizado?", mode: "YES_NO" },
+          { key: "rear-bumper", label: "Parachoque", mode: "OK_DAMAGE_OTHER", photoRecommended: true },
+          { key: "rear-lid", label: "Tampa", mode: "OK_DAMAGE_OTHER", photoRecommended: true },
+          { key: "rear-glass", label: "Vidro traseiro", mode: "OK_DAMAGE_OTHER", photoRecommended: true },
+          { key: "rear-wiper", label: "Palheta", mode: "GOOD_NA" },
+          { key: "spare-tire", label: "Estepe", mode: "GOOD_NA", photoRecommended: true },
+          { key: "triangle", label: "Triangulo", mode: "TOOLS" },
+          { key: "jack", label: "Macaco", mode: "TOOLS" },
+          { key: "wheel-wrench", label: "Chave de roda", mode: "TOOLS" },
+          { key: "rear-belongings", label: "Pertences?", mode: "BELONGINGS", photoRecommended: true },
         ],
       },
     ],
@@ -522,39 +691,85 @@ const CHECKLIST_TEMPLATE: StageTemplate[] = [
   },
 ];
 
-const CONDITION_OPTIONS: Array<{ value: ItemValue; label: string; symbol: string }> = [
+type ItemOption = { value: ItemValue; label: string; symbol: string };
+
+const CONDITION_OPTIONS: ItemOption[] = [
   { value: "BOM", label: "Bom", symbol: "✓" },
   { value: "REGULAR", label: "Regular", symbol: "!" },
   { value: "RUIM", label: "Ruim", symbol: "×" },
   { value: "NAO_SE_APLICA", label: "Não se aplica", symbol: "—" },
 ];
-
-const PRESENCE_OPTIONS: Array<{ value: ItemValue; label: string; symbol: string }> = [
+const PRESENCE_OPTIONS: ItemOption[] = [
   { value: "SIM", label: "Sim", symbol: "✓" },
   { value: "NAO", label: "Não", symbol: "×" },
   { value: "AVARIADO", label: "Avariado", symbol: "!" },
 ];
-
-const YES_NO_OPTIONS: Array<{ value: ItemValue; label: string; symbol: string }> = [
+const YES_NO_OPTIONS: ItemOption[] = [
   { value: "SIM", label: "Sim", symbol: "✓" },
   { value: "NAO", label: "Não", symbol: "×" },
 ];
-
-const WASH_OPTIONS: Array<{ value: ItemValue; label: string; symbol: string }> = [
+const WASH_OPTIONS: ItemOption[] = [
   { value: "SIM", label: "Sim", symbol: "✓" },
   { value: "NAO", label: "Não", symbol: "×" },
   { value: "EXPRESSA", label: "Expressa", symbol: "⚡" },
   { value: "OUTRO", label: "Outro", symbol: "+" },
 ];
-
-const CHECKIN_FLOW_STEPS = [
-  { number: "01", groupKey: "interior", label: "Interior", detail: "Cabine e pertences", icon: "interior" },
-  { number: "02", groupKey: "left-side", label: "Lateral esquerda", detail: "Início na roda dianteira", icon: "side-left" },
-  { number: "03", groupKey: "rear-trunk", label: "Traseira", detail: "Porta-malas e equipamentos", icon: "rear" },
-  { number: "04", groupKey: "right-side", label: "Lateral direita", detail: "Da traseira para a dianteira", icon: "side-right" },
-  { number: "05", groupKey: "front", label: "Dianteira", detail: "Frente, faróis e para-brisa", icon: "front" },
-  { number: "06", groupKey: "upper", label: "Vidros e teto", detail: "Partes superiores", icon: "top" },
-  { number: "07", groupKey: "information", label: "Informações", detail: "Documentos e finalização", icon: "info" },
+const MATS_OPTIONS: ItemOption[] = [
+  { value: "SIM", label: "Sim", symbol: "✓" },
+  { value: "NAO", label: "Não", symbol: "×" },
+  { value: "AVARIA", label: "Avaria", symbol: "!" },
+  { value: "INCOMPLETO", label: "Incompleto", symbol: "−" },
+];
+const PRESENCE_DAMAGE_OPTIONS: ItemOption[] = [
+  { value: "SIM", label: "Sim", symbol: "✓" },
+  { value: "NAO", label: "Não", symbol: "×" },
+  { value: "AVARIA", label: "Avaria", symbol: "!" },
+];
+const AIR_CONDITIONING_OPTIONS: ItemOption[] = [
+  { value: "NORMAL", label: "Normal", symbol: "✓" },
+  { value: "RUIM", label: "Ruim", symbol: "×" },
+  { value: "MAL_ODOR", label: "Mal odor", symbol: "!" },
+  { value: "NAO_SE_APLICA", label: "Não se aplica", symbol: "—" },
+  { value: "OUTRO", label: "Outro", symbol: "+" },
+];
+const BELONGINGS_OPTIONS: ItemOption[] = [
+  { value: "SIM", label: "Sim", symbol: "✓" },
+  { value: "NAO", label: "Não", symbol: "×" },
+  { value: "OUTRO", label: "Outro", symbol: "+" },
+];
+const TIRE_OPTIONS: ItemOption[] = [
+  { value: "BOM", label: "Bom", symbol: "✓" },
+  { value: "REGULAR", label: "Regular", symbol: "!" },
+  { value: "RUIM", label: "Ruim", symbol: "×" },
+  { value: "OUTRO", label: "Outro", symbol: "+" },
+];
+const SIDE_TRIM_OPTIONS: ItemOption[] = YES_NO_OPTIONS;
+const MIRROR_OPTIONS: ItemOption[] = [
+  { value: "BOM", label: "Bom", symbol: "✓" },
+  { value: "AVARIADO", label: "Avariado", symbol: "!" },
+  { value: "NAO_POSSUI", label: "Não possui", symbol: "—" },
+];
+const OK_DAMAGE_OTHER_OPTIONS: ItemOption[] = [
+  { value: "OK", label: "OK", symbol: "✓" },
+  { value: "AVARIA", label: "Avaria", symbol: "!" },
+  { value: "OUTRO", label: "Outro", symbol: "+" },
+];
+const OK_DAMAGE_NA_OPTIONS: ItemOption[] = [
+  { value: "OK", label: "OK", symbol: "✓" },
+  { value: "AVARIA", label: "Avaria", symbol: "!" },
+  { value: "NAO_SE_APLICA", label: "Não se aplica", symbol: "—" },
+];
+const GOOD_OTHER_OPTIONS: ItemOption[] = TIRE_OPTIONS;
+const GOOD_NA_OPTIONS: ItemOption[] = [
+  { value: "BOM", label: "Bom", symbol: "✓" },
+  { value: "REGULAR", label: "Regular", symbol: "!" },
+  { value: "RUIM", label: "Ruim", symbol: "×" },
+  { value: "NAO_SE_APLICA", label: "Não se aplica", symbol: "—" },
+];
+const TOOLS_OPTIONS: ItemOption[] = [
+  { value: "SIM", label: "Sim", symbol: "✓" },
+  { value: "NAO", label: "Não", symbol: "×" },
+  { value: "AVARIA", label: "Avaria", symbol: "!" },
 ];
 
 function uid() {
@@ -577,7 +792,7 @@ function seedServiceTypes(): ServiceType[] {
 }
 
 function sidebarIsLight(hex: string) {
-  const safe = /^#[0-9a-f]{6}$/i.test(hex) ? hex : "#0d1b28";
+  const safe = /^#[0-9a-f]{6}$/i.test(hex) ? hex : "#0B1F3A";
   const red = parseInt(safe.slice(1, 3), 16) / 255;
   const green = parseInt(safe.slice(3, 5), 16) / 255;
   const blue = parseInt(safe.slice(5, 7), 16) / 255;
@@ -587,7 +802,7 @@ function sidebarIsLight(hex: string) {
 }
 
 function sidebarThemeVariables(hex: string) {
-  const safe = /^#[0-9a-f]{6}$/i.test(hex) ? hex : "#0d1b28";
+  const safe = /^#[0-9a-f]{6}$/i.test(hex) ? hex : "#0B1F3A";
   const isLight = sidebarIsLight(safe);
   return {
     "--company-sidebar": safe,
@@ -600,6 +815,27 @@ function sidebarThemeVariables(hex: string) {
   };
 }
 
+function adjustHexColor(hex: string, amount: number) {
+  const safe = /^#[0-9a-f]{6}$/i.test(hex) ? hex : "#C89B3C";
+  const channels = [1, 3, 5].map((index) => parseInt(safe.slice(index, index + 2), 16));
+  const adjusted = channels.map((channel) => Math.max(0, Math.min(255, Math.round(channel + amount))));
+  return `#${adjusted.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
+}
+
+function selectionThemeVariables(hex: string) {
+  const safe = /^#[0-9a-f]{6}$/i.test(hex) ? hex : "#C89B3C";
+  const red = parseInt(safe.slice(1, 3), 16);
+  const green = parseInt(safe.slice(3, 5), 16);
+  const blue = parseInt(safe.slice(5, 7), 16);
+  return {
+    "--company-accent": safe,
+    "--primary": safe,
+    "--primary-dark": adjustHexColor(safe, -34),
+    "--primary-soft": `rgba(${red},${green},${blue},.11)`,
+    "--primary-ring": `rgba(${red},${green},${blue},.20)`,
+  };
+}
+
 function quoteMessageTemplateLabel(template: QuoteMessageTemplate) {
   return ({
     PROFISSIONAL: "Profissional",
@@ -609,35 +845,117 @@ function quoteMessageTemplateLabel(template: QuoteMessageTemplate) {
   } as const)[template];
 }
 
-function seedCatalog(): CatalogItem[] {
+function seedSuppliers(segment = "OUTRO"): Supplier[] {
+  const names: Record<string, string> = {
+    DEMO_ROUPAS: "Distribuidora Moda Brasil",
+    OFICINA: "Autopeças Principal",
+    OFICINA_COMPLETA: "Autopeças Principal",
+    DEMO_CONFEITARIA: "Distribuidora Doce Sabor",
+    DEMO_SALAO: "Cosméticos Profissionais",
+    DEMO_ESTETICA: "Produtos Detail Pro",
+    DEMO_DELIVERY: "Distribuidora de Alimentos",
+  };
   return [
-    { id: uid(), name: "Troca de óleo do motor", category: "Manutenção", kind: "SERVICO", price: 180, active: true, standard: true, serviceTypeId: "manutencao" },
-    { id: uid(), name: "Óleo 5W30", category: "Motor", kind: "PRODUTO", price: 58, active: true, standard: false },
-    { id: uid(), name: "Filtro de óleo", category: "Filtros", kind: "PECA", price: 42, active: true, standard: false },
-    { id: uid(), name: "Alinhamento", category: "Pneus e geometria", kind: "SERVICO", price: 120, active: true, standard: true, serviceTypeId: "pneus-geometria" },
+    { id: "supplier-geral", name: names[segment.toUpperCase()] || "Fornecedor principal", document: "", phone: "", email: "", paymentTerms: "28 dias", leadTimeDays: 5, active: true },
   ];
 }
 
-function seedCompanyIdentity(storeId: string): CompanyIdentity {
-  const store = STORES.find((item) => item.id === storeId);
+function buildDemoCatalogItem(
+  name: string,
+  category: string,
+  kind: CatalogKind,
+  price: number,
+  cost: number,
+  stock: number,
+  minimumStock: number,
+  icon: string,
+  sku = "",
+): CatalogItem {
   return {
-    displayName: store?.name ?? "Minha empresa",
-    logo: "",
-    sidebarColor: "#0d1b28",
+    id: uid(),
+    name,
+    category,
+    kind,
+    price,
+    cost,
+    marginMode: "GENERAL",
+    individualMargin: null,
+    image: "",
+    referenceImage: genericCatalogImage(name, icon),
+    sku,
+    stock: kind === "SERVICO" ? 0 : stock,
+    minimumStock: kind === "SERVICO" ? 0 : minimumStock,
+    supplierId: kind === "SERVICO" ? null : "supplier-geral",
+    active: true,
+    standard: true,
   };
 }
 
-function seedCompanySettings(): CompanySettings {
+function seedCatalog(segment = "OUTRO"): CatalogItem[] {
+  const key = segment.toUpperCase();
+  if (key === "DEMO_ROUPAS" || key === "VAREJO") return [
+    buildDemoCatalogItem("Camiseta Premium", "Camisetas", "PRODUTO", 89.9, 38, 24, 6, "👕", "CAM-PREM"),
+    buildDemoCatalogItem("Calça Jeans Slim", "Calças", "PRODUTO", 179.9, 82, 12, 4, "👖", "CAL-JEANS"),
+    buildDemoCatalogItem("Vestido Midi", "Vestidos", "PRODUTO", 219.9, 96, 8, 3, "👗", "VES-MIDI"),
+    buildDemoCatalogItem("Cinto Casual", "Acessórios", "PRODUTO", 69.9, 28, 5, 4, "👜", "CIN-CAS"),
+  ];
+  if (["OFICINA", "OFICINA_COMPLETA", "CONCESSIONARIA", "AUTOPECAS"].includes(key)) return [
+    { ...catalogSeedItem("Troca de óleo do motor", "Manutenção", "SERVICO", 180, "manutencao"), id: uid(), active: true, referenceImage: genericCatalogImage("Troca de óleo", "🔧") },
+    buildDemoCatalogItem("Óleo 5W30", "Motor", "PRODUTO", 58, 36, 12, 4, "🛢️", "OLEO-5W30"),
+    buildDemoCatalogItem("Filtro de óleo", "Filtros", "PECA", 42, 24, 5, 3, "⚙️", "FILTRO-OLEO"),
+    { ...catalogSeedItem("Alinhamento", "Pneus e geometria", "SERVICO", 120, "pneus-geometria"), id: uid(), active: true, referenceImage: genericCatalogImage("Alinhamento", "🚗") },
+  ];
+  if (key === "DEMO_CONFEITARIA" || key === "CONFEITARIA" || key === "PADARIA") return [
+    buildDemoCatalogItem("Bolo de chocolate 1 kg", "Bolos", "PRODUTO", 95, 42, 6, 2, "🎂", "BOLO-CHOC-1K"),
+    buildDemoCatalogItem("Caixa com 12 brigadeiros", "Doces", "PRODUTO", 48, 19, 14, 5, "🍫", "BRIG-12"),
+    buildDemoCatalogItem("Torta de morango", "Tortas", "PRODUTO", 120, 54, 4, 2, "🍓", "TORTA-MOR"),
+    buildDemoCatalogItem("Decoração personalizada", "Adicionais", "SERVICO", 35, 0, 0, 0, "✨"),
+  ];
+  if (key === "DEMO_SALAO" || key === "SALAO_BELEZA") return [
+    buildDemoCatalogItem("Corte feminino", "Cabelos", "SERVICO", 85, 0, 0, 0, "✂️"),
+    buildDemoCatalogItem("Escova", "Cabelos", "SERVICO", 65, 0, 0, 0, "💇"),
+    buildDemoCatalogItem("Manicure", "Unhas", "SERVICO", 42, 0, 0, 0, "💅"),
+    buildDemoCatalogItem("Shampoo profissional", "Produtos", "PRODUTO", 79.9, 38, 9, 3, "🧴", "SHAMP-PRO"),
+  ];
+  if (key === "DEMO_ESTETICA" || key === "ESTETICA_AUTOMOTIVA") return [
+    buildDemoCatalogItem("Lavagem técnica", "Lavagem", "SERVICO", 120, 0, 0, 0, "🚿"),
+    buildDemoCatalogItem("Higienização interna", "Higienização", "SERVICO", 320, 0, 0, 0, "✨"),
+    buildDemoCatalogItem("Polimento comercial", "Polimento", "SERVICO", 450, 0, 0, 0, "🚘"),
+    buildDemoCatalogItem("Cera premium", "Produtos", "PRODUTO", 89, 44, 7, 3, "🧴", "CERA-PREM"),
+  ];
+  if (key === "DEMO_DELIVERY" || key === "DELIVERY") return [
+    buildDemoCatalogItem("Hambúrguer artesanal", "Lanches", "PRODUTO", 32.9, 14, 20, 8, "🍔", "BURG-ART"),
+    buildDemoCatalogItem("Pizza grande", "Pizzas", "PRODUTO", 69.9, 29, 12, 5, "🍕", "PIZ-GRANDE"),
+    buildDemoCatalogItem("Marmita executiva", "Refeições", "PRODUTO", 29.9, 12, 18, 7, "🍱", "MARM-EXEC"),
+    buildDemoCatalogItem("Refrigerante lata", "Bebidas", "PRODUTO", 7, 3.2, 28, 10, "🥤", "REFRI-LATA"),
+  ];
+  return [
+    buildDemoCatalogItem("Produto de demonstração", "Geral", "PRODUTO", 59.9, 30, 10, 3, "📦", "DEMO-001"),
+    buildDemoCatalogItem("Serviço de demonstração", "Serviços", "SERVICO", 120, 0, 0, 0, "🧰"),
+  ];
+}
+
+function seedCompanyIdentity(_storeId: string): CompanyIdentity {
+  return { displayName: "Minha empresa", logo: "", sidebarColor: "#0B1F3A", selectionColor: "#C89B3C" };
+}
+
+function seedCompanySettings(segment = "OUTRO"): CompanySettings {
+  const key = segment.toUpperCase();
+  const modules: Record<CompanyModule, boolean> = {
+    APPOINTMENTS: ["OFICINA", "OFICINA_COMPLETA", "CONCESSIONARIA", "DEMO_CONFEITARIA", "CONFEITARIA", "DEMO_SALAO", "SALAO_BELEZA", "DEMO_ESTETICA", "ESTETICA_AUTOMOTIVA", "DEMO_DELIVERY", "DELIVERY"].includes(key),
+    CATALOG: true,
+    INVENTORY: true,
+    CHECKLIST: ["OFICINA", "OFICINA_COMPLETA", "CONCESSIONARIA", "DEMO_ESTETICA", "ESTETICA_AUTOMOTIVA"].includes(key),
+    ORDERS: ["OFICINA", "OFICINA_COMPLETA", "CONCESSIONARIA", "DEMO_ESTETICA", "ESTETICA_AUTOMOTIVA"].includes(key),
+    QUOTES: key !== "DEMO_DELIVERY" && key !== "DELIVERY",
+    ASSISTANT: true,
+  };
   return {
-    profile: "FULL",
-    modules: {
-      CATALOG: true,
-      CHECKLIST: true,
-      ORDERS: true,
-      QUOTES: true,
-    },
+    profile: "CUSTOM",
+    modules,
     quoteDeliveryMode: "BOTH",
     quoteMessageTemplate: "PROFISSIONAL",
+    generalMargin: 35,
   };
 }
 
@@ -657,77 +975,12 @@ function allTemplateKeys(): Record<StageId, string[]> {
 }
 
 function essentialTemplateKeys(): Record<StageId, string[]> {
+  const keys = allTemplateKeys();
   return {
-    checkin: [
-      "interior-dashboard",
-      "front-seats",
-      "rear-seats",
-      "mats",
-      "belongings",
-      "wash-request",
-      "triangle",
-      "jack",
-      "wheel-wrench",
-      "vehicle-doc",
-      "wheel-fl",
-      "body-front-left",
-      "door-front-left",
-      "door-rear-left",
-      "wheel-rl",
-      "body-rear",
-      "body-trunk",
-      "body-rear-right",
-      "wheel-rr",
-      "door-rear-right",
-      "door-front-right",
-      "body-front-right",
-      "wheel-fr",
-      "body-front",
-      "body-hood",
-      "windshield",
-      "side-windows",
-      "mirrors",
-      "body-roof",
-      "headlights",
-      "taillights",
-      "road-test-in",
-    ],
-    checkup: [
-      "engine-oil",
-      "brake-fluid",
-      "coolant",
-      "engine",
-      "belts",
-      "leaks",
-      "front-brakes",
-      "rear-brakes",
-      "steering",
-      "front-suspension",
-      "rear-suspension",
-      "shocks",
-      "tire-wear",
-      "battery",
-      "road-test-after",
-    ],
-    quality: [
-      "quality-services",
-      "quality-parts",
-      "quality-leaks",
-      "quality-panel",
-      "quality-road-test",
-    ],
-    checkout: [
-      "road-test-final",
-      "parts-shown",
-      "services-explained",
-      "warranty-explained",
-      "values-explained",
-      "vehicle-final",
-      "objects-returned",
-      "out-mileage",
-      "customer-acceptance",
-      "cleaning-done",
-    ],
+    checkin: keys.checkin,
+    checkup: ["engine-oil", "brake-fluid", "coolant", "engine", "leaks", "front-brakes", "rear-brakes", "steering", "front-suspension", "rear-suspension", "shocks", "tire-wear", "battery", "road-test-after"],
+    quality: ["quality-services", "quality-parts", "quality-leaks", "quality-panel", "quality-road-test"],
+    checkout: ["road-test-final", "parts-shown", "services-explained", "warranty-explained", "values-explained", "vehicle-final", "objects-returned", "out-mileage", "customer-acceptance", "cleaning-done"],
   };
 }
 
@@ -745,15 +998,7 @@ function createStages(settings: ChecklistSettings): Stage[] {
     items: template.groups.flatMap((group) =>
       group.items
         .filter((item) => settings.enabledItemKeys[template.id].includes(item.key))
-        .map((item) => ({
-          ...item,
-          id: uid(),
-          categoryKey: group.key,
-          category: group.label,
-          value: "PENDENTE" as ItemValue,
-          note: "",
-          photos: [],
-        })),
+        .map((item) => ({ ...item, id: uid(), categoryKey: group.key, category: group.label, value: "PENDENTE" as ItemValue, note: "", photos: [] })),
     ),
   }));
 }
@@ -761,40 +1006,67 @@ function createStages(settings: ChecklistSettings): Stage[] {
 function createAttendance(settings: ChecklistSettings, sequence: number, storeId: string): Attendance {
   const now = new Date().toISOString();
   return {
-    id: uid(),
-    storeId,
-    customerId: "",
-    vehicleId: "",
-    checkupType: "REVISAO",
+    id: uid(), storeId, customerId: "", vehicleId: "", checkupType: "REVISAO",
     technicalReport: { complaint: "", diagnosis: "", tests: "", recommendation: "", conclusion: "" },
     code: `ATD-${String(sequence).padStart(4, "0")}`,
-    createdAt: now,
-    updatedAt: now,
-    status: "CHECKIN",
-    reception: {
-      customer: "",
-      phone: "",
-      email: "",
-      vehicle: "",
-      plate: "",
-      mileage: "",
-      fuel: "1/2",
-      responsible: "Petrick",
-      osNumber: "",
-      technician: "",
-    },
+    createdAt: now, updatedAt: now, status: "CHECKIN",
+    reception: { customer: "", phone: "", email: "", vehicle: "", plate: "", mileage: "", fuel: "", responsible: "", osNumber: "", technician: "" },
     stages: createStages(settings),
   };
 }
 
-function seedStoreData(storeId: string): StoreData {
+function seedAppointmentSettings(segment = "OUTRO"): AppointmentSettings {
+  const normalized = segment.toUpperCase();
+  const professionals = isDeliverySegment(segment)
+    ? ["Produção", "Entrega"]
+    : normalized.includes("SALAO")
+      ? ["Profissional 1", "Profissional 2"]
+      : normalized.includes("OFICINA") || normalized.includes("CONCESSIONARIA") || normalized.includes("ESTETICA")
+        ? ["Agenda principal", "Atendimento 2"]
+        : ["Agenda principal"];
+  return {
+    startTime: "07:30",
+    endTime: "18:00",
+    slotMinutes: 30,
+    defaultDurationMinutes: 60,
+    professionals,
+    workingDays: [1, 2, 3, 4, 5, 6],
+    allowOverlap: false,
+  };
+}
+
+function normalizeAppointmentSettings(value: Partial<AppointmentSettings> | undefined, segment = "OUTRO"): AppointmentSettings {
+  const fallback = seedAppointmentSettings(segment);
+  const slot = Number(value?.slotMinutes);
+  const professionals = Array.from(new Set((value?.professionals ?? fallback.professionals).map((item) => item.trim()).filter(Boolean)));
+  const workingDays = Array.from(new Set((value?.workingDays ?? fallback.workingDays).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6))).sort();
+  return {
+    startTime: /^\d{2}:\d{2}$/.test(value?.startTime ?? "") ? value!.startTime! : fallback.startTime,
+    endTime: /^\d{2}:\d{2}$/.test(value?.endTime ?? "") ? value!.endTime! : fallback.endTime,
+    slotMinutes: slot === 15 || slot === 60 ? slot : 30,
+    defaultDurationMinutes: Math.max(15, Number(value?.defaultDurationMinutes) || fallback.defaultDurationMinutes),
+    professionals: professionals.length ? professionals : fallback.professionals,
+    workingDays: workingDays.length ? workingDays : fallback.workingDays,
+    allowOverlap: value?.allowOverlap ?? fallback.allowOverlap,
+  };
+}
+
+function seedStoreData(storeId: string, segment = "OUTRO"): StoreData {
+  const hasAgenda = seedCompanySettings(segment).modules.APPOINTMENTS;
+  const delivery = isDeliverySegment(segment);
+  const appointmentSettings = seedAppointmentSettings(segment);
+  const demoAppointments: Appointment[] = hasAgenda ? [{ id: uid(), storeId, customerId: null, customer: "Cliente demonstração", phone: "", title: delivery ? "Pedido demonstrativo" : "Atendimento demonstrativo", professional: appointmentSettings.professionals[0], startsAt: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(), durationMinutes: appointmentSettings.defaultDurationMinutes, status: "AGENDADO", notes: "" }] : [];
   return {
     customers: [],
     vehicles: [],
-    catalog: seedCatalog(),
+    catalog: seedCatalog(segment),
+    suppliers: seedSuppliers(segment),
+    appointments: demoAppointments,
+    appointmentSettings,
+    appointmentBlocks: [],
     serviceTypes: seedServiceTypes(),
     checklistSettings: seedSettings(),
-    companySettings: seedCompanySettings(),
+    companySettings: seedCompanySettings(segment),
     companyIdentity: seedCompanyIdentity(storeId),
     attendances: [],
     orders: [],
@@ -846,7 +1118,7 @@ function identityFromAttendance(attendance: Attendance): LinkedIdentity {
     customer: attendance.reception.customer,
     vehicle: attendance.reception.vehicle,
     plate: attendance.reception.plate,
-    responsible: attendance.reception.responsible || "Petrick",
+    responsible: attendance.reception.responsible || "",
   };
 }
 
@@ -907,7 +1179,7 @@ function createQuote(quotes: Quote[], identity: LinkedIdentity, storeId: string,
 }
 
 function keyFor(storeId: string) {
-  return `gerivo:prototype:v16:store:${storeId}`;
+  return `gerivo:prototype:v17:store:${storeId}`;
 }
 
 function legacyKeysFor(storeId: string) {
@@ -937,7 +1209,11 @@ function normalizeStoreData(parsed: Partial<StoreData>, storeId: string): StoreD
     : {
         name: parsed.checklistSettings.name || defaultSettings.name,
         enabledItemKeys: {
-          checkin: (parsed.checklistSettings.enabledItemKeys?.checkin ?? defaultSettings.enabledItemKeys.checkin).filter((key) => defaultSettings.enabledItemKeys.checkin.includes(key)),
+          checkin: Array.from(new Set([
+            "mileage",
+            "fuel",
+            ...(parsed.checklistSettings.enabledItemKeys?.checkin ?? defaultSettings.enabledItemKeys.checkin).filter((key) => defaultSettings.enabledItemKeys.checkin.includes(key)),
+          ])),
           checkup: (parsed.checklistSettings.enabledItemKeys?.checkup ?? defaultSettings.enabledItemKeys.checkup).filter((key) => defaultSettings.enabledItemKeys.checkup.includes(key)),
           quality: (parsed.checklistSettings.enabledItemKeys?.quality ?? defaultSettings.enabledItemKeys.quality).filter((key) => defaultSettings.enabledItemKeys.quality.includes(key)),
           checkout: (parsed.checklistSettings.enabledItemKeys?.checkout ?? defaultSettings.enabledItemKeys.checkout).filter((key) => defaultSettings.enabledItemKeys.checkout.includes(key)),
@@ -948,13 +1224,17 @@ function normalizeStoreData(parsed: Partial<StoreData>, storeId: string): StoreD
     ? {
         profile: parsed.companySettings.profile ?? "CUSTOM",
         modules: {
+          APPOINTMENTS: parsed.companySettings.modules?.APPOINTMENTS ?? true,
           CATALOG: parsed.companySettings.modules?.CATALOG ?? true,
+          INVENTORY: parsed.companySettings.modules?.INVENTORY ?? true,
           CHECKLIST: parsed.companySettings.modules?.CHECKLIST ?? true,
           ORDERS: parsed.companySettings.modules?.ORDERS ?? true,
           QUOTES: parsed.companySettings.modules?.QUOTES ?? true,
+          ASSISTANT: parsed.companySettings.modules?.ASSISTANT ?? true,
         },
         quoteDeliveryMode: parsed.companySettings.quoteDeliveryMode ?? "BOTH",
         quoteMessageTemplate: parsed.companySettings.quoteMessageTemplate ?? "PROFISSIONAL",
+        generalMargin: Math.max(0, Number(parsed.companySettings.generalMargin) || 35),
       }
     : defaultCompanySettings;
   const defaultIdentity = seedCompanyIdentity(storeId);
@@ -964,22 +1244,79 @@ function normalizeStoreData(parsed: Partial<StoreData>, storeId: string): StoreD
     sidebarColor: /^#[0-9a-f]{6}$/i.test(parsed.companyIdentity?.sidebarColor ?? "")
       ? String(parsed.companyIdentity?.sidebarColor)
       : defaultIdentity.sidebarColor,
+    selectionColor: /^#[0-9a-f]{6}$/i.test(parsed.companyIdentity?.selectionColor ?? "")
+      ? String(parsed.companyIdentity?.selectionColor)
+      : defaultIdentity.selectionColor,
   };
   const serviceTypes = (parsed.serviceTypes ?? seedServiceTypes()).map((item) => ({
     id: item.id || uid(),
     name: item.name?.trim() || "Tipo de serviço",
     active: item.active ?? true,
   }));
+  const suppliers = (parsed.suppliers ?? seedSuppliers()).map((supplier) => ({
+    id: supplier.id || uid(),
+    name: supplier.name || "Fornecedor",
+    document: supplier.document || "",
+    phone: supplier.phone || "",
+    email: supplier.email || "",
+    paymentTerms: supplier.paymentTerms || "",
+    leadTimeDays: Math.max(0, Number(supplier.leadTimeDays) || 0),
+    active: supplier.active ?? true,
+  }));
   const catalog = (parsed.catalog ?? seedCatalog()).map((item) => ({
     ...item,
+    id: item.id || uid(),
+    name: item.name || "Item sem nome",
+    category: item.category || "Geral",
+    kind: item.kind || "PRODUTO",
+    price: Math.max(0, Number(item.price) || 0),
+    cost: Math.max(0, Number(item.cost) || 0),
+    marginMode: item.marginMode === "INDIVIDUAL" ? "INDIVIDUAL" as MarginMode : "GENERAL" as MarginMode,
+    individualMargin: item.individualMargin == null ? null : Math.max(0, Number(item.individualMargin) || 0),
+    image: item.image || "",
+    referenceImage: item.referenceImage || "",
+    sku: item.sku || "",
+    stock: Math.max(0, Number(item.stock) || 0),
+    minimumStock: Math.max(0, Number(item.minimumStock) || 0),
+    supplierId: item.supplierId ?? null,
+    active: item.active ?? true,
     standard: item.standard ?? item.kind === "SERVICO",
     serviceTypeId: item.serviceTypeId ?? (item.kind === "SERVICO" ? serviceTypes.find((type) => type.name.toLowerCase() === item.category.toLowerCase())?.id : undefined),
+  }));
+  const appointmentSettings = normalizeAppointmentSettings(parsed.appointmentSettings, "OUTRO");
+  const appointmentBlocks: AppointmentBlock[] = (parsed.appointmentBlocks ?? []).filter((item) => item.storeId === storeId).map((item) => ({
+    id: item.id || uid(),
+    storeId,
+    professional: item.professional?.trim() || null,
+    startsAt: item.startsAt || new Date().toISOString(),
+    endsAt: item.endsAt || new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    reason: item.reason || "Horário bloqueado",
+  }));
+  const appointments: Appointment[] = (parsed.appointments ?? []).filter((item) => item.storeId === storeId).map((item) => ({
+    ...item,
+    id: item.id || uid(),
+    storeId,
+    customerId: item.customerId ?? null,
+    customer: item.customer || "Cliente não informado",
+    phone: item.phone || "",
+    title: item.title || "Atendimento",
+    professional: item.professional || appointmentSettings.professionals[0] || "Agenda principal",
+    startsAt: item.startsAt || new Date().toISOString(),
+    durationMinutes: Math.max(15, Number(item.durationMinutes) || 60),
+    status: item.status || "AGENDADO",
+    notes: item.notes || "",
   }));
   const attendances = (parsed.attendances ?? []).filter((attendance) => attendance.storeId === storeId).map((attendance) => {
     const freshStages = createStages(settings);
     const legacyItems = new Map(
       attendance.stages.flatMap((stage) => stage.items).map((item) => [item.key, item]),
     );
+    const normalizedReception: Reception = {
+      ...attendance.reception,
+      mileage: attendance.reception?.mileage || "",
+      fuel: legacyItems.has("fuel") ? (attendance.reception?.fuel || "") : "",
+      responsible: ["petrick", "petrick maciel"].includes((attendance.reception?.responsible || "").trim().toLowerCase()) ? "" : (attendance.reception?.responsible || ""),
+    };
     const aliases: Record<string, string> = {
       belongings: "valuables",
     };
@@ -993,6 +1330,8 @@ function normalizeStoreData(parsed: Partial<StoreData>, storeId: string): StoreD
         photos: oldStage?.photos ?? [],
         items: freshStage.items.map((freshItem) => {
           const oldItem = legacyItems.get(freshItem.key) ?? legacyItems.get(aliases[freshItem.key] ?? "");
+          if (freshItem.key === "mileage") return { ...freshItem, value: normalizedReception.mileage ? "SIM" as ItemValue : "PENDENTE" as ItemValue };
+          if (freshItem.key === "fuel") return { ...freshItem, value: normalizedReception.fuel !== "" ? "SIM" as ItemValue : "PENDENTE" as ItemValue };
           return oldItem
             ? { ...freshItem, value: oldItem.value, note: oldItem.note, photos: oldItem.photos }
             : freshItem;
@@ -1006,6 +1345,7 @@ function normalizeStoreData(parsed: Partial<StoreData>, storeId: string): StoreD
       vehicleId: attendance.vehicleId ?? "",
       checkupType: attendance.checkupType ?? "REVISAO",
       technicalReport: attendance.technicalReport ?? { complaint: "", diagnosis: "", tests: "", recommendation: "", conclusion: "" },
+      reception: normalizedReception,
       stages,
     };
   });
@@ -1085,7 +1425,7 @@ function normalizeStoreData(parsed: Partial<StoreData>, storeId: string): StoreD
     return { ...attendance, customerId: customer.id, vehicleId: vehicle.id };
   });
 
-  return { customers: linkedCustomers, vehicles: linkedVehicles, catalog, serviceTypes, checklistSettings: settings, companySettings, companyIdentity, attendances: linkedAttendances, orders, quotes };
+  return { customers: linkedCustomers, vehicles: linkedVehicles, catalog, suppliers, appointments, appointmentSettings, appointmentBlocks, serviceTypes, checklistSettings: settings, companySettings, companyIdentity, attendances: linkedAttendances, orders, quotes };
 }
 
 function isolateStoreData(storeId: string, data: StoreData): StoreData {
@@ -1093,13 +1433,15 @@ function isolateStoreData(storeId: string, data: StoreData): StoreData {
     ...data,
     customers: data.customers.filter((item) => item.storeId === storeId),
     vehicles: data.vehicles.filter((item) => item.storeId === storeId),
+    appointments: data.appointments.filter((item) => item.storeId === storeId),
+    appointmentBlocks: data.appointmentBlocks.filter((item) => item.storeId === storeId),
     attendances: data.attendances.filter((item) => item.storeId === storeId),
     orders: data.orders.filter((item) => item.storeId === storeId),
     quotes: data.quotes.filter((item) => item.storeId === storeId),
   };
 }
 
-function loadStore(storeId: string): StoreData {
+function loadStore(storeId: string, segment = "OUTRO"): StoreData {
   try {
     const currentRaw = localStorage.getItem(keyFor(storeId));
     if (currentRaw) {
@@ -1111,7 +1453,7 @@ function loadStore(storeId: string): StoreData {
       return normalized;
     }
 
-    const previousRaw = localStorage.getItem(`gerivo:prototype:v14:store:${storeId}`) ?? localStorage.getItem(`gerivo:prototype:v13:store:${storeId}`);
+    const previousRaw = localStorage.getItem(`gerivo:prototype:v16:store:${storeId}`) ?? localStorage.getItem(`gerivo:prototype:v14:store:${storeId}`) ?? localStorage.getItem(`gerivo:prototype:v13:store:${storeId}`);
     if (previousRaw) {
       const migrated = isolateStoreData(storeId, normalizeStoreData(JSON.parse(previousRaw) as Partial<StoreData>, storeId));
       localStorage.setItem(keyFor(storeId), JSON.stringify(migrated));
@@ -1129,6 +1471,10 @@ function loadStore(storeId: string): StoreData {
         {
           catalog: legacyParsed.catalog,
           serviceTypes: legacyParsed.serviceTypes,
+          suppliers: legacyParsed.suppliers,
+          appointments: [],
+          appointmentSettings: legacyParsed.appointmentSettings,
+          appointmentBlocks: [],
           checklistSettings: legacyParsed.checklistSettings,
           companySettings: legacyParsed.companySettings,
           companyIdentity: legacyParsed.companyIdentity,
@@ -1145,20 +1491,25 @@ function loadStore(storeId: string): StoreData {
       return isolated;
     }
 
-    const seeded = isolateStoreData(storeId, seedStoreData(storeId));
+    const seeded = isolateStoreData(storeId, seedStoreData(storeId, segment));
     localStorage.setItem(keyFor(storeId), JSON.stringify(seeded));
     return seeded;
   } catch {
-    return isolateStoreData(storeId, seedStoreData(storeId));
+    return isolateStoreData(storeId, seedStoreData(storeId, segment));
   }
 }
 
 function saveStore(storeId: string, data: StoreData) {
   try {
     localStorage.setItem(keyFor(storeId), JSON.stringify(isolateStoreData(storeId, data)));
+    return true;
   } catch {
-    // Fotos grandes podem ultrapassar o limite local deste protótipo.
+    return false;
   }
+}
+
+function navigationKey(storeId: string) {
+  return `gerivo:navigation:v171:${storeId}`;
 }
 
 function money(value: number) {
@@ -1167,6 +1518,17 @@ function money(value: number) {
 
 function formatDate(value: string) {
   return new Date(value).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
+}
+
+function fuelLevelIndex(value: string) {
+  const map: Record<string, number> = { Reserva: 0, "1/4": 1, "1/2": 2, "3/4": 3, Cheio: 4 };
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? Math.max(0, Math.min(4, numeric)) : (map[value] ?? 2);
+}
+
+function fuelLevelLabel(value: string) {
+  if (value === "" || value == null) return "Não informado";
+  return ["Reserva", "1/4", "1/2", "3/4", "Cheio"][fuelLevelIndex(value)];
 }
 
 function serviceOrderStatusLabel(status: ServiceOrderStatus) {
@@ -1245,6 +1607,12 @@ function itemValueLabel(value: ItemValue) {
     SIM: "Sim",
     NAO: "Não",
     AVARIADO: "Avariado",
+    AVARIA: "Avaria",
+    INCOMPLETO: "Incompleto",
+    NORMAL: "Normal",
+    MAL_ODOR: "Mal odor",
+    NAO_POSSUI: "Não possui",
+    OK: "OK",
     EXPRESSA: "Expressa",
     OUTRO: "Outro",
   };
@@ -1282,24 +1650,33 @@ function escapeHtml(value: string) {
 }
 
 function reportStatusClass(value: ItemValue) {
-  if (["BOM", "SIM"].includes(value)) return "good";
-  if (["REGULAR", "AVARIADO", "EXPRESSA", "OUTRO"].includes(value)) return "attention";
+  if (["BOM", "SIM", "OK", "NORMAL"].includes(value)) return "good";
+  if (["REGULAR", "AVARIADO", "AVARIA", "INCOMPLETO", "MAL_ODOR", "EXPRESSA", "OUTRO"].includes(value)) return "attention";
   if (["RUIM", "NAO"].includes(value)) return "bad";
-  if (value === "NAO_SE_APLICA") return "neutral";
+  if (["NAO_SE_APLICA", "NAO_POSSUI"].includes(value)) return "neutral";
   return "pending";
 }
 
-function createReportHtml(store: Store, attendance: Attendance, mode: ReportMode = "FULL") {
+function createReportHtml(store: Store, attendance: Attendance, mode: ReportMode = "FULL", config?: Partial<ReportConfig>) {
+  const reportConfig: ReportConfig = {
+    includeCustomer: config?.includeCustomer ?? true,
+    stageIds: config?.stageIds ?? attendance.stages.map((stage) => stage.id),
+    includeTechnicalReport: config?.includeTechnicalReport ?? true,
+    includeGeneralPhotos: config?.includeGeneralPhotos ?? mode === "FULL",
+    includeItemPhotos: config?.includeItemPhotos ?? mode === "FULL",
+    includeSignatures: config?.includeSignatures ?? true,
+  };
   const completedStages = attendance.stages.filter((stage) => stage.status === "CONCLUIDO");
-  const stagesToRender = completedStages.length
+  let stagesToRender = completedStages.length
     ? completedStages
     : attendance.stages.filter((stage) => stage.items.some((item) => item.value !== "PENDENTE"));
+  stagesToRender = stagesToRender.filter((stage) => reportConfig.stageIds.includes(stage.id));
 
   const answeredItems = stagesToRender.flatMap((stage) =>
     stage.items.filter((item) => item.value !== "PENDENTE"),
   );
-  const goodCount = answeredItems.filter((item) => ["BOM", "SIM"].includes(item.value)).length;
-  const attentionCount = answeredItems.filter((item) => ["REGULAR", "AVARIADO", "EXPRESSA", "OUTRO"].includes(item.value)).length;
+  const goodCount = answeredItems.filter((item) => ["BOM", "SIM", "OK", "NORMAL"].includes(item.value)).length;
+  const attentionCount = answeredItems.filter((item) => ["REGULAR", "AVARIADO", "AVARIA", "INCOMPLETO", "MAL_ODOR", "EXPRESSA", "OUTRO"].includes(item.value)).length;
   const badCount = answeredItems.filter((item) => ["RUIM", "NAO"].includes(item.value)).length;
   const photoCount =
     stagesToRender.reduce((total, stage) => total + stage.photos.length, 0) +
@@ -1315,7 +1692,7 @@ function createReportHtml(store: Store, attendance: Attendance, mode: ReportMode
       .join("")}</div></div>`;
   };
 
-  const technicalReportHtml = attendance.technicalReport && (attendance.technicalReport.diagnosis || attendance.technicalReport.conclusion)
+  const technicalReportHtml = reportConfig.includeTechnicalReport && attendance.technicalReport && (attendance.technicalReport.diagnosis || attendance.technicalReport.conclusion)
     ? `<section class="technical-report-print"><h2>Laudo técnico · ${attendance.checkupType === "DIAGNOSTICO" ? "Diagnóstico" : "Revisão"}</h2>${attendance.technicalReport.complaint ? `<p><strong>Relato do cliente:</strong> ${escapeHtml(attendance.technicalReport.complaint)}</p>` : ""}<p><strong>Diagnóstico:</strong> ${escapeHtml(attendance.technicalReport.diagnosis || "—")}</p>${attendance.technicalReport.tests ? `<p><strong>Testes e medições:</strong> ${escapeHtml(attendance.technicalReport.tests)}</p>` : ""}${attendance.technicalReport.recommendation ? `<p><strong>Recomendação:</strong> ${escapeHtml(attendance.technicalReport.recommendation)}</p>` : ""}<p><strong>Conclusão:</strong> ${escapeHtml(attendance.technicalReport.conclusion || "—")}</p></section>`
     : "";
 
@@ -1348,7 +1725,7 @@ function createReportHtml(store: Store, attendance: Attendance, mode: ReportMode
                     </div>
                     <span class="status-chip ${reportStatusClass(item.value)}">${escapeHtml(itemValueLabel(item.value))}</span>
                   </div>
-                  ${mode === "FULL" ? renderPhotoGallery(item.photos, `Fotos · ${item.label}`) : ""}`,
+                  ${reportConfig.includeItemPhotos ? renderPhotoGallery(item.photos, `Fotos · ${item.label}`) : ""}`,
                 )
                 .join("")}
             </div>
@@ -1368,12 +1745,23 @@ function createReportHtml(store: Store, attendance: Attendance, mode: ReportMode
         </div>
         ${emptySummary}
         ${groupHtml}
-        ${mode === "FULL" ? renderPhotoGallery(stage.photos, `Fotos gerais · ${stage.label}`) : ""}
+        ${reportConfig.includeGeneralPhotos ? renderPhotoGallery(stage.photos, `Fotos gerais · ${stage.label}`) : ""}
       </section>`;
     })
     .join("");
 
-  const title = mode === "SUMMARY" ? "Resumo do checklist" : "Relatório completo do checklist";
+  const vehicleCardHtml = reportConfig.includeCustomer ? `<section class="vehicle-card">
+      <div><small>Cliente</small><strong>${escapeHtml(attendance.reception.customer || "Não informado")}</strong></div>
+      <div><small>WhatsApp</small><strong>${escapeHtml(attendance.reception.phone || "—")}</strong></div>
+      <div><small>Veículo</small><strong>${escapeHtml(attendance.reception.vehicle || "Não informado")}</strong></div>
+      <div><small>Placa</small><strong>${escapeHtml(attendance.reception.plate || "Não informada")}</strong></div>
+      <div><small>KM</small><strong>${escapeHtml(attendance.reception.mileage || "—")}</strong></div>
+      <div><small>Combustível</small><strong>${escapeHtml(fuelLevelLabel(attendance.reception.fuel))}</strong></div>
+      <div><small>Responsável</small><strong>${escapeHtml(attendance.reception.responsible || "Não informado")}</strong></div>
+      <div><small>Técnico</small><strong>${escapeHtml(attendance.reception.technician || "—")}</strong></div>
+    </section>` : "";
+  const signaturesHtml = reportConfig.includeSignatures ? `<section class="signatures"><div class="signature">Responsável pela inspeção</div><div class="signature">Cliente / responsável</div></section>` : "";
+  const title = mode === "SUMMARY" ? "Resumo do checklist" : mode === "MODULAR" ? "Relatório modular do checklist" : "Relatório completo do checklist";
   return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(attendance.code)} · Gerivo</title><style>
   @page{size:A4;margin:12mm}
   *{box-sizing:border-box}
@@ -1403,24 +1791,16 @@ function createReportHtml(store: Store, attendance: Attendance, mode: ReportMode
       <div class="company"><h2>${escapeHtml(store.name)}</h2><p>${escapeHtml(title)}</p><strong>${escapeHtml(attendance.code)}</strong></div>
     </header>
     <div class="title-row"><h2>${escapeHtml(title)}</h2><span>Gerado em ${new Date().toLocaleString("pt-BR")}</span></div>
-    <section class="vehicle-card">
-      <div><small>Cliente</small><strong>${escapeHtml(attendance.reception.customer || "Não informado")}</strong></div>
-      <div><small>Veículo</small><strong>${escapeHtml(attendance.reception.vehicle || "Não informado")}</strong></div>
-      <div><small>Placa</small><strong>${escapeHtml(attendance.reception.plate || "Não informada")}</strong></div>
-      <div><small>Responsável</small><strong>${escapeHtml(attendance.reception.responsible || "Não informado")}</strong></div>
-      <div><small>Quilometragem</small><strong>${escapeHtml(attendance.reception.mileage || "—")}</strong></div>
-      <div><small>Combustível</small><strong>${escapeHtml(attendance.reception.fuel || "—")}</strong></div>
-      <div><small>O.S.</small><strong>${escapeHtml(attendance.reception.osNumber || "—")}</strong></div>
-      <div><small>Técnico</small><strong>${escapeHtml(attendance.reception.technician || "—")}</strong></div>
-    </section>
+    ${vehicleCardHtml}
     <section class="summary">
       <div class="summary-card"><small>Itens avaliados</small><strong>${answeredItems.length}</strong></div>
       <div class="summary-card good"><small>Conformes</small><strong>${goodCount}</strong></div>
       <div class="summary-card attention"><small>Atenção</small><strong>${attentionCount}</strong></div>
       <div class="summary-card bad"><small>Reprovados</small><strong>${badCount}</strong></div>
     </section>
+    ${technicalReportHtml}
     ${stageSections || '<div class="all-good">Nenhuma etapa concluída ou preenchida para gerar o relatório.</div>'}
-    <section class="signatures"><div class="signature">Responsável pela inspeção</div><div class="signature">Cliente / responsável pelo veículo</div></section>
+    ${signaturesHtml}
     <footer class="footer"><span>${photoCount} foto(s) vinculada(s)</span><span>Sistema desenvolvido com Gerivo.</span></footer>
   </main></body></html>`;
 }
@@ -1432,7 +1812,7 @@ function buildShareText(store: Store, attendance: Attendance) {
       return `${stage.label}: ${stage.status === "CONCLUIDO" ? "concluído" : "em andamento"} · ${regular} regular · ${bad} atenção`;
     })
     .join("\n");
-  return `Olá! Segue o resumo do atendimento ${attendance.code}.\n\nEmpresa: ${store.name}\nCliente: ${attendance.reception.customer || "Não informado"}\nVeículo: ${attendance.reception.vehicle || "Não informado"}\nPlaca: ${attendance.reception.plate || "Não informada"}\n\n${summary}\n\nSistema desenvolvido com Gerivo.`;
+  return `Olá! Segue o resumo do atendimento ${attendance.code}.\n\nEmpresa: ${store.companyName}\nCliente: ${attendance.reception.customer || "Não informado"}\nVeículo: ${attendance.reception.vehicle || "Não informado"}\nPlaca: ${attendance.reception.plate || "Não informada"}\n\n${summary}\n\nSistema desenvolvido com Gerivo.`;
 }
 
 
@@ -1467,14 +1847,26 @@ function PremiumIcon({ name, size = 19 }: { name: IconName; size?: number }) {
   if (name === "modules") return <svg {...common}><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>;
   if (name === "trash") return <svg {...common}><path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M7 7l1 14h8l1-14"/><path d="M10 11v6M14 11v6"/></svg>;
   if (name === "camera") return <svg {...common}><path d="M4 8h3l1.5-2h7L17 8h3v11H4z"/><circle cx="12" cy="13" r="3"/></svg>;
+  if (name === "calendar") return <svg {...common}><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/><path d="M8 14h3M13 14h3M8 17h3"/></svg>;
+  if (name === "box") return <svg {...common}><path d="m4 7 8-4 8 4-8 4-8-4Z"/><path d="M4 7v10l8 4 8-4V7"/><path d="M12 11v10"/></svg>;
+  if (name === "sparkle") return <svg {...common}><path d="m12 3 1.2 3.8L17 8l-3.8 1.2L12 13l-1.2-3.8L7 8l3.8-1.2L12 3Z"/><path d="m18 13 .7 2.3L21 16l-2.3.7L18 19l-.7-2.3L15 16l2.3-.7L18 13Z"/><path d="m6 14 .8 2.2L9 17l-2.2.8L6 20l-.8-2.2L3 17l2.2-.8L6 14Z"/></svg>;
+  if (name === "chart") return <svg {...common}><path d="M4 20V10M10 20V4M16 20v-7M22 20V7"/><path d="M2 20h21"/></svg>;
+  if (name === "shield") return <svg {...common}><path d="M12 3 4 6v6c0 5 3.4 8 8 9 4.6-1 8-4 8-9V6l-8-3Z"/><path d="m9 12 2 2 4-4"/></svg>;
+  if (name === "truck") return <svg {...common}><path d="M3 6h11v11H3z"/><path d="M14 10h4l3 3v4h-7z"/><circle cx="7" cy="18" r="2"/><circle cx="18" cy="18" r="2"/></svg>;
+  if (name === "image") return <svg {...common}><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8" cy="9" r="2"/><path d="m3 17 5-5 4 4 3-3 6 5"/></svg>;
   return null;
 }
 
 export default function Home() {
-  const [logged, setLogged] = useState(false);
+  const supabase = useMemo(() => getSupabaseBrowserClient(), []);
+  const [session, setSession] = useState<any>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authError, setAuthError] = useState("");
+  const [stores, setStores] = useState<Store[]>([]);
+  const [needsOnboarding, setNeedsOnboarding] = useState(false);
   const [page, setPage] = useState<Page>("dashboard");
-  const [storeId, setStoreId] = useState(STORES[0].id);
-  const [data, setData] = useState<StoreData>(() => seedStoreData(STORES[0].id));
+  const [storeId, setStoreId] = useState(EMPTY_STORE_ID);
+  const [data, setData] = useState<StoreData>(() => seedStoreData(EMPTY_STORE_ID));
   const [ready, setReady] = useState(false);
   const [activeAttendanceId, setActiveAttendanceId] = useState<string | null>(null);
   const [activeOrderId, setActiveOrderId] = useState<string | null>(null);
@@ -1485,54 +1877,336 @@ export default function Home() {
   const [storeSwitcherOpen, setStoreSwitcherOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [startFlow, setStartFlow] = useState<StartFlowState>({ open: false, target: "CHECKLIST" });
-  const [userProfile, setUserProfile] = useState<UserProfile>({ preferredName: "Petrick", phone: "", email: "", photo: "" });
+  const [userProfile, setUserProfile] = useState<UserProfile>({ preferredName: "Usuário", username: "", phone: "", email: "", photo: "" });
+  const [platformRole, setPlatformRole] = useState<"USER" | "MASTER">("USER");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [toast, setToast] = useState("");
   const saveToastTimer = useRef<number | null>(null);
   const pendingSaveTimer = useRef<number | null>(null);
-  const loadedStoreIdRef = useRef(STORES[0].id);
+  const loadedStoreIdRef = useRef(EMPTY_STORE_ID);
   const hasSavedOnce = useRef(false);
-  const canManageCompany = true;
+  const latestDataRef = useRef(data);
+  const authenticatedUserIdRef = useRef<string | null>(null);
+  const currentAccessRole = stores.find((store) => store.id === storeId)?.role ?? "MEMBER";
+  const canManageCompany = ["MASTER", "ADMIN", "MANAGER"].includes(currentAccessRole);
 
   useEffect(() => {
-    if (sessionStorage.getItem("gerivo:session")) setLogged(true);
     const isMobile = window.matchMedia("(max-width: 800px)").matches;
     setSidebarCollapsed(isMobile || localStorage.getItem("gerivo:sidebar-collapsed") === "1");
-    loadedStoreIdRef.current = STORES[0].id;
-    setData(loadStore(loadedStoreIdRef.current));
-    try {
-      const savedProfile = localStorage.getItem("gerivo:user-profile");
-      if (savedProfile) setUserProfile({ ...userProfile, ...JSON.parse(savedProfile) });
-    } catch {}
+
+    let mounted = true;
+
+    async function initializeAuth() {
+      const { data: sessionData } = await supabase.auth.getSession();
+      if (!mounted) return;
+      setSession(sessionData.session);
+      if (sessionData.session?.user) {
+        authenticatedUserIdRef.current = sessionData.session.user.id;
+        await loadAccessContext(sessionData.session.user.id);
+      } else {
+        setAuthLoading(false);
+      }
+    }
+
+    initializeAuth();
+
+    const { data: listener } = supabase.auth.onAuthStateChange((_event: string, nextSession: any) => {
+      if (!mounted) return;
+      setSession(nextSession);
+      setAuthError("");
+      if (nextSession?.user) {
+        const nextUserId = nextSession.user.id;
+        if (authenticatedUserIdRef.current !== nextUserId) {
+          authenticatedUserIdRef.current = nextUserId;
+          window.setTimeout(() => {
+            if (mounted) loadAccessContext(nextUserId);
+          }, 0);
+        }
+      } else {
+        authenticatedUserIdRef.current = null;
+        setStores([]);
+        setNeedsOnboarding(false);
+        setStoreId(EMPTY_STORE_ID);
+        loadedStoreIdRef.current = EMPTY_STORE_ID;
+        setData(seedStoreData(EMPTY_STORE_ID));
+        setReady(false);
+        setAuthLoading(false);
+      }
+    });
+
+    return () => {
+      mounted = false;
+      listener.subscription.unsubscribe();
+    };
+  }, [supabase]);
+
+  async function loadAccessContext(userId: string) {
+    setAuthLoading(true);
+    setAuthError("");
+
+    const [profileResult, membershipsResult] = await Promise.all([
+      supabase.from("profiles").select("full_name, username, phone, email, avatar_url, platform_role").eq("id", userId).maybeSingle(),
+      supabase.from("store_members").select("store_id, role").eq("user_id", userId).eq("active", true),
+    ]);
+
+    if (profileResult.data) {
+      setUserProfile({
+        preferredName: profileResult.data.full_name || profileResult.data.username || profileResult.data.email || "Usuário",
+        username: profileResult.data.username || "",
+        phone: profileResult.data.phone || "",
+        email: profileResult.data.email || "",
+        photo: profileResult.data.avatar_url || "",
+      });
+    }
+
+    if (membershipsResult.error) {
+      setAuthError("Não foi possível carregar as empresas vinculadas ao usuário.");
+      setAuthLoading(false);
+      return;
+    }
+
+    const memberships = membershipsResult.data ?? [];
+    const platformMaster = profileResult.data?.platform_role === "MASTER";
+    setPlatformRole(platformMaster ? "MASTER" : "USER");
+
+    if (platformMaster) {
+      const { data: masterStoreRows, error: masterStoresError } = await supabase
+        .from("stores")
+        .select("id, public_code, name, company_id, companies(name, segment)")
+        .order("created_at", { ascending: true });
+
+      if (masterStoresError) {
+        setAuthError("Não foi possível carregar as empresas da plataforma.");
+        setAuthLoading(false);
+        return;
+      }
+
+      const masterStores: Store[] = (masterStoreRows ?? []).map((row: any) => {
+        const company = Array.isArray(row.companies) ? row.companies[0] : row.companies;
+        return {
+          id: row.id,
+          publicCode: Number(row.public_code) || 0,
+          name: row.name,
+          companyId: row.company_id,
+          companyName: company?.name || row.name,
+          segment: company?.segment || "OUTRO",
+          role: "MASTER",
+        };
+      });
+
+      if (!masterStores.length) {
+        setStores([]);
+        setNeedsOnboarding(true);
+        setAuthLoading(false);
+        return;
+      }
+
+      setStores(masterStores);
+      setNeedsOnboarding(false);
+      const savedStoreId = localStorage.getItem("gerivo:active-store");
+      const selected = masterStores.find((item) => item.id === savedStoreId) ?? masterStores[0];
+      await activateStore(selected, false, true);
+      setReady(true);
+      setAuthLoading(false);
+      return;
+    }
+
+    if (!memberships.length) {
+      setStores([]);
+      setNeedsOnboarding(true);
+      setAuthLoading(false);
+      return;
+    }
+
+    const storeIds = memberships.map((item: any) => item.store_id);
+    const { data: storeRows, error: storesError } = await supabase
+      .from("stores")
+      .select("id, public_code, name, company_id, companies(name, segment)")
+      .in("id", storeIds)
+      .eq("active", true);
+
+    if (storesError) {
+      setAuthError("Não foi possível carregar as lojas autorizadas.");
+      setAuthLoading(false);
+      return;
+    }
+
+    const nextStores: Store[] = (storeRows ?? []).map((row: any) => {
+      const membership = memberships.find((item: any) => item.store_id === row.id);
+      const company = Array.isArray(row.companies) ? row.companies[0] : row.companies;
+      return {
+        id: row.id,
+        publicCode: Number(row.public_code) || 0,
+        name: row.name,
+        companyId: row.company_id,
+        companyName: company?.name || row.name,
+        segment: company?.segment || "OUTRO",
+        role: membership?.role || "MEMBER",
+      };
+    });
+
+    if (!nextStores.length) {
+      setNeedsOnboarding(true);
+      setAuthLoading(false);
+      return;
+    }
+
+    setStores(nextStores);
+    setNeedsOnboarding(false);
+    const savedStoreId = localStorage.getItem("gerivo:active-store");
+    const selected = nextStores.find((item) => item.id === savedStoreId) ?? nextStores[0];
+    await activateStore(selected, false, true);
     setReady(true);
-  }, []);
+    setAuthLoading(false);
+  }
+
+  async function loadCloudSettings(targetStore: Store, localData: StoreData) {
+    const { data: settings } = await supabase
+      .from("store_settings")
+      .select("display_name, logo_value, sidebar_color, selection_color, company_profile, modules, quote_delivery_mode, quote_message_template, checklist_name, checklist_enabled_keys, general_margin")
+      .eq("store_id", targetStore.id)
+      .maybeSingle();
+
+    if (!settings) return localData;
+
+    return {
+      ...localData,
+      companyIdentity: {
+        displayName: settings.display_name || targetStore.name,
+        logo: settings.logo_value || "",
+        sidebarColor: settings.sidebar_color || "#0B1F3A",
+        selectionColor: settings.selection_color || localData.companyIdentity.selectionColor || "#C89B3C",
+      },
+      companySettings: {
+        ...localData.companySettings,
+        profile: settings.company_profile || localData.companySettings.profile,
+        modules: { ...localData.companySettings.modules, ...(settings.modules || {}) },
+        quoteDeliveryMode: settings.quote_delivery_mode || localData.companySettings.quoteDeliveryMode,
+        quoteMessageTemplate: settings.quote_message_template || localData.companySettings.quoteMessageTemplate,
+        generalMargin: Math.max(0, Number(settings.general_margin) || localData.companySettings.generalMargin),
+      },
+      checklistSettings: {
+        ...localData.checklistSettings,
+        name: settings.checklist_name || localData.checklistSettings.name,
+        enabledItemKeys: (() => {
+          const cloudKeys =
+            settings.checklist_enabled_keys && Object.keys(settings.checklist_enabled_keys).length
+              ? settings.checklist_enabled_keys as Record<StageId, string[]>
+              : localData.checklistSettings.enabledItemKeys;
+          return {
+            ...localData.checklistSettings.enabledItemKeys,
+            ...cloudKeys,
+            checkin: Array.from(new Set(["mileage", "fuel", ...(cloudKeys.checkin || localData.checklistSettings.enabledItemKeys.checkin)])),
+          };
+        })(),
+      },
+    } as StoreData;
+  }
+
+  async function activateStore(targetStore: Store, showToast = true, restoreNavigation = false) {
+    if (pendingSaveTimer.current && loadedStoreIdRef.current !== EMPTY_STORE_ID) {
+      window.clearTimeout(pendingSaveTimer.current);
+      saveStore(loadedStoreIdRef.current, latestDataRef.current);
+    }
+    const localData = loadStore(targetStore.id, targetStore.segment);
+    const nextData = await loadCloudSettings(targetStore, localData);
+    loadedStoreIdRef.current = targetStore.id;
+    hasSavedOnce.current = false;
+    setStoreId(targetStore.id);
+    localStorage.setItem("gerivo:active-store", targetStore.id);
+    setData(nextData);
+    const savedNavigation = restoreNavigation ? (() => {
+      try { return JSON.parse(sessionStorage.getItem(navigationKey(targetStore.id)) || "null"); } catch { return null; }
+    })() : null;
+    const restoredAttendanceId = savedNavigation?.activeAttendanceId && nextData.attendances.some((item) => item.id === savedNavigation.activeAttendanceId) ? savedNavigation.activeAttendanceId : null;
+    const restoredOrderId = savedNavigation?.activeOrderId && nextData.orders.some((item) => item.id === savedNavigation.activeOrderId) ? savedNavigation.activeOrderId : null;
+    const restoredQuoteId = savedNavigation?.activeQuoteId && nextData.quotes.some((item) => item.id === savedNavigation.activeQuoteId) ? savedNavigation.activeQuoteId : null;
+    const restoredPage = NAV.some((item) => item.id === savedNavigation?.page) ? savedNavigation.page as Page : "dashboard";
+    setActiveAttendanceId(restoredAttendanceId);
+    setActiveOrderId(restoredOrderId);
+    setActiveQuoteId(restoredQuoteId);
+    setActiveStageId(savedNavigation?.activeStageId || "checkin");
+    setStoreSwitcherOpen(false);
+    setMobileMenuOpen(false);
+    setPage(restoreNavigation ? restoredPage : "dashboard");
+    if (showToast) setToast(`Empresa alterada para ${targetStore.companyName}`);
+  }
+
+  async function syncStoreSettings(
+    companySettings: CompanySettings,
+    checklistSettings: ChecklistSettings,
+    companyIdentity: CompanyIdentity,
+  ) {
+    const targetStore = stores.find((item) => item.id === storeId);
+    if (!targetStore || !session?.user) return;
+    const { error } = await supabase.from("store_settings").upsert({
+      store_id: targetStore.id,
+      company_id: targetStore.companyId,
+      display_name: companyIdentity.displayName || targetStore.name,
+      logo_value: companyIdentity.logo || null,
+      sidebar_color: companyIdentity.sidebarColor || "#0B1F3A",
+      selection_color: companyIdentity.selectionColor || "#C89B3C",
+      company_profile: companySettings.profile,
+      modules: companySettings.modules,
+      quote_delivery_mode: companySettings.quoteDeliveryMode,
+      quote_message_template: companySettings.quoteMessageTemplate,
+      checklist_name: checklistSettings.name,
+      checklist_enabled_keys: checklistSettings.enabledItemKeys,
+      general_margin: companySettings.generalMargin,
+      updated_by: session.user.id,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "store_id" });
+
+    if (error) throw error;
+  }
 
   useEffect(() => {
-    if (!ready) return;
-    const dataStoreId = loadedStoreIdRef.current;
+    latestDataRef.current = data;
+    if (!ready || loadedStoreIdRef.current === EMPTY_STORE_ID) return;
+    const saved = saveStore(loadedStoreIdRef.current, data);
+    if (!saved) {
+      setToast("Não foi possível salvar. Remova fotos muito grandes e tente novamente.");
+      return;
+    }
     if (pendingSaveTimer.current) window.clearTimeout(pendingSaveTimer.current);
-    pendingSaveTimer.current = window.setTimeout(() => {
-      saveStore(dataStoreId, data);
-      if (hasSavedOnce.current) {
+    if (hasSavedOnce.current) {
+      pendingSaveTimer.current = window.setTimeout(() => {
         setToast("Alterações salvas automaticamente");
         if (saveToastTimer.current) window.clearTimeout(saveToastTimer.current);
-        saveToastTimer.current = window.setTimeout(() => setToast(""), 2300);
-      } else {
-        hasSavedOnce.current = true;
-      }
-    }, 520);
+        saveToastTimer.current = window.setTimeout(() => setToast(""), 1800);
+      }, 420);
+    } else {
+      hasSavedOnce.current = true;
+    }
     return () => {
       if (pendingSaveTimer.current) window.clearTimeout(pendingSaveTimer.current);
     };
   }, [data, ready]);
 
   useEffect(() => {
+    if (!ready || storeId === EMPTY_STORE_ID) return;
+    sessionStorage.setItem(navigationKey(storeId), JSON.stringify({ page, activeAttendanceId, activeOrderId, activeQuoteId, activeStageId }));
+  }, [ready, storeId, page, activeAttendanceId, activeOrderId, activeQuoteId, activeStageId]);
+
+  useEffect(() => {
+    const flush = () => {
+      if (loadedStoreIdRef.current !== EMPTY_STORE_ID) saveStore(loadedStoreIdRef.current, latestDataRef.current);
+    };
+    window.addEventListener("beforeunload", flush);
+    document.addEventListener("visibilitychange", flush);
+    return () => {
+      window.removeEventListener("beforeunload", flush);
+      document.removeEventListener("visibilitychange", flush);
+    };
+  }, []);
+
+  useEffect(() => {
     document.body.style.overflow = mobileMenuOpen ? "hidden" : "";
     return () => { document.body.style.overflow = ""; };
   }, [mobileMenuOpen]);
 
-  const currentStore = STORES.find((store) => store.id === storeId) ?? STORES[0];
+  const currentStore = stores.find((store) => store.id === storeId) ?? EMPTY_STORE;
   const brandedStore: Store = { ...currentStore, name: data.companyIdentity.displayName || currentStore.name };
   const activeAttendance = data.attendances.find((item) => item.id === activeAttendanceId) ?? null;
   const activeOrder = data.orders.find((item) => item.id === activeOrderId) ?? null;
@@ -1540,37 +2214,108 @@ export default function Home() {
   const visibleNav = NAV.filter(
     (item) =>
       !item.hidden &&
+      (!item.masterOnly || platformRole === "MASTER") &&
       (item.id !== "management" || canManageCompany) &&
       (!item.module || data.companySettings.modules[item.module]),
   );
 
-  function login(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    sessionStorage.setItem("gerivo:session", "master");
-    setLogged(true);
+  async function login(identifier: string, password: string) {
+    setAuthError("");
+    const response = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ identifier, password }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload.access_token || !payload.refresh_token) {
+      const message = payload.error || "Usuário ou senha inválidos.";
+      setAuthError(message);
+      throw new Error(message);
+    }
+    const { error } = await supabase.auth.setSession({ access_token: payload.access_token, refresh_token: payload.refresh_token });
+    if (error) {
+      setAuthError("Não foi possível iniciar a sessão.");
+      throw error;
+    }
   }
 
-  function changeStore(nextId: string) {
+
+  async function recoverPassword(email: string) {
+    setAuthError("");
+    const normalized = email.trim().toLowerCase();
+    if (!normalized.includes("@")) {
+      const message = "Informe o e-mail de recuperação.";
+      setAuthError(message);
+      throw new Error(message);
+    }
+    const redirectTo = typeof window !== "undefined" ? `${window.location.origin}/` : undefined;
+    const { error } = await supabase.auth.resetPasswordForEmail(normalized, { redirectTo });
+    if (error) {
+      setAuthError("Não foi possível enviar a recuperação de senha.");
+      throw error;
+    }
+    setAuthError("Enviamos as instruções de recuperação para o e-mail informado.");
+  }
+
+  async function logout() {
+    await supabase.auth.signOut();
+  }
+
+  async function bootstrapCompany(companyName: string, storeName: string, segment: string) {
+    setAuthError("");
+    if (!session?.access_token || !session.user) {
+      const message = "Sua sessão expirou. Entre novamente no Gerivo.";
+      setAuthError(message);
+      throw new Error(message);
+    }
+
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 20000);
+
+    try {
+      const response = await fetch("/api/master/companies/create", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          name: companyName,
+          storeName: storeName || companyName,
+          segment,
+        }),
+        signal: controller.signal,
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.store_id) {
+        const message = payload.error || "Não foi possível criar a empresa.";
+        setAuthError(message);
+        throw new Error(message);
+      }
+
+      localStorage.setItem("gerivo:active-store", payload.store_id);
+      await loadAccessContext(session.user.id);
+      setPage("master");
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        const message = "A criação demorou mais que o esperado. Verifique a conexão e tente novamente.";
+        setAuthError(message);
+        throw new Error(message);
+      }
+      throw error;
+    } finally {
+      window.clearTimeout(timeout);
+    }
+  }
+
+  async function changeStore(nextId: string) {
     if (nextId === loadedStoreIdRef.current) {
       setStoreSwitcherOpen(false);
       setMobileMenuOpen(false);
       return;
     }
-
-    if (pendingSaveTimer.current) window.clearTimeout(pendingSaveTimer.current);
-    saveStore(loadedStoreIdRef.current, data);
-    const nextData = loadStore(nextId);
-    loadedStoreIdRef.current = nextId;
-    hasSavedOnce.current = false;
-    setStoreId(nextId);
-    setData(nextData);
-    setActiveAttendanceId(null);
-    setActiveOrderId(null);
-    setActiveQuoteId(null);
-    setStoreSwitcherOpen(false);
-    setMobileMenuOpen(false);
-    setPage("dashboard");
-    setToast(`Empresa alterada para ${STORES.find((item) => item.id === nextId)?.name ?? "loja selecionada"}`);
+    const targetStore = stores.find((item) => item.id === nextId);
+    if (targetStore) await activateStore(targetStore);
   }
 
   function toggleSidebar() {
@@ -1593,11 +2338,7 @@ export default function Home() {
       window.alert("Este módulo está desativado para a empresa atual.");
       return;
     }
-    if (target === "checklist" || target === "orders" || target === "quotes" || target === "dashboard") {
-      setActiveAttendanceId(null);
-    }
-    if (target !== "orders") setActiveOrderId(null);
-    if (target !== "quotes") setActiveQuoteId(null);
+    if (loadedStoreIdRef.current !== EMPTY_STORE_ID) saveStore(loadedStoreIdRef.current, latestDataRef.current);
     setPage(target);
   }
 
@@ -1629,7 +2370,7 @@ export default function Home() {
       customer: payload.customer.name,
       vehicle: payload.vehicle.description,
       plate: payload.vehicle.plate,
-      responsible: payload.responsible || userProfile.preferredName || "Petrick",
+      responsible: payload.responsible.trim(),
     };
 
     if (payload.target === "CHECKLIST") {
@@ -1773,12 +2514,16 @@ export default function Home() {
   }
 
   const sidebarTheme = sidebarThemeVariables(data.companyIdentity.sidebarColor);
+  const selectionTheme = selectionThemeVariables(data.companyIdentity.selectionColor);
   const sidebarUsesDarkAssets = sidebarIsLight(data.companyIdentity.sidebarColor);
 
-  if (!logged) return <Login onSubmit={login} />;
+  if (authLoading) return <SystemLoading />;
+  if (!session) return <Login onSubmit={login} onRecover={recoverPassword} error={authError} />;
+  if (needsOnboarding) return platformRole === "MASTER" ? <CompanyOnboarding onSubmit={bootstrapCompany} onLogout={logout} error={authError} /> : <NoAccess onLogout={logout} />;
+  if (!ready || !stores.length) return <SystemLoading />;
 
   return (
-    <main style={sidebarTheme as any} className={`${sidebarCollapsed ? "shell sidebar-collapsed" : "shell"} ${mobileMenuOpen ? "mobile-menu-open" : ""}`}>
+    <main style={{ ...sidebarTheme, ...selectionTheme } as any} className={`${sidebarCollapsed ? "shell sidebar-collapsed" : "shell"} ${mobileMenuOpen ? "mobile-menu-open" : ""}`}>
       <button
         type="button"
         className="sidebar-overlay"
@@ -1812,7 +2557,7 @@ export default function Home() {
         <nav>
           <small className="nav-section-title">OPERAÇÃO</small>
           {visibleNav
-            .filter((item) => item.id !== "management")
+            .filter((item) => !["management", "master"].includes(item.id))
             .map((item) => (
               <button
                 key={item.id}
@@ -1821,24 +2566,24 @@ export default function Home() {
                 onClick={() => navigate(item.id)}
               >
                 <i><PremiumIcon name={item.icon} size={17} /></i>
-                <span>{item.label}</span>
+                <span>{navigationLabel(item, currentStore.segment)}</span>
               </button>
             ))}
 
-          {visibleNav.some((item) => item.id === "management") && (
+          {visibleNav.some((item) => item.id === "management" || item.id === "master") && (
             <>
               <small className="nav-section-title management-title">ADMINISTRAÇÃO</small>
               {visibleNav
-                .filter((item) => item.id === "management")
+                .filter((item) => item.id === "management" || item.id === "master")
                 .map((item) => (
                   <button
                     key={item.id}
                     title={sidebarCollapsed ? item.label : undefined}
-                    className={page === item.id || page === "catalog" ? "nav active" : "nav"}
+                    className={page === item.id || (item.id === "management" && (page === "catalog" || page === "inventory")) ? "nav active" : "nav"}
                     onClick={() => navigate(item.id)}
                   >
                     <i><PremiumIcon name={item.icon} size={17} /></i>
-                    <span>{item.label}</span>
+                    <span>{navigationLabel(item, currentStore.segment)}</span>
                   </button>
                 ))}
             </>
@@ -1847,21 +2592,20 @@ export default function Home() {
 
         <div className="sidebar-footer">
           {data.companyIdentity.logo && <div className="gerivo-technology"><img src={sidebarUsesDarkAssets ? "/gerivo-mark.png" : "/gerivo-mark-light.png"} alt="" /><span>Tecnologia Gerivo</span></div>}
-          <button type="button" className="current-store" title={sidebarCollapsed ? `Loja: ${brandedStore.name}` : undefined} onClick={() => setStoreSwitcherOpen(true)}>
+          <button type="button" className="current-store" title={sidebarCollapsed ? `Empresa: ${brandedStore.companyName}` : undefined} onClick={() => setStoreSwitcherOpen(true)}>
             <PremiumIcon name="store" size={17} />
             <div>
-              <small>EMPRESA / LOJA ATUAL</small>
-              <strong>{brandedStore.name}</strong>
-              <span>Trocar empresa ou loja</span>
+              <small>EMPRESA ATUAL</small>
+              <strong>{brandedStore.companyName}</strong>
             </div>
             <PremiumIcon name="chevron" size={15} />
           </button>
 
-          <button type="button" className="user user-profile-button" title={sidebarCollapsed ? `Perfil: ${userProfile.preferredName || "Petrick"}` : undefined} onClick={() => setProfileOpen(true)}>
+          <button type="button" className="user user-profile-button" title={sidebarCollapsed ? `Perfil: ${userProfile.preferredName || "Usuário"}` : undefined} onClick={() => setProfileOpen(true)}>
             <b>{userProfile.photo ? <img src={userProfile.photo} alt="Foto do perfil" /> : <PremiumIcon name="user" size={17} />}</b>
             <div>
-              <strong>{userProfile.preferredName || "Petrick"}</strong>
-              <small>MASTER GERIVO · Editar perfil</small>
+              <strong>{userProfile.preferredName || "Usuário"}</strong>
+              <small>{currentAccessRole} · Editar perfil</small>
             </div>
             <PremiumIcon name="chevron" size={14} />
           </button>
@@ -1869,10 +2613,7 @@ export default function Home() {
           <button
             className="logout"
             title={sidebarCollapsed ? "Sair" : undefined}
-            onClick={() => {
-              sessionStorage.removeItem("gerivo:session");
-              setLogged(false);
-            }}
+            onClick={logout}
           >
             <PremiumIcon name="logout" size={17} />
             <span>Sair</span>
@@ -1891,23 +2632,20 @@ export default function Home() {
             >
               <PremiumIcon name="menu" size={22} />
             </button>
-            <div>
-              <small>PLATAFORMA GERIVO</small>
-              <h1>{NAV.find((item) => item.id === page)?.label ?? "Gerivo"}</h1>
-            </div>
+            <div><h1>{navigationLabel(NAV.find((item) => item.id === page) ?? NAV[0], currentStore.segment)}</h1></div>
           </div>
 
           <div className="top-actions">
-            {page === "dashboard" && data.companySettings.modules.CHECKLIST ? (
-              <button className="primary" onClick={() => openStartFlow("CHECKLIST")}>+ Nova recepção</button>
-            ) : page === "dashboard" && data.companySettings.modules.QUOTES ? (
-              <button className="primary" onClick={createStandaloneQuote}>+ Novo orçamento</button>
-            ) : page === "checklist" ? (
+            {page === "appointments" ? (
+              <button className="primary" onClick={() => window.dispatchEvent(new CustomEvent("gerivo:new-appointment"))}>{isDeliverySegment(currentStore.segment) ? "+ Novo pedido" : "+ Novo agendamento"}</button>
+            ) : page === "checklist" && !activeAttendance ? (
               <button className="primary" onClick={() => openStartFlow("CHECKLIST")}>+ Nova recepção</button>
             ) : page === "orders" && !activeOrder ? (
               <button className="primary" onClick={createStandaloneOrder}>+ Nova O.S.</button>
             ) : page === "quotes" && !activeQuote ? (
               <button className="primary" onClick={createStandaloneQuote}>+ Novo orçamento</button>
+            ) : page === "catalog" ? (
+              <button className="primary" onClick={() => window.dispatchEvent(new CustomEvent("gerivo:new-catalog-item"))}>+ Novo item</button>
             ) : null}
           </div>
         </header>
@@ -1922,18 +2660,41 @@ export default function Home() {
               onStartStage={startStage}
               onOpenModule={openModuleFromAttendance}
               onDelete={deleteAttendance}
+              onOpenAppointments={() => setPage("appointments")}
               onOpenOrders={() => { setActiveAttendanceId(null); setPage("orders"); }}
               onOpenQuotes={() => { setActiveAttendanceId(null); setPage("quotes"); }}
               companySettings={data.companySettings}
             />
           )}
 
+          {page === "appointments" && (
+            <AppointmentsPage
+              appointments={data.appointments}
+              appointmentSettings={data.appointmentSettings}
+              appointmentBlocks={data.appointmentBlocks}
+              customers={data.customers}
+              storeId={storeId}
+              mode={isDeliverySegment(currentStore.segment) ? "DELIVERY" : "AGENDA"}
+              onAppointmentsChange={(appointments) => setData({ ...data, appointments })}
+              onSettingsChange={(appointmentSettings) => setData({ ...data, appointmentSettings })}
+              onBlocksChange={(appointmentBlocks) => setData({ ...data, appointmentBlocks })}
+            />
+          )}
+
+          {page === "assistant" && (
+            <AssistantPage store={brandedStore} data={data} />
+          )}
+
           {page === "management" && (
             <ManagementHub
               store={brandedStore}
               data={data}
+              isPlatformMaster={platformRole === "MASTER"}
+              sessionAccessToken={session?.access_token || ""}
               onOpenCatalog={() => setPage("catalog")}
+              onOpenInventory={() => setPage("inventory")}
               onOpenIdentity={() => { setSettingsTab("IDENTITY"); setSettingsOpen(true); }}
+              onOpenPricing={() => { setSettingsTab("PRICING"); setSettingsOpen(true); }}
               onOpenModules={() => { setSettingsTab("MODULES"); setSettingsOpen(true); }}
               onOpenChecklist={() => { setSettingsTab("CHECKLIST"); setSettingsOpen(true); }}
             />
@@ -1943,10 +2704,26 @@ export default function Home() {
             <Catalog
               store={brandedStore}
               items={data.catalog}
+              suppliers={data.suppliers}
+              generalMargin={data.companySettings.generalMargin}
               serviceTypes={data.serviceTypes}
               onChange={(catalog) => setData({ ...data, catalog })}
               onServiceTypesChange={(serviceTypes) => setData({ ...data, serviceTypes })}
             />
+          )}
+
+          {page === "inventory" && (
+            <InventoryPage
+              items={data.catalog}
+              suppliers={data.suppliers}
+              generalMargin={data.companySettings.generalMargin}
+              onItemsChange={(catalog) => setData({ ...data, catalog })}
+              onSuppliersChange={(suppliers) => setData({ ...data, suppliers })}
+            />
+          )}
+
+          {page === "master" && platformRole === "MASTER" && (
+            <MasterCommercialPage stores={stores} currentStore={brandedStore} onCreateCompany={(name, segment) => bootstrapCompany(name, name, segment)} />
           )}
 
           {page === "checklist" && (
@@ -2029,7 +2806,7 @@ export default function Home() {
           <span>✓</span>
           <div>
             <strong>{toast}</strong>
-            <small>Seus dados permanecem protegidos nesta sessão.</small>
+            <small>Configurações online; dados operacionais ainda permanecem neste dispositivo.</small>
           </div>
         </div>
       )}
@@ -2041,7 +2818,7 @@ export default function Home() {
           vehicles={data.vehicles}
           attendances={data.attendances}
           currentStoreId={storeId}
-          defaultResponsible={userProfile.preferredName || "Petrick"}
+          defaultResponsible=""
           onClose={() => setStartFlow({ ...startFlow, open: false })}
           onComplete={completeStartFlow}
         />
@@ -2049,7 +2826,7 @@ export default function Home() {
 
       {storeSwitcherOpen && (
         <StoreSwitcherModal
-          stores={STORES}
+          stores={stores}
           currentStoreId={storeId}
           onClose={() => setStoreSwitcherOpen(false)}
           onSelect={changeStore}
@@ -2060,9 +2837,17 @@ export default function Home() {
         <UserProfileModal
           profile={userProfile}
           onClose={() => setProfileOpen(false)}
-          onSave={(profile) => {
+          onSave={async (profile) => {
             setUserProfile(profile);
-            localStorage.setItem("gerivo:user-profile", JSON.stringify(profile));
+            if (session?.user) {
+              const { error } = await supabase.from("profiles").update({
+                full_name: profile.preferredName,
+                phone: profile.phone || null,
+                avatar_url: profile.photo || null,
+                updated_at: new Date().toISOString(),
+              }).eq("id", session.user.id);
+              if (error) window.alert(`Não foi possível salvar o perfil: ${error.message}`);
+            }
             setProfileOpen(false);
             setToast("Perfil atualizado");
             if (saveToastTimer.current) window.clearTimeout(saveToastTimer.current);
@@ -2076,15 +2861,22 @@ export default function Home() {
           companySettings={data.companySettings}
           companyIdentity={data.companyIdentity}
           checklistSettings={data.checklistSettings}
+          isPlatformMaster={platformRole === "MASTER"}
           initialTab={settingsTab}
           onClose={() => setSettingsOpen(false)}
-          onSave={(companySettings, checklistSettings, companyIdentity) => {
-            setData({ ...data, companySettings, checklistSettings, companyIdentity });
-            const currentNav = NAV.find((item) => item.id === page);
-            if (currentNav?.module && !companySettings.modules[currentNav.module]) {
-              setPage("dashboard");
+          onSave={async (companySettings, checklistSettings, companyIdentity) => {
+            try {
+              await syncStoreSettings(companySettings, checklistSettings, companyIdentity);
+              setData({ ...data, companySettings, checklistSettings, companyIdentity });
+              const currentNav = NAV.find((item) => item.id === page);
+              if (currentNav?.module && !companySettings.modules[currentNav.module]) {
+                setPage("dashboard");
+              }
+              setSettingsOpen(false);
+              setToast("Configurações sincronizadas com o Gerivo Online");
+            } catch (error: any) {
+              window.alert(`Não foi possível sincronizar as configurações: ${error.message}`);
             }
-            setSettingsOpen(false);
           }}
         />
       )}
@@ -2092,71 +2884,204 @@ export default function Home() {
   );
 }
 
-function Login({ onSubmit }: { onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
+function SystemLoading() {
+  return (
+    <main className="system-loading">
+      <img src="/gerivo-logo.png" alt="Gerivo" />
+      <span>Preparando seu ambiente...</span>
+    </main>
+  );
+}
+
+function Login({
+  onSubmit,
+  onRecover,
+  error,
+}: {
+  onSubmit: (identifier: string, password: string) => Promise<void>;
+  onRecover: (email: string) => Promise<void>;
+  error: string;
+}) {
   const [show, setShow] = useState(false);
+  const [identifier, setIdentifier] = useState("");
+  const [password, setPassword] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [recovering, setRecovering] = useState(false);
+  const [recoveryEmail, setRecoveryEmail] = useState("");
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSubmitting(true);
+    try { await onSubmit(identifier.trim(), password); } catch { setSubmitting(false); }
+  }
+
+  async function recover() {
+    setSubmitting(true);
+    try {
+      await onRecover(recoveryEmail);
+      setRecovering(false);
+    } catch { /* mensagem exibida no formulário */ }
+    finally { setSubmitting(false); }
+  }
 
   return (
-    <main className="login-page">
-      <section className="login-card">
-        <aside className="login-showcase">
-          <div className="login-brand-lockup">
-            <img src="/gerivo-logo-light.png" alt="Gerivo" />
-            <span>Gerir para Evoluir</span>
-          </div>
+    <main className="public-site">
+      <header className="public-header">
+        <a className="public-logo" href="#inicio" aria-label="Gerivo - início"><img src="/gerivo-logo-light.png" alt="Gerivo" /><span>Gestão que gera resultados</span></a>
+        <nav aria-label="Navegação pública"><a href="#recursos">Conheça a ferramenta</a><a href="#planos">Planos</a><a href="#contato">Contato</a></nav>
+        <a className="public-client-button" href="#acesso">Área do cliente</a>
+      </header>
 
-          <div className="login-message">
-            <small>GERIVO</small>
-            <h1>Seu negócio.<br />Seu sistema.</h1>
-          </div>
+      <section className="public-hero" id="inicio">
+        <div className="public-hero-copy">
+          <small>GESTÃO INTELIGENTE PARA EMPRESAS</small>
+          <h1>Controle completo.<br />Decisões melhores.</h1>
+          <p>Organize clientes, serviços, vendas, estoque, atendimentos e indicadores em uma plataforma modular criada para gerar mais controle, tempo e resultado.</p>
+          <div className="public-hero-actions"><a className="public-primary-link" href="#recursos">Conheça o Gerivo</a><a className="public-secondary-link" href="#planos">Conheça nossos planos</a></div>
+          <div className="public-trust-row"><span>Multiempresa</span><span>Personalizável</span><span>Desktop e celular</span></div>
+        </div>
 
-          <div className="login-showcase-mark">
-            <img src="/gerivo-mark-light.png" alt="" aria-hidden="true" />
-          </div>
-        </aside>
+        <form className="public-login-card" id="acesso" onSubmit={submit}>
+          <div className="public-login-heading"><small>JÁ É CLIENTE?</small><h2>{recovering ? "Recuperar acesso" : "Entre no Gerivo"}</h2><p>{recovering ? "Informe o e-mail cadastrado para receber as instruções." : "Acesse sua empresa com usuário ou e-mail."}</p></div>
+          {recovering ? (
+            <label>E-mail de recuperação
+              <input required autoComplete="email" type="email" value={recoveryEmail} onChange={(event) => setRecoveryEmail(event.target.value)} placeholder="seuemail@empresa.com.br" />
+            </label>
+          ) : (
+            <>
+              <label>Usuário ou e-mail
+                <input required autoCapitalize="none" autoComplete="username" type="text" value={identifier} onChange={(event) => setIdentifier(event.target.value)} placeholder="Digite seu usuário ou e-mail" />
+              </label>
+              <label>Senha
+                <div className="password">
+                  <input required autoComplete="current-password" type={show ? "text" : "password"} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Digite sua senha" />
+                  <button type="button" onClick={() => setShow(!show)} aria-label={show ? "Ocultar senha" : "Mostrar senha"} title={show ? "Ocultar senha" : "Mostrar senha"}><PremiumIcon name={show ? "eyeOff" : "eye"} size={19} /></button>
+                </div>
+              </label>
+            </>
+          )}
 
-        <form onSubmit={onSubmit}>
-          <div className="login-form-brand">
-            <img src="/gerivo-logo.png" alt="Gerivo" />
-            <span>Gerir para Evoluir</span>
-          </div>
+          {error && <div className={error.startsWith("Enviamos") ? "auth-success" : "auth-error"}>{error}</div>}
 
-          <small>ACESSO AO SISTEMA</small>
-          <h2>Bem-vindo</h2>
-          <p>Entre com seu usuário e senha.</p>
-
-          <label>
-            Usuário
-            <input required autoComplete="username" placeholder="Digite seu usuário" />
-          </label>
-
-          <label>
-            Senha
-            <div className="password">
-              <input
-                required
-                autoComplete="current-password"
-                type={show ? "text" : "password"}
-                placeholder="Digite sua senha"
-              />
-              <button
-                type="button"
-                onClick={() => setShow(!show)}
-                aria-label={show ? "Ocultar senha" : "Mostrar senha"}
-                title={show ? "Ocultar senha" : "Mostrar senha"}
-              >
-                <PremiumIcon name={show ? "eyeOff" : "eye"} size={19} />
-              </button>
-            </div>
-          </label>
-
-          <button className="primary login-button">Entrar no Gerivo</button>
-
-          <footer className="login-footer">
-            <span>Gerivo v1.6.1</span>
-            <span>© Gerivo — Sistema desenvolvido por Petrick Maciel</span>
-          </footer>
+          {recovering ? (
+            <div className="login-recovery-actions"><button type="button" className="outline" onClick={() => setRecovering(false)}>Voltar</button><button type="button" className="primary" disabled={submitting} onClick={recover}>{submitting ? "Enviando..." : "Enviar recuperação"}</button></div>
+          ) : (
+            <><button className="primary login-button" disabled={submitting}>{submitting ? "Entrando..." : "Entrar no Gerivo"}</button><button type="button" className="login-link" onClick={() => { setRecovering(true); setRecoveryEmail(identifier.includes("@") ? identifier : ""); }}>Esqueci minha senha ou usuário</button></>
+          )}
+          <div className="public-new-client"><span>Ainda não utiliza o Gerivo?</span><a href="#recursos">Conheça a plataforma</a></div>
         </form>
       </section>
+
+      <section className="public-brand-showcase" aria-label="Visão geral do Gerivo">
+        <div className="public-brand-showcase-copy">
+          <small>GESTÃO QUE GERA RESULTADOS</small>
+          <h2>Uma operação mais clara, conectada e profissional.</h2>
+          <p>O Gerivo reúne a rotina da empresa em um único ambiente, com experiência consistente no computador e no celular.</p>
+          <div><span>Mais controle</span><span>Mais tempo</span><span>Mais resultado</span></div>
+        </div>
+        <figure><img src="/gerivo-showcase.webp" alt="Gerivo em computador e celular" /></figure>
+      </section>
+
+      <section className="public-section" id="recursos">
+        <div className="public-section-heading"><small>CONHEÇA NOSSA FERRAMENTA</small><h2>Uma base única, módulos para cada operação</h2><p>O Gerivo adapta os recursos liberados ao segmento, ao plano e às permissões de cada usuário.</p></div>
+        <div className="public-feature-grid">
+          <article><span><PremiumIcon name="calendar" size={25} /></span><h3>Agenda e atendimento</h3><p>Organize clientes, horários, pedidos, recepções e equipes.</p></article>
+          <article><span><PremiumIcon name="layers" size={25} /></span><h3>Catálogo e estoque</h3><p>Cadastre produtos, serviços, imagens, margens, fornecedores e saldos.</p></article>
+          <article><span><PremiumIcon name="file" size={25} /></span><h3>Orçamentos e ordens</h3><p>Centralize propostas, aprovações e execução dos serviços.</p></article>
+          <article><span><PremiumIcon name="clipboard" size={25} /></span><h3>Checklists profissionais</h3><p>Registre condições, fotos, observações e relatórios modulares.</p></article>
+          <article><span><PremiumIcon name="sparkle" size={25} /></span><h3>Assistente Gerivo</h3><p>Consulte indicadores e transforme dados da empresa em decisões.</p></article>
+          <article><span><PremiumIcon name="store" size={25} /></span><h3>Identidade própria</h3><p>Logo, cores, empresas, unidades, usuários e permissões configuráveis.</p></article>
+        </div>
+      </section>
+
+      <section className="public-section public-plans-section" id="planos">
+        <div className="public-section-heading"><small>PLANOS GERIVO</small><h2>Comece com o que sua empresa precisa</h2><p>Módulos e limites são definidos conforme a contratação.</p></div>
+        <div className="public-plan-grid">
+          <article><small>ESSENCIAL</small><h3>Gerivo Essencial</h3><strong>R$ 119<em>/mês</em></strong><p>1 empresa · 1 unidade · 3 usuários</p><ul><li>Painel e clientes</li><li>Catálogo e orçamentos</li><li>Agenda básica</li></ul><a href="mailto:gerivo.sistemas@gmail.com?subject=Interesse%20no%20Gerivo%20Essencial">Tenho interesse</a></article>
+          <article className="recommended"><b>Mais indicado</b><small>GESTÃO</small><h3>Gerivo Gestão</h3><strong>R$ 219<em>/mês</em></strong><p>1 empresa · até 2 unidades · 8 usuários</p><ul><li>Tudo do Essencial</li><li>O.S., estoque e compras</li><li>Indicadores e satisfação</li></ul><a href="mailto:gerivo.sistemas@gmail.com?subject=Interesse%20no%20Gerivo%20Gest%C3%A3o">Tenho interesse</a></article>
+          <article><small>PROFISSIONAL</small><h3>Gerivo Profissional</h3><strong>R$ 349<em>/mês</em></strong><p>Até 2 empresas · 5 unidades · 20 usuários</p><ul><li>Financeiro gerencial</li><li>Automações e auditoria</li><li>Assistente Gerivo inicial</li></ul><a href="mailto:gerivo.sistemas@gmail.com?subject=Interesse%20no%20Gerivo%20Profissional">Tenho interesse</a></article>
+          <article><small>ENTERPRISE</small><h3>Gerivo Enterprise</h3><strong>R$ 599<em>/mês</em></strong><p>Estrutura e limites personalizados</p><ul><li>Múltiplas empresas</li><li>Implantação acompanhada</li><li>Integrações e suporte prioritário</li></ul><a href="mailto:gerivo.sistemas@gmail.com?subject=Interesse%20no%20Gerivo%20Enterprise">Solicitar proposta</a></article>
+        </div>
+      </section>
+
+      <section className="public-contact" id="contato"><div><small>CONTATE-NOS</small><h2>Vamos entender a operação da sua empresa</h2><p>Converse com o Gerivo sobre módulos, implantação e estrutura adequada para o seu negócio.</p></div><a href="mailto:gerivo.sistemas@gmail.com?subject=Quero%20conhecer%20o%20Gerivo">gerivo.sistemas@gmail.com</a></section>
+      <footer className="public-footer"><img src="/gerivo-logo-light.png" alt="Gerivo" /><span>Gestão que gera resultados.</span><span>Gerivo v1.7.4 · Sistema desenvolvido por Petrick Maciel</span></footer>
+    </main>
+  );
+}
+
+function NoAccess({ onLogout }: { onLogout: () => Promise<void> }) {
+  return (
+    <main className="onboarding-page">
+      <section className="onboarding-card no-access-card">
+        <img src="/gerivo-logo.png" alt="Gerivo" />
+        <small>ACESSO PENDENTE</small>
+        <h1>Seu usuário ainda não possui empresa ou loja vinculada</h1>
+        <p>Solicite ao administrador da empresa a liberação do acesso.</p>
+        <button className="secondary" onClick={() => void onLogout()}>Sair</button>
+      </section>
+    </main>
+  );
+}
+
+function CompanyOnboarding({
+  onSubmit,
+  onLogout,
+  error,
+}: {
+  onSubmit: (companyName: string, storeName: string, segment: string) => Promise<void>;
+  onLogout: () => Promise<void>;
+  error: string;
+}) {
+  const [companyName, setCompanyName] = useState("");
+  const [segment, setSegment] = useState("OUTRO");
+  const [submitting, setSubmitting] = useState(false);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSubmitting(true);
+    try {
+      await onSubmit(companyName.trim(), companyName.trim(), segment);
+    } catch {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <main className="onboarding-page">
+      <form className="onboarding-card" onSubmit={submit}>
+        <img src="/gerivo-logo.png" alt="Gerivo" />
+        <small>CONFIGURAÇÃO INICIAL</small>
+        <h1>Cadastre sua primeira empresa</h1>
+        <p>Informe os dados principais para iniciar a configuração.</p>
+
+        <label>
+          Nome da empresa
+          <input required value={companyName} onChange={(event) => setCompanyName(event.target.value)} placeholder="Ex.: RS Performance" />
+        </label>
+
+
+        <label>
+          Segmento principal
+          <select value={segment} onChange={(event) => setSegment(event.target.value)}>
+            <option value="OFICINA">Oficina e centro automotivo</option>
+            <option value="CONCESSIONARIA">Concessionária</option>
+            <option value="VAREJO">Comércio varejista</option>
+            <option value="AUTOPECAS">Autopeças</option>
+            <option value="MERCADO">Mercado</option>
+            <option value="PADARIA">Padaria</option>
+            <option value="CONFEITARIA">Confeitaria</option>
+            <option value="JOALHERIA">Joalheria</option>
+            <option value="SERVICOS">Prestação de serviços</option>
+            <option value="OUTRO">Outro</option>
+          </select>
+        </label>
+
+        {error && <div className="auth-error">{error}</div>}
+
+        <button className="primary" disabled={submitting}>{submitting ? "Criando ambiente..." : "Criar empresa e continuar"}</button>
+        <button type="button" className="secondary" onClick={onLogout}>Sair</button>
+      </form>
     </main>
   );
 }
@@ -2169,6 +3094,7 @@ function Dashboard({
   onStartStage,
   onOpenModule,
   onDelete,
+  onOpenAppointments,
   onOpenOrders,
   onOpenQuotes,
   companySettings,
@@ -2180,106 +3106,44 @@ function Dashboard({
   onStartStage: (attendance: Attendance, stageId: StageId) => void;
   onOpenModule: (attendance: Attendance, target: "orders" | "quotes") => void;
   onDelete: (attendance: Attendance) => void;
+  onOpenAppointments: () => void;
   onOpenOrders: () => void;
   onOpenQuotes: () => void;
   companySettings: CompanySettings;
 }) {
+  const now = new Date();
+  const sameMonth = (value: string) => { const date = new Date(value); return date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear(); };
   const openAttendances = data.attendances.filter((item) => item.status !== "CONCLUIDO");
-  const closedOrders = data.orders.filter((item) => item.status === "FECHADA");
-  const closedQuotes = data.quotes.filter((item) => item.status === "FECHADO");
+  const monthOrders = data.orders.filter((item) => item.status === "FECHADA" && sameMonth(item.updatedAt));
+  const monthQuotes = data.quotes.filter((item) => item.status === "FECHADO" && sameMonth(item.updatedAt));
+  const monthRevenue = companySettings.modules.ORDERS ? monthOrders.reduce((total, item) => total + item.total, 0) : monthQuotes.reduce((total, item) => total + item.total, 0);
   const openOrders = data.orders.filter((item) => item.status !== "FECHADA");
-  const approvalQuotes = data.quotes.filter((item) => item.status === "AGUARDANDO_APROVACAO");
-  const revenue = companySettings.modules.ORDERS
-    ? closedOrders.reduce((total, item) => total + item.total, 0)
-    : closedQuotes.reduce((total, item) => total + item.total, 0);
+  const openQuotes = data.quotes.filter((item) => item.status !== "FECHADO");
+  const todayAppointments = data.appointments.filter((item) => new Date(item.startsAt).toDateString() === now.toDateString() && !["CANCELADO", "CONCLUIDO"].includes(item.status));
 
-  const metrics: Array<{ label: string; value: string; detail: string }> = [];
-  if (companySettings.modules.CHECKLIST) {
-    metrics.push({ label: "Atendimentos ativos", value: String(openAttendances.length), detail: "Recepções em qualquer etapa" });
-  }
-  metrics.push({ label: "Faturamento registrado", value: money(revenue), detail: companySettings.modules.ORDERS ? "O.S. fechadas" : "Orçamentos fechados" });
-  if (companySettings.modules.ORDERS) {
-    metrics.push({ label: "Ordens de serviço abertas", value: String(openOrders.length), detail: "Abertas, pendentes ou incompletas" });
-  }
-  if (companySettings.modules.QUOTES) {
-    metrics.push({ label: "Aguardando aprovação", value: String(approvalQuotes.length), detail: "Orçamentos enviados ao cliente" });
-  }
-  if (metrics.length < 4 && companySettings.modules.QUOTES) {
-    metrics.push({ label: "Orçamentos em andamento", value: String(data.quotes.filter((item) => item.status !== "FECHADO").length), detail: "Operação comercial" });
-  }
+  const cards: Array<{ label: string; value: string; detail: string; icon: IconName; action?: () => void }> = [
+    { label: "Faturamento do mês", value: money(monthRevenue), detail: `${monthOrders.length + monthQuotes.length} registros concluídos`, icon: "chart" },
+  ];
+  if (companySettings.modules.APPOINTMENTS) cards.push({ label: isDeliverySegment(store.segment) ? "Pedidos de hoje" : "Clientes agendados", value: String(todayAppointments.length), detail: isDeliverySegment(store.segment) ? "Pedidos programados" : "Agendamentos de hoje", icon: "calendar", action: onOpenAppointments });
+  if (companySettings.modules.ORDERS) cards.push({ label: "O.S. abertas", value: money(openOrders.reduce((total, item) => total + item.total, 0)), detail: `${openOrders.length} ordens em aberto`, icon: "wrench", action: onOpenOrders });
+  if (companySettings.modules.QUOTES) cards.push({ label: "Orçamentos abertos", value: money(openQuotes.reduce((total, item) => total + item.total, 0)), detail: `${openQuotes.length} orçamentos em andamento`, icon: "file", action: onOpenQuotes });
 
   return (
     <>
-      <section className="dashboard-heading dashboard-heading-clean">
-        <small>RESUMO OPERACIONAL · {store.name.toUpperCase()}</small>
+      <section className="dashboard-welcome">
+        <div><small>{store.companyName.toUpperCase()}</small><h2>Visão geral da operação</h2></div>
+        {companySettings.modules.CHECKLIST && <button className="primary" onClick={onCreate}>+ Nova recepção</button>}
+      </section>
+      <section className={`dashboard-smart-metrics cards-${Math.min(cards.length, 4)}`}>
+        {cards.slice(0, 4).map((card) => <button key={card.label} className="smart-metric" onClick={card.action} disabled={!card.action}><span><PremiumIcon name={card.icon} size={21} /></span><div><small>{card.label}</small><strong>{card.value}</strong><em>{card.detail}</em></div>{card.action && <PremiumIcon name="chevron" size={16} />}</button>)}
       </section>
 
-      <section className={`metrics dashboard-metrics metrics-${Math.min(metrics.length, 4)}`}>
-        {metrics.slice(0, 4).map((metric) => (
-          <Metric key={metric.label} label={metric.label} value={metric.value} detail={metric.detail} />
-        ))}
-      </section>
+      {(companySettings.modules.ORDERS || companySettings.modules.QUOTES) && <section className="dashboard-operation-grid">
+        {companySettings.modules.ORDERS && <DashboardDocumentPanel eyebrow="ORDENS DE SERVIÇO" title="Em execução" empty="Nenhuma ordem de serviço aberta." records={openOrders.slice(0, 5).map((order) => ({ code: order.code, primary: order.vehicle || order.customer || "Cadastro incompleto", secondary: order.plate || "Sem placa", status: serviceOrderStatusLabel(order.status), statusClass: order.status.toLowerCase(), value: money(order.total) }))} onOpen={onOpenOrders} />}
+        {companySettings.modules.QUOTES && <DashboardDocumentPanel eyebrow="ORÇAMENTOS" title="Em andamento" empty="Nenhum orçamento aberto." records={openQuotes.slice(0, 5).map((quote) => ({ code: quote.code, primary: quote.vehicle || quote.customer || "Cadastro incompleto", secondary: quote.plate || "Sem placa", status: quoteStatusLabel(quote.status), statusClass: quote.status.toLowerCase(), value: money(quote.total) }))} onOpen={onOpenQuotes} />}
+      </section>}
 
-      {(companySettings.modules.ORDERS || companySettings.modules.QUOTES) && (
-        <section className="dashboard-operation-grid">
-          {companySettings.modules.ORDERS && (
-            <DashboardDocumentPanel
-              eyebrow="ORDENS DE SERVIÇO"
-              title="O.S. abertas"
-              empty="Nenhuma ordem de serviço aberta."
-              records={openOrders.slice(0, 5).map((order) => ({
-                code: order.code,
-                primary: order.vehicle || order.customer || "Cadastro incompleto",
-                secondary: order.plate || "Sem placa",
-                status: serviceOrderStatusLabel(order.status),
-                statusClass: order.status.toLowerCase(),
-                value: money(order.total),
-              }))}
-              onOpen={onOpenOrders}
-            />
-          )}
-
-          {companySettings.modules.QUOTES && (
-            <DashboardDocumentPanel
-              eyebrow="ORÇAMENTOS"
-              title="Pendentes de aprovação"
-              empty="Nenhum orçamento aguardando aprovação."
-              records={approvalQuotes.slice(0, 5).map((quote) => ({
-                code: quote.code,
-                primary: quote.vehicle || quote.customer || "Cadastro incompleto",
-                secondary: quote.plate || "Sem placa",
-                status: quoteStatusLabel(quote.status),
-                statusClass: quote.status.toLowerCase(),
-                value: money(quote.total),
-              }))}
-              onOpen={onOpenQuotes}
-            />
-          )}
-        </section>
-      )}
-
-      {companySettings.modules.CHECKLIST && (
-        <section className="panel attendance-panel">
-          <header><div><small>ATENDIMENTOS</small><h3>Atendimentos recentes</h3></div><span className="count">{data.attendances.length} registros</span></header>
-          {data.attendances.length === 0 ? (
-            <div className="empty-attendance"><div className="garage-icon"><PremiumIcon name="car" size={27} /></div><h3>Nenhum atendimento aberto</h3><p>Inicie uma nova recepção para registrar o veículo e começar o atendimento.</p><button className="primary" onClick={onCreate}>Criar primeira recepção</button></div>
-          ) : (
-            <div className="attendance-list">
-              {data.attendances.slice(0, 6).map((attendance) => (
-                <AttendanceCard
-                  key={attendance.id}
-                  attendance={attendance}
-                  onOpen={onOpen}
-                  onStartStage={onStartStage}
-                  onOpenModule={onOpenModule}
-                  onDelete={onDelete}
-                  companySettings={companySettings}
-                />
-              ))}
-            </div>
-          )}
-        </section>
-      )}
+      {companySettings.modules.CHECKLIST && <section className="panel attendance-panel"><header><div><small>ATENDIMENTOS</small><h3>Atendimentos recentes</h3></div><span className="count">{data.attendances.length} registros</span></header>{data.attendances.length === 0 ? <div className="empty-attendance"><div className="garage-icon"><PremiumIcon name="car" size={27} /></div><h3>Nenhum atendimento aberto</h3><button className="primary" onClick={onCreate}>Criar primeira recepção</button></div> : <div className="attendance-list">{data.attendances.slice(0, 6).map((attendance) => <AttendanceCard key={attendance.id} attendance={attendance} onOpen={onOpen} onStartStage={onStartStage} onOpenModule={onOpenModule} onDelete={onDelete} companySettings={companySettings} />)}</div>}</section>}
     </>
   );
 }
@@ -2321,85 +3185,132 @@ function DashboardDocumentPanel({
 function ManagementHub({
   store,
   data,
+  isPlatformMaster,
+  sessionAccessToken,
   onOpenCatalog,
+  onOpenInventory,
   onOpenIdentity,
+  onOpenPricing,
   onOpenModules,
   onOpenChecklist,
 }: {
   store: Store;
   data: StoreData;
+  isPlatformMaster: boolean;
+  sessionAccessToken: string;
   onOpenCatalog: () => void;
+  onOpenInventory: () => void;
   onOpenIdentity: () => void;
+  onOpenPricing: () => void;
   onOpenModules: () => void;
   onOpenChecklist: () => void;
 }) {
-  const activeServices = data.catalog.filter((item) => item.active).length;
+  const [usersOpen, setUsersOpen] = useState(false);
+  const activeItems = data.catalog.filter((item) => item.active).length;
+  const lowStock = data.catalog.filter((item) => item.kind !== "SERVICO" && item.active && item.stock <= item.minimumStock).length;
+
+  const cards = [
+    { key: "identity", label: "Identidade visual", icon: "store" as IconName, value: data.companyIdentity.logo ? "Marca própria" : "Gerivo padrão", action: onOpenIdentity },
+    { key: "catalog", label: "Catálogo", icon: "layers" as IconName, value: `${activeItems} itens ativos`, action: onOpenCatalog },
+    { key: "pricing", label: "Formação de preço", icon: "chart" as IconName, value: `${data.companySettings.generalMargin}% margem geral`, action: onOpenPricing },
+    { key: "inventory", label: "Estoque", icon: "box" as IconName, value: lowStock ? `${lowStock} alertas` : "Estoque regular", action: onOpenInventory },
+    { key: "checklist", label: "Modelos de checklist", icon: "clipboard" as IconName, value: data.checklistSettings.name, action: onOpenChecklist },
+    { key: "users", label: "Usuários e acessos", icon: "users" as IconName, value: "Gerenciar acessos", action: () => setUsersOpen(true) },
+  ];
+  if (isPlatformMaster) cards.splice(3, 0, { key: "modules", label: "Módulos contratados", icon: "modules" as IconName, value: "Controle MASTER", action: onOpenModules });
 
   return (
     <div className="management-page">
-      <section className="management-heading">
-        <div>
-          <small>ADMINISTRAÇÃO DA EMPRESA</small>
-          <h2>Gestão de {store.name}</h2>
-          <p>Configurações disponíveis apenas para usuários com permissão administrativa.</p>
-        </div>
+      <section className="management-heading compact-heading">
+        <div><small>ADMINISTRAÇÃO DA EMPRESA</small><h2>Gestão de {store.companyName}</h2></div>
       </section>
-
-      <section className="management-grid">
-        <button type="button" className="management-card identity-management-card" onClick={onOpenIdentity}>
-          <span className="management-icon identity-preview-icon">{data.companyIdentity.logo ? <img src={data.companyIdentity.logo} alt="" /> : <PremiumIcon name="store" size={24} />}</span>
-          <div>
-            <strong>Identidade visual</strong>
-            <p>Logo, nome exibido e cor da barra lateral para esta empresa.</p>
-            <small>{data.companyIdentity.logo ? "Marca própria ativa · Tecnologia Gerivo" : "Identidade Gerivo padrão"}</small>
-          </div>
-          <PremiumIcon name="chevron" size={18} />
-        </button>
-        <button type="button" className="management-card" onClick={onOpenCatalog}>
-          <span className="management-icon"><PremiumIcon name="layers" size={24} /></span>
-          <div>
-            <strong>Itens e serviços</strong>
-            <p>Cadastre serviços, peças, produtos, preços e padrões de orçamento.</p>
-            <small>{activeServices} itens ativos</small>
-          </div>
-          <PremiumIcon name="chevron" size={18} />
-        </button>
-
-        <button type="button" className="management-card" onClick={onOpenModules}>
-          <span className="management-icon"><PremiumIcon name="modules" size={24} /></span>
-          <div>
-            <strong>Módulos e operação</strong>
-            <p>Escolha quais áreas a empresa utiliza e o padrão de envio de orçamento.</p>
-            <small>Definir módulos e padrão de orçamento</small>
-          </div>
-          <PremiumIcon name="chevron" size={18} />
-        </button>
-
-        <button type="button" className="management-card" onClick={onOpenChecklist}>
-          <span className="management-icon"><PremiumIcon name="clipboard" size={24} /></span>
-          <div>
-            <strong>Modelos de checklist</strong>
-            <p>Defina etapas, grupos e itens aplicáveis ao fluxo da empresa.</p>
-            <small>{data.checklistSettings.name}</small>
-          </div>
-          <PremiumIcon name="chevron" size={18} />
-        </button>
-
-        <button
-          type="button"
-          className="management-card"
-          onClick={() => window.alert("Usuários e permissões serão conectados ao banco na etapa de autenticação real.")}
-        >
-          <span className="management-icon"><PremiumIcon name="users" size={24} /></span>
-          <div>
-            <strong>Usuários e acessos</strong>
-            <p>Gerencie funções, permissões e vínculo com empresas e lojas.</p>
-            <small>Disponível na próxima fase</small>
-          </div>
-          <PremiumIcon name="chevron" size={18} />
-        </button>
+      <section className="management-grid management-grid-clean">
+        {cards.map((card) => (
+          <button type="button" className="management-card clean" key={card.key} onClick={card.action}>
+            <span className="management-icon">{card.key === "identity" && data.companyIdentity.logo ? <img src={data.companyIdentity.logo} alt="" /> : <PremiumIcon name={card.icon} size={24} />}</span>
+            <div><strong>{card.label}</strong><small>{card.value}</small></div>
+            <PremiumIcon name="chevron" size={18} />
+          </button>
+        ))}
       </section>
+      {usersOpen && (
+        <UserAccessModal
+          store={store}
+          accessToken={sessionAccessToken}
+          onClose={() => setUsersOpen(false)}
+        />
+      )}
     </div>
+  );
+}
+
+function suggestUsername(fullName: string, _storeCode: number) {
+  const normalized = fullName.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim().split(/\s+/).filter(Boolean);
+  if (!normalized.length) return "";
+  const first = normalized[0][0] || "u";
+  const last = normalized[normalized.length - 1] || normalized[0];
+  return `${first}.${last}`.replace(/[^a-z0-9.]/g, "");
+}
+
+function UserAccessModal({ store, accessToken, onClose }: { store: Store; accessToken: string; onClose: () => void }) {
+  const [fullName, setFullName] = useState("");
+  const [username, setUsername] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [role, setRole] = useState("MEMBER");
+  const [availability, setAvailability] = useState<"idle" | "checking" | "available" | "unavailable">("idle");
+  const [message, setMessage] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!fullName.trim() || username.trim()) return;
+    setUsername(suggestUsername(fullName, store.publicCode));
+  }, [fullName, store.publicCode, username]);
+
+  useEffect(() => {
+    const value = username.trim();
+    if (value.length < 4) { setAvailability("idle"); return; }
+    setAvailability("checking");
+    const timer = window.setTimeout(async () => {
+      try {
+        const response = await fetch("/api/users/username-availability", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: value }) });
+        const payload = await response.json();
+        setAvailability(payload.available ? "available" : "unavailable");
+        if (payload.username && payload.username !== value) setUsername(payload.username);
+      } catch { setAvailability("unavailable"); }
+    }, 450);
+    return () => window.clearTimeout(timer);
+  }, [username]);
+
+  async function createUser() {
+    setSubmitting(true); setMessage("");
+    try {
+      const response = await fetch("/api/users/create", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ companyId: store.companyId, storeIds: [store.id], fullName, username, email, password, role }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Falha ao criar usuário.");
+      setMessage(`Usuário ${payload.username} criado com sucesso.`);
+      setFullName(""); setUsername(""); setEmail(""); setPassword(""); setAvailability("idle");
+    } catch (error) { setMessage(error instanceof Error ? error.message : "Falha ao criar usuário."); }
+    finally { setSubmitting(false); }
+  }
+
+  return (
+    <div className="modal-backdrop"><section className="compact-modal user-access-modal">
+      <header><div><small>USUÁRIOS E ACESSOS</small><h2>Novo usuário</h2></div><button onClick={onClose}>×</button></header>
+      <div className="user-access-form">
+        <Field label="Nome e sobrenome"><input value={fullName} onChange={(e) => { setFullName(e.target.value); setUsername(""); }} placeholder="Ex.: Maria Silva" /></Field>
+        <Field label="Usuário"><div className="availability-field"><input autoCapitalize="none" value={username} onChange={(e) => setUsername(e.target.value.toLowerCase())} placeholder="nome.sobrenome" /><span className={`availability ${availability}`}>{availability === "checking" ? "Verificando..." : availability === "available" ? "✓ Disponível" : availability === "unavailable" ? "Indisponível" : ""}</span></div></Field>
+        <Field label="E-mail de recuperação"><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="usuario@empresa.com" /></Field>
+        <Field label="Senha temporária"><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Mínimo 8 caracteres" /></Field>
+        <Field label="Perfil"><select value={role} onChange={(e) => setRole(e.target.value)}><option value="MEMBER">Usuário</option><option value="MANAGER">Gestor</option><option value="ADMIN">Administrador</option></select></Field>
+        {message && <div className={message.includes("sucesso") ? "auth-success" : "auth-error"}>{message}</div>}
+      </div>
+      <footer><button className="outline" onClick={onClose}>Fechar</button><button className="primary" disabled={submitting || availability !== "available" || !email || password.length < 8} onClick={createUser}>{submitting ? "Criando..." : "Criar usuário"}</button></footer>
+    </section></div>
   );
 }
 
@@ -2448,108 +3359,547 @@ function Metric({ label, value, detail, compact = false }: { label: string; valu
   return <article className={compact ? "metric compact" : "metric"}><span>{label}</span><strong>{value}</strong><small>{detail}</small></article>;
 }
 
+function normalizeCatalogSuggestion(name: string) {
+  const value = name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const rules: Array<{ terms: string[]; category: string; kind: CatalogKind; icon: string }> = [
+    { terms: ["oleo", "lubrificante"], category: "Lubrificantes", kind: "PRODUTO", icon: "🛢️" },
+    { terms: ["filtro"], category: "Filtros", kind: "PECA", icon: "⚙️" },
+    { terms: ["camiseta", "camisa", "blusa", "vestido", "calca"], category: "Roupas", kind: "PRODUTO", icon: "👕" },
+    { terms: ["bolo", "torta", "doce", "brigadeiro"], category: "Confeitaria", kind: "PRODUTO", icon: "🎂" },
+    { terms: ["corte", "escova", "manicure", "barba"], category: "Beleza", kind: "SERVICO", icon: "✂️" },
+    { terms: ["lavagem", "polimento", "higienizacao"], category: "Estética", kind: "SERVICO", icon: "✨" },
+    { terms: ["hamburguer", "pizza", "marmita", "lanche"], category: "Cardápio", kind: "PRODUTO", icon: "🍔" },
+  ];
+  return rules.find((rule) => rule.terms.some((term) => value.includes(term))) ?? { category: "Geral", kind: "PRODUTO" as CatalogKind, icon: "📦" };
+}
+
+function genericCatalogImage(name: string, icon: string) {
+  const safeName = (name || "Item").slice(0, 24).replace(/[<>&"]/g, "");
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="420" viewBox="0 0 640 420"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#e7f7f1"/><stop offset="1" stop-color="#f5fbf9"/></linearGradient></defs><rect width="640" height="420" rx="40" fill="url(#g)"/><circle cx="320" cy="170" r="88" fill="#fff" stroke="#16826e" stroke-width="4"/><text x="320" y="198" text-anchor="middle" font-size="82">${icon}</text><text x="320" y="315" text-anchor="middle" font-family="Arial" font-size="30" font-weight="700" fill="#0d2630">${safeName}</text><text x="320" y="352" text-anchor="middle" font-family="Arial" font-size="18" fill="#16826e">Imagem de referência Gerivo</text></svg>`;
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
+function effectiveMargin(item: CatalogItem, generalMargin: number) {
+  return item.marginMode === "INDIVIDUAL" && item.individualMargin != null ? item.individualMargin : generalMargin;
+}
+
+function priceFromCost(cost: number, margin: number) {
+  return Math.max(0, Number(cost) || 0) * (1 + Math.max(0, Number(margin) || 0) / 100);
+}
+
 function Catalog({
   store,
   items,
+  suppliers,
+  generalMargin,
   serviceTypes,
   onChange,
   onServiceTypesChange,
 }: {
   store: Store;
   items: CatalogItem[];
+  suppliers: Supplier[];
+  generalMargin: number;
   serviceTypes: ServiceType[];
   onChange: (items: CatalogItem[]) => void;
   onServiceTypesChange: (types: ServiceType[]) => void;
 }) {
-  const [name, setName] = useState("");
-  const [category, setCategory] = useState("");
-  const [kind, setKind] = useState<CatalogKind>("SERVICO");
-  const [price, setPrice] = useState("");
-  const [standard, setStandard] = useState(true);
-  const [serviceTypeId, setServiceTypeId] = useState(serviceTypes.find((item) => item.active)?.id ?? "");
-  const [newServiceType, setNewServiceType] = useState("");
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<"TODOS" | CatalogKind | "INATIVOS">("TODOS");
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [draft, setDraft] = useState<CatalogItem>(() => ({
+    id: uid(), name: "", category: "", kind: "PRODUTO", price: 0, cost: 0, marginMode: "GENERAL", individualMargin: null,
+    image: "", referenceImage: "", sku: "", stock: 0, minimumStock: 0, supplierId: null, active: true, standard: false,
+  }));
 
-  const activeServiceTypes = serviceTypes.filter((item) => item.active);
+  useEffect(() => {
+    const handler = () => { setDraft({ id: uid(), name: "", category: "", kind: "PRODUTO", price: 0, cost: 0, marginMode: "GENERAL", individualMargin: null, image: "", referenceImage: "", sku: "", stock: 0, minimumStock: 0, supplierId: null, active: true, standard: false }); setEditorOpen(true); };
+    window.addEventListener("gerivo:new-catalog-item", handler);
+    return () => window.removeEventListener("gerivo:new-catalog-item", handler);
+  }, []);
 
-  function add(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const value = Number(price.replace(",", ".")) || 0;
-    const selectedType = serviceTypes.find((item) => item.id === serviceTypeId);
-    const finalCategory = kind === "SERVICO" ? (selectedType?.name ?? (category.trim() || "Serviço geral")) : category.trim();
-    onChange([...items, { id: uid(), name: name.trim(), category: finalCategory, kind, price: value, active: true, standard: kind === "SERVICO" ? standard : false, serviceTypeId: kind === "SERVICO" ? selectedType?.id : undefined }]);
-    setName("");
-    setCategory("");
-    setPrice("");
-    setStandard(true);
+  const filtered = items.filter((item) => {
+    const matchesText = `${item.name} ${item.category} ${item.sku}`.toLowerCase().includes(query.toLowerCase());
+    const matchesFilter = filter === "TODOS" ? item.active : filter === "INATIVOS" ? !item.active : item.kind === filter && item.active;
+    return matchesText && matchesFilter;
+  });
+
+  function openItem(item: CatalogItem) { setDraft({ ...item }); setEditorOpen(true); }
+  function applyRecognition() {
+    const suggestion = normalizeCatalogSuggestion(draft.name);
+    setDraft({ ...draft, category: draft.category || suggestion.category, kind: draft.kind || suggestion.kind, referenceImage: genericCatalogImage(draft.name, suggestion.icon) });
+  }
+  async function uploadImage(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]; if (!file) return;
+    const photo = await preparePhoto(file);
+    setDraft({ ...draft, image: photo.dataUrl });
+    event.target.value = "";
+  }
+  function saveItem() {
+    if (!draft.name.trim()) return window.alert("Informe o nome do item.");
+    const margin = effectiveMargin(draft, generalMargin);
+    const calculated = draft.price || priceFromCost(draft.cost, margin);
+    const final = { ...draft, name: draft.name.trim(), category: draft.category.trim() || "Geral", price: Number(calculated.toFixed(2)) };
+    onChange(items.some((item) => item.id === final.id) ? items.map((item) => item.id === final.id ? final : item) : [final, ...items]);
+    setEditorOpen(false);
   }
 
-  function addLibraryItem(template: Omit<CatalogItem, "id" | "active">) {
-    if (items.some((item) => item.name.toLowerCase() === template.name.toLowerCase())) {
-      window.alert("Este serviço já está cadastrado.");
-      return;
-    }
-    onChange([...items, { ...template, id: uid(), active: true }]);
-  }
-
-  function addServiceType(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const value = newServiceType.trim();
-    if (!value) return;
-    if (serviceTypes.some((item) => item.name.toLowerCase() === value.toLowerCase())) {
-      window.alert("Este tipo de serviço já está cadastrado.");
-      return;
-    }
-    const next = { id: uid(), name: value, active: true };
-    onServiceTypesChange([...serviceTypes, next]);
-    setServiceTypeId(next.id);
-    setNewServiceType("");
-  }
-
-  function removeServiceType(type: ServiceType) {
-    if (items.some((item) => item.serviceTypeId === type.id)) {
-      window.alert("Este tipo está vinculado a itens do catálogo. Desative-o ou altere os itens antes de remover.");
-      return;
-    }
-    if (!window.confirm(`Remover o tipo de serviço “${type.name}”?`)) return;
-    onServiceTypesChange(serviceTypes.filter((item) => item.id !== type.id));
-  }
-
-  const standardCount = items.filter((item) => item.standard && item.kind === "SERVICO").length;
-
-  return <section className="catalog-page">
-    <section className="service-type-panel panel">
-      <header><div><small>ORGANIZAÇÃO DO CATÁLOGO</small><h3>Tipos de serviço</h3></div><span className="count">{activeServiceTypes.length} ativos</span></header>
-      <div className="service-type-content">
-        <form onSubmit={addServiceType}><input value={newServiceType} onChange={(event) => setNewServiceType(event.target.value)} placeholder="Ex.: Funilaria e pintura" /><button className="primary" type="submit">Cadastrar tipo</button></form>
-        <div className="service-type-list">
-          {serviceTypes.map((type) => <div key={type.id} className={type.active ? "service-type-chip" : "service-type-chip inactive"}><span>{type.name}</span><button type="button" onClick={() => onServiceTypesChange(serviceTypes.map((item) => item.id === type.id ? { ...item, active: !item.active } : item))}>{type.active ? "Ativo" : "Inativo"}</button><button type="button" className="remove" onClick={() => removeServiceType(type)}>×</button></div>)}
+  return (
+    <div className="catalog-page">
+      <section className="catalog-toolbar panel compact-toolbar">
+        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar por nome, categoria ou código" />
+        <div className="catalog-filters">
+          {(["TODOS", "PRODUTO", "SERVICO", "PECA", "KIT", "INATIVOS"] as const).map((value) => <button key={value} className={filter === value ? "active" : ""} onClick={() => setFilter(value)}>{value === "TODOS" ? "Todos" : value === "INATIVOS" ? "Inativos" : value === "PECA" ? "Peças" : value === "SERVICO" ? "Serviços" : value === "PRODUTO" ? "Produtos" : value === "KIT" ? "Kits" : value}</button>)}
         </div>
+      </section>
+
+      <section className="panel catalog-list-panel">
+        <header><div><small>CATÁLOGO</small><h3>{filtered.length} itens</h3></div></header>
+        <div className="catalog-grid-professional">
+          {filtered.map((item) => {
+            const margin = effectiveMargin(item, generalMargin);
+            const image = item.image || item.referenceImage;
+            return <button key={item.id} className="catalog-product-card" onClick={() => openItem(item)}>
+              <span className="catalog-product-image">{image ? <img src={image} alt={item.name} /> : <PremiumIcon name="image" size={28} />}</span>
+              <div><small>{item.category}</small><strong>{item.name}</strong><span>{item.kind === "SERVICO" ? "Serviço" : `${item.stock} em estoque`}</span></div>
+              <aside><b>{money(item.price)}</b>{item.kind !== "SERVICO" && <small>{margin}% margem</small>}</aside>
+            </button>;
+          })}
+          {!filtered.length && <div className="empty-inline">Nenhum item encontrado.</div>}
+        </div>
+      </section>
+
+      {editorOpen && <div className="modal-backdrop"><section className="compact-modal catalog-editor-modal">
+        <header><div><small>ITEM DO CATÁLOGO</small><h2>{draft.name || "Novo item"}</h2></div><button onClick={() => setEditorOpen(false)}>×</button></header>
+        <div className="catalog-editor-layout">
+          <div className="catalog-image-editor">
+            <div>{draft.image || draft.referenceImage ? <img src={draft.image || draft.referenceImage} alt="" /> : <PremiumIcon name="image" size={42} />}</div>
+            <label>Enviar imagem<input type="file" accept="image/*" onChange={uploadImage} /></label>
+            <button className="outline" type="button" onClick={applyRecognition}>Sugerir categoria e imagem</button>
+          </div>
+          <div className="catalog-editor-fields">
+            <Field label="Nome"><input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></Field>
+            <Field label="Tipo"><select value={draft.kind} onChange={(e) => setDraft({ ...draft, kind: e.target.value as CatalogKind })}><option value="PRODUTO">Produto</option><option value="SERVICO">Serviço</option><option value="PECA">Peça</option><option value="KIT">Kit</option><option value="MATERIAL">Material</option></select></Field>
+            <Field label="Categoria"><input value={draft.category} onChange={(e) => setDraft({ ...draft, category: e.target.value })} /></Field>
+            <Field label="Código / SKU"><input value={draft.sku} onChange={(e) => setDraft({ ...draft, sku: e.target.value })} /></Field>
+            <Field label="Custo"><input inputMode="decimal" value={draft.cost} onChange={(e) => setDraft({ ...draft, cost: Number(e.target.value) || 0 })} /></Field>
+            <Field label="Margem"><select value={draft.marginMode} onChange={(e) => setDraft({ ...draft, marginMode: e.target.value as MarginMode })}><option value="GENERAL">Usar margem geral ({generalMargin}%)</option><option value="INDIVIDUAL">Margem individual</option></select></Field>
+            {draft.marginMode === "INDIVIDUAL" && <Field label="Margem individual %"><input inputMode="decimal" value={draft.individualMargin ?? ""} onChange={(e) => setDraft({ ...draft, individualMargin: e.target.value === "" ? null : Number(e.target.value) || 0 })} /></Field>}
+            <Field label="Preço de venda"><input inputMode="decimal" value={draft.price} onChange={(e) => setDraft({ ...draft, price: Number(e.target.value) || 0 })} /></Field>
+            {draft.kind !== "SERVICO" && <><Field label="Estoque atual"><input inputMode="numeric" value={draft.stock} onChange={(e) => setDraft({ ...draft, stock: Number(e.target.value) || 0 })} /></Field><Field label="Estoque mínimo"><input inputMode="numeric" value={draft.minimumStock} onChange={(e) => setDraft({ ...draft, minimumStock: Number(e.target.value) || 0 })} /></Field><Field label="Fornecedor"><select value={draft.supplierId || ""} onChange={(e) => setDraft({ ...draft, supplierId: e.target.value || null })}><option value="">Sem fornecedor</option>{suppliers.filter((item) => item.active).map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}</select></Field></>}
+            <Field label="Situação"><select value={draft.active ? "1" : "0"} onChange={(e) => setDraft({ ...draft, active: e.target.value === "1" })}><option value="1">Ativo</option><option value="0">Inativo</option></select></Field>
+          </div>
+        </div>
+        <footer><button className="outline" onClick={() => setEditorOpen(false)}>Cancelar</button><button className="primary" onClick={saveItem}>Salvar item</button></footer>
+      </section></div>}
+    </div>
+  );
+}
+
+function agendaDateKey(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function agendaMinutes(value: string) {
+  const [hour, minute] = value.split(":").map(Number);
+  return Math.max(0, Math.min(24 * 60, (hour || 0) * 60 + (minute || 0)));
+}
+
+function agendaTime(minutes: number) {
+  const safe = Math.max(0, Math.min(24 * 60 - 1, Math.round(minutes)));
+  return `${String(Math.floor(safe / 60)).padStart(2, "0")}:${String(safe % 60).padStart(2, "0")}`;
+}
+
+function agendaLocalDate(dateKey: string, minutes: number) {
+  const [year, month, day] = dateKey.split("-").map(Number);
+  return new Date(year, month - 1, day, Math.floor(minutes / 60), minutes % 60, 0, 0);
+}
+
+function agendaStatusLabel(status: AppointmentStatus) {
+  return ({ AGENDADO: "Agendado", CONFIRMADO: "Confirmado", EM_ATENDIMENTO: "Em atendimento", CONCLUIDO: "Concluído", CANCELADO: "Cancelado" } as Record<AppointmentStatus, string>)[status];
+}
+
+function AppointmentsPage({
+  appointments,
+  appointmentSettings,
+  appointmentBlocks,
+  customers,
+  storeId,
+  mode,
+  onAppointmentsChange,
+  onSettingsChange,
+  onBlocksChange,
+}: {
+  appointments: Appointment[];
+  appointmentSettings: AppointmentSettings;
+  appointmentBlocks: AppointmentBlock[];
+  customers: Customer[];
+  storeId: string;
+  mode: "AGENDA" | "DELIVERY";
+  onAppointmentsChange: (items: Appointment[]) => void;
+  onSettingsChange: (settings: AppointmentSettings) => void;
+  onBlocksChange: (items: AppointmentBlock[]) => void;
+}) {
+  const isDelivery = mode === "DELIVERY";
+  const [selectedDate, setSelectedDate] = useState(agendaDateKey(new Date()));
+  const [statusFilter, setStatusFilter] = useState<"TODOS" | AppointmentStatus>("TODOS");
+  const [professionalFilter, setProfessionalFilter] = useState("TODOS");
+  const [open, setOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [blockOpen, setBlockOpen] = useState(false);
+  const [error, setError] = useState("");
+  const [now, setNow] = useState(new Date());
+  const timelineRef = useRef<HTMLDivElement | null>(null);
+  const settings = normalizeAppointmentSettings(appointmentSettings, isDelivery ? "DELIVERY" : "OUTRO");
+  const startMinutes = agendaMinutes(settings.startTime);
+  const endMinutes = Math.max(startMinutes + settings.slotMinutes, agendaMinutes(settings.endTime));
+  const slotMinutes = settings.slotMinutes;
+  const slots = useMemo(() => Array.from({ length: Math.ceil((endMinutes - startMinutes) / slotMinutes) }, (_, index) => startMinutes + index * slotMinutes), [startMinutes, endMinutes, slotMinutes]);
+  const configuredProfessionals = Array.from(new Set([...settings.professionals, ...appointments.map((item) => item.professional.trim()).filter(Boolean)]));
+  const activeProfessionals = professionalFilter === "TODOS" ? configuredProfessionals : configuredProfessionals.filter((item) => item === professionalFilter);
+  const selectedDateValue = agendaLocalDate(selectedDate, 12 * 60);
+  const workingDay = settings.workingDays.includes(selectedDateValue.getDay());
+  const today = selectedDate === agendaDateKey(now);
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+  const currentTimePercent = ((nowMinutes - startMinutes) / Math.max(1, endMinutes - startMinutes)) * 100;
+
+  const emptyDraft = (professional = configuredProfessionals[0] || "Agenda principal", minute = today ? Math.max(startMinutes, Math.ceil((nowMinutes + 15) / slotMinutes) * slotMinutes) : startMinutes): Appointment => ({
+    id: uid(),
+    storeId,
+    customerId: null,
+    customer: "",
+    phone: "",
+    title: isDelivery ? "Pedido" : "Atendimento",
+    professional,
+    startsAt: agendaLocalDate(selectedDate, Math.min(minute, endMinutes - settings.defaultDurationMinutes)).toISOString(),
+    durationMinutes: settings.defaultDurationMinutes,
+    status: "AGENDADO",
+    notes: "",
+  });
+  const [draft, setDraft] = useState<Appointment>(() => emptyDraft());
+  const [settingsDraft, setSettingsDraft] = useState<AppointmentSettings>(settings);
+  const [newProfessional, setNewProfessional] = useState("");
+  const [blockDraft, setBlockDraft] = useState(() => ({ professional: "TODOS", date: selectedDate, startTime: settings.startTime, endTime: agendaTime(Math.min(endMinutes, startMinutes + 60)), reason: "Horário bloqueado" }));
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 60000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    setSettingsDraft(settings);
+  }, [appointmentSettings.startTime, appointmentSettings.endTime, appointmentSettings.slotMinutes, appointmentSettings.defaultDurationMinutes, appointmentSettings.allowOverlap, appointmentSettings.professionals.join("|"), appointmentSettings.workingDays.join("|")]);
+
+  useEffect(() => {
+    const handleNew = () => {
+      setError("");
+      setDraft(emptyDraft());
+      setOpen(true);
+    };
+    window.addEventListener("gerivo:new-appointment", handleNew);
+    return () => window.removeEventListener("gerivo:new-appointment", handleNew);
+  }, [selectedDate, startMinutes, endMinutes, slotMinutes, settings.defaultDurationMinutes, settings.professionals.join("|"), nowMinutes, isDelivery, storeId]);
+
+  useEffect(() => {
+    if (!today || !timelineRef.current || nowMinutes < startMinutes || nowMinutes > endMinutes) return;
+    const slotWidth = window.innerWidth <= 760 ? 66 : 82;
+    const target = Math.max(0, ((nowMinutes - startMinutes) / slotMinutes) * slotWidth - timelineRef.current.clientWidth / 2);
+    timelineRef.current.scrollLeft = target;
+  }, [selectedDate]);
+
+  const dayAppointments = appointments
+    .filter((item) => agendaDateKey(new Date(item.startsAt)) === selectedDate)
+    .filter((item) => statusFilter === "TODOS" || item.status === statusFilter)
+    .filter((item) => professionalFilter === "TODOS" || item.professional === professionalFilter)
+    .sort((a, b) => a.startsAt.localeCompare(b.startsAt));
+  const dayBlocks = appointmentBlocks.filter((item) => agendaDateKey(new Date(item.startsAt)) === selectedDate);
+
+  function moveDate(days: number) {
+    const date = agendaLocalDate(selectedDate, 12 * 60);
+    date.setDate(date.getDate() + days);
+    setSelectedDate(agendaDateKey(date));
+  }
+
+  function openSlot(professional: string, minute: number) {
+    if (!workingDay) return;
+    setError("");
+    setDraft(emptyDraft(professional, minute));
+    setOpen(true);
+  }
+
+  function editAppointment(item: Appointment) {
+    setError("");
+    setDraft({ ...item });
+    setOpen(true);
+  }
+
+  function appointmentCollides(item: Appointment) {
+    const itemStart = new Date(item.startsAt).getTime();
+    const itemEnd = itemStart + item.durationMinutes * 60000;
+    const blocked = appointmentBlocks.some((block) => {
+      if (block.professional && block.professional !== item.professional) return false;
+      const blockStart = new Date(block.startsAt).getTime();
+      const blockEnd = new Date(block.endsAt).getTime();
+      return itemStart < blockEnd && itemEnd > blockStart;
+    });
+    if (blocked) return "Este horário está bloqueado para o responsável selecionado.";
+    if (!settings.allowOverlap) {
+      const overlapping = appointments.some((current) => {
+        if (current.id === item.id || current.status === "CANCELADO" || current.professional !== item.professional) return false;
+        const currentStart = new Date(current.startsAt).getTime();
+        const currentEnd = currentStart + current.durationMinutes * 60000;
+        return itemStart < currentEnd && itemEnd > currentStart;
+      });
+      if (overlapping) return "Já existe um agendamento nesse período para o responsável selecionado.";
+    }
+    return "";
+  }
+
+  function saveAppointment() {
+    setError("");
+    if (!draft.customer.trim()) return setError("Informe o cliente.");
+    if (!draft.professional.trim()) return setError("Selecione um responsável.");
+    const startsAt = new Date(draft.startsAt);
+    if (Number.isNaN(startsAt.getTime())) return setError("Informe uma data e hora válidas.");
+    const minute = startsAt.getHours() * 60 + startsAt.getMinutes();
+    if (minute < startMinutes || minute + draft.durationMinutes > endMinutes) return setError(`O atendimento precisa ficar entre ${settings.startTime} e ${settings.endTime}.`);
+    if (!settings.workingDays.includes(startsAt.getDay())) return setError("O dia selecionado não está configurado como dia de atendimento.");
+    const item = { ...draft, storeId, startsAt: startsAt.toISOString(), professional: draft.professional.trim() };
+    const collision = appointmentCollides(item);
+    if (collision) return setError(collision);
+    onAppointmentsChange(appointments.some((current) => current.id === item.id) ? appointments.map((current) => current.id === item.id ? item : current) : [...appointments, item]);
+    setOpen(false);
+    setDraft(emptyDraft());
+  }
+
+  function deleteAppointment() {
+    if (!appointments.some((item) => item.id === draft.id)) return;
+    if (!window.confirm("Excluir este agendamento?")) return;
+    onAppointmentsChange(appointments.filter((item) => item.id !== draft.id));
+    setOpen(false);
+  }
+
+  function saveSettings() {
+    const normalized = normalizeAppointmentSettings(settingsDraft, isDelivery ? "DELIVERY" : "OUTRO");
+    if (agendaMinutes(normalized.endTime) <= agendaMinutes(normalized.startTime)) return window.alert("O horário final precisa ser posterior ao horário inicial.");
+    onSettingsChange(normalized);
+    setProfessionalFilter("TODOS");
+    setSettingsOpen(false);
+  }
+
+  function saveBlock() {
+    setError("");
+    if (!blockDraft.date) return setError("Informe a data do bloqueio.");
+    const from = agendaMinutes(blockDraft.startTime);
+    const to = agendaMinutes(blockDraft.endTime);
+    if (to <= from) return setError("O fim do bloqueio precisa ser posterior ao início.");
+    const block: AppointmentBlock = {
+      id: uid(),
+      storeId,
+      professional: blockDraft.professional === "TODOS" ? null : blockDraft.professional,
+      startsAt: agendaLocalDate(blockDraft.date, from).toISOString(),
+      endsAt: agendaLocalDate(blockDraft.date, to).toISOString(),
+      reason: blockDraft.reason.trim() || "Horário bloqueado",
+    };
+    onBlocksChange([...appointmentBlocks, block]);
+    setBlockOpen(false);
+  }
+
+  function blockFor(professional: string, minute: number) {
+    const instant = agendaLocalDate(selectedDate, minute).getTime();
+    return dayBlocks.find((block) => (!block.professional || block.professional === professional) && instant >= new Date(block.startsAt).getTime() && instant < new Date(block.endsAt).getTime());
+  }
+
+  function appointmentStyle(item: Appointment) {
+    const date = new Date(item.startsAt);
+    const minutes = date.getHours() * 60 + date.getMinutes();
+    return {
+      left: `${((minutes - startMinutes) / slotMinutes) * 82}px`,
+      width: `${Math.max(76, (item.durationMinutes / slotMinutes) * 82 - 6)}px`,
+    };
+  }
+
+  function blockStyle(block: AppointmentBlock) {
+    const start = new Date(block.startsAt);
+    const end = new Date(block.endsAt);
+    const from = start.getHours() * 60 + start.getMinutes();
+    const duration = Math.max(slotMinutes, (end.getTime() - start.getTime()) / 60000);
+    return {
+      left: `${((from - startMinutes) / slotMinutes) * 82}px`,
+      width: `${Math.max(76, (duration / slotMinutes) * 82 - 6)}px`,
+    };
+  }
+
+  const summary = {
+    total: dayAppointments.filter((item) => item.status !== "CANCELADO").length,
+    confirmed: dayAppointments.filter((item) => item.status === "CONFIRMADO").length,
+    inService: dayAppointments.filter((item) => item.status === "EM_ATENDIMENTO").length,
+    blocked: dayBlocks.length,
+  };
+
+  return <div className="appointments-page agenda-v174">
+    <section className="panel agenda-toolbar">
+      <div className="agenda-date-navigation">
+        <button className="outline agenda-icon-button" onClick={() => moveDate(-1)} aria-label="Dia anterior">‹</button>
+        <button className="outline" onClick={() => setSelectedDate(agendaDateKey(new Date()))}>Hoje</button>
+        <input type="date" value={selectedDate} onChange={(event) => setSelectedDate(event.target.value)} />
+        <button className="outline agenda-icon-button" onClick={() => moveDate(1)} aria-label="Próximo dia">›</button>
+      </div>
+      <div className="agenda-toolbar-filters">
+        <select value={professionalFilter} onChange={(event) => setProfessionalFilter(event.target.value)}><option value="TODOS">Todos os responsáveis</option>{configuredProfessionals.map((item) => <option key={item} value={item}>{item}</option>)}</select>
+        <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as "TODOS" | AppointmentStatus)}><option value="TODOS">Todos os status</option><option value="AGENDADO">Agendados</option><option value="CONFIRMADO">Confirmados</option><option value="EM_ATENDIMENTO">Em atendimento</option><option value="CONCLUIDO">Concluídos</option><option value="CANCELADO">Cancelados</option></select>
+        <button className="outline" onClick={() => { setError(""); setBlockDraft({ professional: "TODOS", date: selectedDate, startTime: settings.startTime, endTime: agendaTime(Math.min(endMinutes, startMinutes + 60)), reason: "Horário bloqueado" }); setBlockOpen(true); }}>Bloquear horário</button>
+        <button className="outline" onClick={() => { setSettingsDraft(settings); setSettingsOpen(true); }}>Configurar agenda</button>
       </div>
     </section>
 
-    <section className="standard-library panel">
-      <header><div><small>BIBLIOTECA RÁPIDA</small><h3>Serviços padrão</h3></div><span className="count">{standardCount} configurados</span></header>
-      <div className="standard-service-grid">
-        {STANDARD_SERVICE_LIBRARY.map((service) => {
-          const exists = items.some((item) => item.name.toLowerCase() === service.name.toLowerCase());
-          return <button key={service.name} type="button" className={exists ? "standard-service-card added" : "standard-service-card"} disabled={exists} onClick={() => addLibraryItem(service)}>
-            <span>Serviço</span><strong>{service.name}</strong><small>{service.category} · {money(service.price)}</small><em>{exists ? "Adicionado" : "+ Adicionar"}</em>
-          </button>;
+    <section className="agenda-day-heading">
+      <div><small>{isDelivery ? "PROGRAMAÇÃO DE PEDIDOS" : "AGENDA OPERACIONAL"}</small><h2>{selectedDateValue.toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "long", year: "numeric" })}</h2><p>{settings.startTime} às {settings.endTime} · intervalos de {settings.slotMinutes} minutos</p></div>
+      <div className="agenda-summary-cards"><span><b>{summary.total}</b> programados</span><span><b>{summary.confirmed}</b> confirmados</span><span><b>{summary.inService}</b> em atendimento</span><span><b>{summary.blocked}</b> bloqueios</span></div>
+    </section>
+
+    {!workingDay && <div className="agenda-closed-banner"><b>Dia sem expediente</b><span>Este dia está desativado na configuração da agenda. Você ainda pode criar um bloqueio ou alterar os dias de funcionamento.</span></div>}
+
+    <section className="panel agenda-desktop-board" ref={timelineRef}>
+      <div className="agenda-grid" style={{ minWidth: `${190 + slots.length * 82}px` }}>
+        <div className="agenda-corner"><strong>Responsável</strong><span>{activeProfessionals.length} agenda(s)</span></div>
+        <div className="agenda-time-header" style={{ gridTemplateColumns: `repeat(${slots.length},82px)` }}>{slots.map((minute) => <div key={minute} className={today && minute <= nowMinutes && nowMinutes < minute + slotMinutes ? "current" : ""}><strong>{agendaTime(minute)}</strong></div>)}</div>
+        {activeProfessionals.map((professional) => {
+          const rowAppointments = dayAppointments.filter((item) => item.professional === professional);
+          const rowBlocks = dayBlocks.filter((item) => !item.professional || item.professional === professional);
+          return <div className="agenda-professional-row" key={professional}>
+            <div className="agenda-professional-name"><span>{professional.slice(0, 1).toUpperCase()}</span><div><strong>{professional}</strong><small>{rowAppointments.filter((item) => item.status !== "CANCELADO").length} compromisso(s)</small></div></div>
+            <div className="agenda-row-timeline" style={{ width: `${slots.length * 82}px`, gridTemplateColumns: `repeat(${slots.length},82px)` }}>
+              {slots.map((minute) => { const blocked = blockFor(professional, minute); const isPast = today && minute + slotMinutes <= nowMinutes; return <button key={minute} type="button" disabled={!workingDay || Boolean(blocked)} className={`${isPast ? "past" : ""} ${blocked ? "blocked" : ""}`} title={blocked?.reason || `Agendar às ${agendaTime(minute)}`} onClick={() => openSlot(professional, minute)} />; })}
+              {today && currentTimePercent >= 0 && currentTimePercent <= 100 && <div className="agenda-now-line" style={{ left: `${((nowMinutes - startMinutes) / slotMinutes) * 82}px` }}><span>{now.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</span></div>}
+              {rowBlocks.map((block) => <button type="button" key={block.id} className="agenda-block-event" style={blockStyle(block)} title={block.reason} onClick={() => { if (window.confirm(`Remover bloqueio: ${block.reason}?`)) onBlocksChange(appointmentBlocks.filter((item) => item.id !== block.id)); }}><b>🔒 {block.reason}</b><span>{new Date(block.startsAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}–{new Date(block.endsAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</span></button>)}
+              {rowAppointments.map((item) => <button type="button" key={item.id} className={`agenda-event status-${item.status.toLowerCase()}`} style={appointmentStyle(item)} onClick={() => editAppointment(item)}><strong>{item.customer}</strong><span>{new Date(item.startsAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })} · {item.title}</span><em>{agendaStatusLabel(item.status)}</em></button>)}
+            </div>
+          </div>;
         })}
       </div>
     </section>
-    <section className="catalog-layout">
-      <article className="panel form-panel"><header><small>CONFIGURAÇÃO PRÓPRIA</small><h3>Novo item ou serviço</h3></header><form onSubmit={add} className="form-grid">
-        <label>Nome<input value={name} onChange={(e) => setName(e.target.value)} required placeholder="Ex.: Troca de pastilhas" /></label>
-        {kind === "SERVICO" ? <label>Tipo de serviço<select value={serviceTypeId} onChange={(event) => setServiceTypeId(event.target.value)} required><option value="">Selecione</option>{activeServiceTypes.map((type) => <option key={type.id} value={type.id}>{type.name}</option>)}</select></label> : <label>Categoria<input value={category} onChange={(e) => setCategory(e.target.value)} required placeholder="Ex.: Filtros" /></label>}
-        <div className="split"><label>Tipo<select value={kind} onChange={(e) => setKind(e.target.value as CatalogKind)}><option value="SERVICO">Serviço</option><option value="PRODUTO">Produto</option><option value="PECA">Peça</option></select></label><label>Preço<input value={price} onChange={(e) => setPrice(e.target.value)} inputMode="decimal" placeholder="0,00" /></label></div>
-        {kind === "SERVICO" && <label className="standard-checkbox"><input type="checkbox" checked={standard} onChange={(e) => setStandard(e.target.checked)} /><span>Disponibilizar como serviço padrão nos orçamentos</span></label>}
-        <button className="primary">Adicionar ao catálogo</button><p>Cada empresa e loja mantém seus próprios tipos, catálogo e serviços padrão.</p>
-      </form></article>
-      <article className="panel"><header><small>{store.name.toUpperCase()}</small><h3>Itens e serviços configurados</h3></header><div className="catalog-list">{items.map((item) => <div className={item.active ? "catalog-row catalog-row-v07" : "catalog-row catalog-row-v07 inactive"} key={item.id}><span className={`pill ${item.kind.toLowerCase()}`}>{item.kind === "SERVICO" ? "Serviço" : item.kind === "PRODUTO" ? "Produto" : "Peça"}</span><div><strong>{item.name}</strong><small>{item.category}{item.standard ? " · Serviço padrão" : ""}</small></div><b>{money(item.price)}</b>{item.kind === "SERVICO" ? <button className={item.standard ? "standard-toggle active" : "standard-toggle"} onClick={() => onChange(items.map((current) => current.id === item.id ? { ...current, standard: !current.standard } : current))}>{item.standard ? "Padrão" : "Tornar padrão"}</button> : <span /> }<input type="checkbox" checked={item.active} onChange={() => onChange(items.map((current) => current.id === item.id ? { ...current, active: !current.active } : current))} /><button onClick={() => onChange(items.filter((current) => current.id !== item.id))}>Remover</button></div>)}</div></article>
+
+    <section className="agenda-mobile-board">
+      {activeProfessionals.map((professional) => {
+        const rowAppointments = dayAppointments.filter((item) => item.professional === professional);
+        const rowBlocks = dayBlocks.filter((item) => !item.professional || item.professional === professional);
+        const available = slots.filter((minute) => !blockFor(professional, minute) && !appointments.some((item) => item.professional === professional && item.status !== "CANCELADO" && agendaDateKey(new Date(item.startsAt)) === selectedDate && minute < new Date(item.startsAt).getHours() * 60 + new Date(item.startsAt).getMinutes() + item.durationMinutes && minute + slotMinutes > new Date(item.startsAt).getHours() * 60 + new Date(item.startsAt).getMinutes())).filter((minute) => !today || minute >= nowMinutes).slice(0, 6);
+        return <article className="panel agenda-mobile-professional" key={professional}><header><div><small>RESPONSÁVEL</small><h3>{professional}</h3></div><button className="primary small" disabled={!workingDay} onClick={() => openSlot(professional, available[0] ?? startMinutes)}>+ Horário</button></header><div className="agenda-mobile-items">{[...rowBlocks.map((block) => ({ kind: "block" as const, time: new Date(block.startsAt).getTime(), block })), ...rowAppointments.map((appointment) => ({ kind: "appointment" as const, time: new Date(appointment.startsAt).getTime(), appointment }))].sort((a, b) => a.time - b.time).map((entry) => entry.kind === "block" ? <button key={entry.block.id} className="agenda-mobile-block" onClick={() => { if (window.confirm(`Remover bloqueio: ${entry.block.reason}?`)) onBlocksChange(appointmentBlocks.filter((item) => item.id !== entry.block.id)); }}><time>{new Date(entry.block.startsAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</time><div><strong>🔒 {entry.block.reason}</strong><span>Até {new Date(entry.block.endsAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</span></div></button> : <button key={entry.appointment.id} className={`agenda-mobile-event status-${entry.appointment.status.toLowerCase()}`} onClick={() => editAppointment(entry.appointment)}><time>{new Date(entry.appointment.startsAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</time><div><strong>{entry.appointment.customer}</strong><span>{entry.appointment.title} · {agendaStatusLabel(entry.appointment.status)}</span></div></button>)}{!rowAppointments.length && !rowBlocks.length && <div className="empty-inline">Nenhum compromisso neste dia.</div>}</div>{workingDay && <div className="agenda-free-slots"><small>PRÓXIMOS HORÁRIOS LIVRES</small><div>{available.length ? available.map((minute) => <button key={minute} onClick={() => openSlot(professional, minute)}>{agendaTime(minute)}</button>) : <span>Sem horários livres no período.</span>}</div></div>}</article>;
+      })}
     </section>
-  </section>;
+
+    {open && <div className="modal-backdrop"><section className="compact-modal agenda-modal"><header><div><small>{appointments.some((item) => item.id === draft.id) ? "EDITAR" : "NOVO"} {isDelivery ? "PEDIDO" : "AGENDAMENTO"}</small><h2>{appointments.some((item) => item.id === draft.id) ? "Atualizar compromisso" : isDelivery ? "Cadastrar pedido" : "Agendar cliente"}</h2></div><button onClick={() => setOpen(false)}>×</button></header>{error && <div className="agenda-form-error">{error}</div>}<div className="appointment-form"><Field label="Cliente"><input list="appointment-customers" value={draft.customer} onChange={(event) => { const customer = customers.find((item) => item.name === event.target.value); setDraft({ ...draft, customer: event.target.value, customerId: customer?.id || null, phone: customer?.phone || draft.phone }); }} /><datalist id="appointment-customers">{customers.map((item) => <option key={item.id} value={item.name} />)}</datalist></Field><Field label="Telefone"><input inputMode="tel" value={draft.phone} onChange={(event) => setDraft({ ...draft, phone: event.target.value })} /></Field><Field label={isDelivery ? "Pedido / descrição" : "Serviço / motivo"}><input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} /></Field><Field label="Data e hora"><input type="datetime-local" value={draft.startsAt ? new Date(draft.startsAt).toLocaleString("sv-SE").slice(0, 16).replace(" ", "T") : ""} onChange={(event) => setDraft({ ...draft, startsAt: event.target.value ? new Date(event.target.value).toISOString() : "" })} /></Field><Field label={isDelivery ? "Previsão" : "Duração"}><select value={draft.durationMinutes} onChange={(event) => setDraft({ ...draft, durationMinutes: Number(event.target.value) })}>{[15, 30, 45, 60, 90, 120, 180, 240].map((value) => <option key={value} value={value}>{value < 60 ? `${value} min` : value % 60 ? `${Math.floor(value / 60)}h${value % 60}` : `${value / 60} hora${value > 60 ? "s" : ""}`}</option>)}</select></Field><Field label="Responsável"><select value={draft.professional} onChange={(event) => setDraft({ ...draft, professional: event.target.value })}>{configuredProfessionals.map((item) => <option key={item} value={item}>{item}</option>)}</select></Field><Field label="Status"><select value={draft.status} onChange={(event) => setDraft({ ...draft, status: event.target.value as AppointmentStatus })}><option value="AGENDADO">Agendado</option><option value="CONFIRMADO">Confirmado</option><option value="EM_ATENDIMENTO">Em atendimento</option><option value="CONCLUIDO">Concluído</option><option value="CANCELADO">Cancelado</option></select></Field><Field label="Observações"><textarea rows={3} value={draft.notes} onChange={(event) => setDraft({ ...draft, notes: event.target.value })} /></Field></div><footer>{appointments.some((item) => item.id === draft.id) && <button className="danger" onClick={deleteAppointment}>Excluir</button>}<span /><button className="outline" onClick={() => setOpen(false)}>Cancelar</button><button className="primary" onClick={saveAppointment}>Salvar</button></footer></section></div>}
+
+    {blockOpen && <div className="modal-backdrop"><section className="compact-modal agenda-modal"><header><div><small>BLOQUEIO DE AGENDA</small><h2>Bloquear horário</h2></div><button onClick={() => setBlockOpen(false)}>×</button></header>{error && <div className="agenda-form-error">{error}</div>}<div className="appointment-form"><Field label="Responsável"><select value={blockDraft.professional} onChange={(event) => setBlockDraft({ ...blockDraft, professional: event.target.value })}><option value="TODOS">Todos os responsáveis</option>{configuredProfessionals.map((item) => <option key={item} value={item}>{item}</option>)}</select></Field><Field label="Data"><input type="date" value={blockDraft.date} onChange={(event) => setBlockDraft({ ...blockDraft, date: event.target.value })} /></Field><Field label="Início"><input type="time" step={settings.slotMinutes * 60} value={blockDraft.startTime} onChange={(event) => setBlockDraft({ ...blockDraft, startTime: event.target.value })} /></Field><Field label="Fim"><input type="time" step={settings.slotMinutes * 60} value={blockDraft.endTime} onChange={(event) => setBlockDraft({ ...blockDraft, endTime: event.target.value })} /></Field><Field label="Motivo"><input value={blockDraft.reason} onChange={(event) => setBlockDraft({ ...blockDraft, reason: event.target.value })} placeholder="Almoço, reunião, treinamento..." /></Field></div><footer><button className="outline" onClick={() => setBlockOpen(false)}>Cancelar</button><button className="primary" onClick={saveBlock}>Salvar bloqueio</button></footer></section></div>}
+
+    {settingsOpen && <div className="modal-backdrop"><section className="compact-modal agenda-settings-modal"><header><div><small>CONFIGURAÇÃO</small><h2>Configurar agenda</h2></div><button onClick={() => setSettingsOpen(false)}>×</button></header><div className="agenda-settings-body"><div className="agenda-settings-grid"><Field label="Início do expediente"><input type="time" value={settingsDraft.startTime} onChange={(event) => setSettingsDraft({ ...settingsDraft, startTime: event.target.value })} /></Field><Field label="Fim do expediente"><input type="time" value={settingsDraft.endTime} onChange={(event) => setSettingsDraft({ ...settingsDraft, endTime: event.target.value })} /></Field><Field label="Intervalo da grade"><select value={settingsDraft.slotMinutes} onChange={(event) => setSettingsDraft({ ...settingsDraft, slotMinutes: Number(event.target.value) as 15 | 30 | 60 })}><option value="15">15 minutos</option><option value="30">30 minutos</option><option value="60">60 minutos</option></select></Field><Field label="Duração padrão"><select value={settingsDraft.defaultDurationMinutes} onChange={(event) => setSettingsDraft({ ...settingsDraft, defaultDurationMinutes: Number(event.target.value) })}>{[30, 45, 60, 90, 120, 180].map((value) => <option key={value} value={value}>{value < 60 ? `${value} minutos` : value % 60 ? `${Math.floor(value / 60)}h${value % 60}` : `${value / 60} hora${value > 60 ? "s" : ""}`}</option>)}</select></Field></div><div className="agenda-weekdays"><strong>Dias de funcionamento</strong><div>{["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"].map((label, day) => <button key={label} type="button" className={settingsDraft.workingDays.includes(day) ? "active" : ""} onClick={() => setSettingsDraft({ ...settingsDraft, workingDays: settingsDraft.workingDays.includes(day) ? settingsDraft.workingDays.filter((item) => item !== day) : [...settingsDraft.workingDays, day].sort() })}>{label}</button>)}</div></div><label className="agenda-overlap"><input type="checkbox" checked={settingsDraft.allowOverlap} onChange={(event) => setSettingsDraft({ ...settingsDraft, allowOverlap: event.target.checked })} /><span><strong>Permitir sobreposição de horários</strong><small>Quando desativado, o Gerivo impede dois compromissos no mesmo período para o mesmo responsável.</small></span></label><div className="agenda-professionals-config"><strong>Responsáveis, profissionais ou recursos</strong><div className="agenda-professionals-list">{settingsDraft.professionals.map((item) => <span key={item}>{item}<button type="button" disabled={settingsDraft.professionals.length === 1} onClick={() => setSettingsDraft({ ...settingsDraft, professionals: settingsDraft.professionals.filter((current) => current !== item) })}>×</button></span>)}</div><div className="agenda-professional-add"><input value={newProfessional} onChange={(event) => setNewProfessional(event.target.value)} placeholder="Ex.: Camila, Box 1, Produção" /><button className="outline" type="button" onClick={() => { const value = newProfessional.trim(); if (!value || settingsDraft.professionals.some((item) => item.toLowerCase() === value.toLowerCase())) return; setSettingsDraft({ ...settingsDraft, professionals: [...settingsDraft.professionals, value] }); setNewProfessional(""); }}>Adicionar</button></div></div></div><footer><button className="outline" onClick={() => setSettingsOpen(false)}>Cancelar</button><button className="primary" onClick={saveSettings}>Salvar configuração</button></footer></section></div>}
+  </div>;
 }
+
+function InventoryPage({ items, suppliers, generalMargin, onItemsChange, onSuppliersChange }: { items: CatalogItem[]; suppliers: Supplier[]; generalMargin: number; onItemsChange: (items: CatalogItem[]) => void; onSuppliersChange: (items: Supplier[]) => void }) {
+  const products = items.filter((item) => item.active && item.kind !== "SERVICO");
+  const lowStock = products.filter((item) => item.stock <= item.minimumStock);
+  const stockCost = products.reduce((total, item) => total + item.stock * item.cost, 0);
+  const potentialRevenue = products.reduce((total, item) => total + item.stock * item.price, 0);
+  const [supplierName, setSupplierName] = useState("");
+  const suggestions = lowStock.map((item) => {
+    const supplier = suppliers.find((s) => s.id === item.supplierId);
+    const suggestedQty = Math.max(item.minimumStock * 2 - item.stock, item.minimumStock || 1);
+    return { item, supplier, suggestedQty };
+  });
+  return <div className="inventory-page"><section className="metrics metrics-3"><Metric label="Custo em estoque" value={money(stockCost)} detail={`${products.length} itens controlados`} /><Metric label="Venda potencial" value={money(potentialRevenue)} detail={`Margem geral ${generalMargin}%`} /><Metric label="Reposição necessária" value={String(lowStock.length)} detail="Itens no mínimo ou abaixo" /></section><section className="inventory-grid"><article className="panel"><header><div><small>ASSISTENTE DE ESTOQUE</small><h3>Sugestões de compra</h3></div></header>{suggestions.length ? suggestions.map(({ item, supplier, suggestedQty }) => <div className="stock-suggestion" key={item.id}><span><PremiumIcon name="sparkle" size={18} /></span><div><strong>Comprar {suggestedQty} un. de {item.name}</strong><small>{supplier?.name || "Fornecedor não definido"} · saldo atual {item.stock}</small></div><button className="outline small" onClick={() => onItemsChange(items.map((current) => current.id === item.id ? { ...current, stock: current.stock + suggestedQty } : current))}>Registrar entrada</button></div>) : <div className="empty-inline">Nenhuma reposição urgente.</div>}</article><article className="panel"><header><div><small>FORNECEDORES</small><h3>{suppliers.filter((s) => s.active).length} cadastrados</h3></div></header><div className="supplier-list">{suppliers.map((supplier) => <div key={supplier.id}><strong>{supplier.name}</strong><span>{supplier.paymentTerms || "Sem condição"} · {supplier.leadTimeDays} dias</span></div>)}</div><div className="supplier-add"><input value={supplierName} onChange={(e) => setSupplierName(e.target.value)} placeholder="Nome do fornecedor" /><button className="primary small" onClick={() => { if (!supplierName.trim()) return; onSuppliersChange([...suppliers, { id: uid(), name: supplierName.trim(), document: "", phone: "", email: "", paymentTerms: "", leadTimeDays: 0, active: true }]); setSupplierName(""); }}>Cadastrar</button></div></article></section><section className="panel inventory-table"><header><div><small>POSIÇÃO ATUAL</small><h3>Estoque</h3></div></header>{products.map((item) => <div className={item.stock <= item.minimumStock ? "inventory-row alert" : "inventory-row"} key={item.id}><div><strong>{item.name}</strong><small>{item.category} · {item.sku || "sem código"}</small></div><label>Saldo<input inputMode="numeric" value={item.stock} onChange={(e) => onItemsChange(items.map((current) => current.id === item.id ? { ...current, stock: Math.max(0, Number(e.target.value) || 0) } : current))} /></label><span>{money(item.cost)} custo</span><span>{money(item.price)} venda</span></div>)}</section></div>;
+}
+
+function AssistantPage({ store, data }: { store: Store; data: StoreData }) {
+  const [question, setQuestion] = useState("Quero que você calcule o faturamento dos últimos 12 meses e me diga em que mês vendemos mais.");
+  const [answer, setAnswer] = useState<{ text: string; rows?: Array<{ label: string; value: number }> } | null>(null);
+  function analyze() {
+    const normalized = question.toLowerCase();
+    if (normalized.includes("faturamento") || normalized.includes("vendeu mais")) {
+      const now = new Date();
+      const rows = Array.from({ length: 12 }, (_, index) => {
+        const date = new Date(now.getFullYear(), now.getMonth() - (11 - index), 1);
+        const value = data.orders.filter((item) => item.status === "FECHADA" && new Date(item.updatedAt).getMonth() === date.getMonth() && new Date(item.updatedAt).getFullYear() === date.getFullYear()).reduce((total, item) => total + item.total, 0);
+        return { label: date.toLocaleDateString("pt-BR", { month: "short", year: "2-digit" }), value };
+      });
+      const total = rows.reduce((sum, row) => sum + row.value, 0);
+      const best = rows.reduce((current, row) => row.value > current.value ? row : current, rows[0]);
+      setAnswer({ text: total ? `Nos últimos 12 meses, o faturamento registrado foi ${money(total)}. O melhor mês foi ${best.label}, com ${money(best.value)}.` : "Ainda não existem O.S. fechadas suficientes para calcular o faturamento dos últimos 12 meses.", rows });
+    } else if (normalized.includes("estoque")) {
+      const low = data.catalog.filter((item) => item.kind !== "SERVICO" && item.active && item.stock <= item.minimumStock);
+      setAnswer({ text: low.length ? `${low.length} itens exigem atenção: ${low.slice(0, 5).map((item) => item.name).join(", ")}.` : "O estoque não possui itens abaixo do mínimo." });
+    } else if (normalized.includes("orçamento")) {
+      const open = data.quotes.filter((item) => item.status !== "FECHADO");
+      setAnswer({ text: `Existem ${open.length} orçamentos abertos, somando ${money(open.reduce((total, item) => total + item.total, 0))}.` });
+    } else if (normalized.includes("agenda") || normalized.includes("agend")) {
+      setAnswer({ text: `Há ${data.appointments.filter((item) => item.status !== "CANCELADO" && item.status !== "CONCLUIDO").length} agendamentos ativos nesta loja.` });
+    } else {
+      setAnswer({ text: "Posso analisar faturamento, orçamentos, estoque e agenda com os dados disponíveis nesta loja." });
+    }
+  }
+  const max = Math.max(1, ...(answer?.rows?.map((row) => row.value) || [1]));
+  return <div className="assistant-page"><section className="assistant-hero"><span><PremiumIcon name="sparkle" size={28} /></span><div><small>ASSISTENTE GERIVO</small><h2>Pergunte sobre sua operação</h2><p>{store.companyName}</p></div></section><section className="panel assistant-chat"><textarea value={question} onChange={(e) => setQuestion(e.target.value)} /><button className="primary" onClick={analyze}>Analisar dados</button>{answer && <div className="assistant-answer"><strong>Análise Gerivo</strong><p>{answer.text}</p>{answer.rows && <div className="assistant-chart">{answer.rows.map((row) => <div key={row.label}><span>{row.label}</span><i><em style={{ width: `${Math.max(2, row.value / max * 100)}%` }} /></i><b>{money(row.value)}</b></div>)}</div>}<small>A análise respeita a empresa, a loja e as permissões do usuário.</small></div>}</section></div>;
+}
+
+function MasterCommercialPage({ stores, currentStore, onCreateCompany }: { stores: Store[]; currentStore: Store; onCreateCompany: (name: string, segment: string) => Promise<void> }) {
+  const supabase = useMemo(() => getSupabaseBrowserClient(), []);
+  const [plans, setPlans] = useState<any[]>([]);
+  const [subscriptions, setSubscriptions] = useState<any[]>([]);
+  const [message, setMessage] = useState("");
+  const [createOpen, setCreateOpen] = useState(false);
+  const [companyName, setCompanyName] = useState("");
+  const [segment, setSegment] = useState("OUTRO");
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState("");
+  const [search, setSearch] = useState("");
+  async function load() {
+    const [plansResult, subscriptionsResult] = await Promise.all([
+      supabase.from("subscription_plans").select("*").eq("active", true).order("sort_order"),
+      supabase.from("company_subscriptions").select("*, companies(name), subscription_plans(name, code)").order("created_at", { ascending: false }),
+    ]);
+    setPlans(plansResult.data || []); setSubscriptions(subscriptionsResult.data || []);
+  }
+  useEffect(() => { void load(); }, []);
+  async function activate(companyId: string, planId: string, months: number) {
+    const { error } = await supabase.rpc("master_activate_subscription", { p_company_id: companyId, p_plan_id: planId, p_duration_months: months });
+    setMessage(error ? error.message : "Assinatura ativada. A vigência começou agora.");
+    if (!error) await load();
+  }
+  function closeCreateCompany() {
+    if (creating) return;
+    setCreateOpen(false);
+    setCreateError("");
+  }
+  async function createCompany() {
+    if (!companyName.trim() || creating) return;
+    setCreating(true);
+    setMessage("");
+    setCreateError("");
+    try {
+      await onCreateCompany(companyName.trim(), segment);
+      setCreateOpen(false);
+      setCompanyName("");
+      setSegment("OUTRO");
+      setMessage("Empresa criada. Defina o plano e ative a assinatura para iniciar a vigência.");
+    } catch (error) {
+      const errorMessage = error instanceof Error && error.message
+        ? error.message
+        : "Não foi possível criar a empresa.";
+      setCreateError(errorMessage);
+    } finally {
+      setCreating(false);
+    }
+  }
+  const currentSubscription = subscriptions.find((item) => item.company_id === currentStore.companyId);
+  const companies = Array.from(new Map(stores.map((store) => [store.companyId, { id: store.companyId, name: store.companyName, publicCode: store.publicCode }])).values());
+  const filteredCompanies = companies.filter((company) => `${company.name} ${company.publicCode}`.toLowerCase().includes(search.trim().toLowerCase()));
+  return <div className="master-page"><section className="master-heading"><div><small>ADMINISTRAÇÃO COMERCIAL GERIVO</small><h2>Planos, empresas e acessos</h2></div><button type="button" className="primary" onClick={() => { setCreateError(""); setCreateOpen(true); }}>+ Nova empresa</button></section><section className="plan-mini-grid">{plans.map((plan) => <article key={plan.id}><small>{plan.code}</small><h3>{plan.name}</h3><strong>{money(plan.monthly_price)}/mês</strong><span>{plan.company_limit} empresa · {plan.store_limit} lojas · {plan.user_limit} usuários</span><button className="primary small" onClick={() => activate(currentStore.companyId, plan.id, 12)}>Ativar 12 meses</button></article>)}</section><section className="panel subscription-current"><header><div><small>EMPRESA SELECIONADA</small><h3>{currentStore.companyName}</h3></div></header>{currentSubscription ? <div className="subscription-detail"><strong>{currentSubscription.subscription_plans?.name || "Plano"}</strong><span>Status: {currentSubscription.status}</span><span>Ativação: {currentSubscription.activated_at ? formatDate(currentSubscription.activated_at) : "não ativada"}</span><span>Vencimento: {currentSubscription.expires_at ? formatDate(currentSubscription.expires_at) : "—"}</span></div> : <div className="empty-inline">Empresa ainda sem assinatura ativa.</div>}{message && <div className={message.startsWith("Não") ? "auth-error" : "auth-success"}>{message}</div>}</section><section className="panel"><header><div><small>EMPRESAS DA PLATAFORMA</small><h3>{companies.length} empresas</h3></div><input className="master-company-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar por empresa ou ID" /></header><div className="master-company-list">{filteredCompanies.map((company) => <div key={company.id}><strong>{company.name}</strong><span>{subscriptions.find((item) => item.company_id === company.id)?.status || "AGUARDANDO_ATIVAÇÃO"}</span><small>ID de busca: {company.publicCode}</small></div>)}</div></section>{createOpen && <div className="modal-backdrop"><section className="compact-modal master-company-modal"><header><div><small>NOVA EMPRESA</small><h2>Cadastrar cliente Gerivo</h2></div><button type="button" disabled={creating} onClick={closeCreateCompany}>×</button></header><div className="master-company-form" aria-busy={creating}><Field label="Nome da empresa"><input autoFocus value={companyName} onChange={(event) => setCompanyName(event.target.value)} placeholder="Nome que aparecerá no sistema" /></Field><Field label="Segmento"><select value={segment} onChange={(event) => setSegment(event.target.value)}><option value="OFICINA">Oficina e centro automotivo</option><option value="CONCESSIONARIA">Concessionária</option><option value="VAREJO">Comércio varejista</option><option value="CONFEITARIA">Confeitaria</option><option value="SALAO_BELEZA">Salão de beleza</option><option value="ESTETICA_AUTOMOTIVA">Lavagem e estética</option><option value="DELIVERY">Delivery de comida</option><option value="SERVICOS">Prestação de serviços</option><option value="OUTRO">Outro</option></select></Field>{createError && <div className="auth-error master-company-error" role="alert">{createError}</div>}</div><footer><button type="button" className="outline" disabled={creating} onClick={closeCreateCompany}>Cancelar</button><button type="button" className="primary" disabled={creating || !companyName.trim()} onClick={createCompany}>{creating ? "Criando empresa..." : "Criar empresa"}</button></footer></section></div>}</div>;
+}
+
 function Checklist({
   store,
   attendance,
@@ -2627,6 +3977,15 @@ function Checklist({
     updateStage({ ...stage, items: stage.items.map((item) => item.id === itemId ? { ...item, ...patch } : item) });
   }
 
+  function updateCheckinField(itemId: string, field: "mileage" | "fuel", value: string) {
+    const normalized = field === "mileage" ? value.replace(/\D/g, "") : value;
+    const stages = attendance.stages.map((currentStage) => currentStage.id === stage.id ? {
+      ...currentStage,
+      items: currentStage.items.map((item) => item.id === itemId ? { ...item, value: normalized !== "" ? "SIM" as ItemValue : "PENDENTE" as ItemValue } : item),
+    } : currentStage);
+    patchAttendance({ reception: { ...attendance.reception, [field]: normalized }, stages });
+  }
+
   async function addPhotos(files: File[], callback: (photos: Photo[]) => void) {
     if (!files.length) return;
     setPhotoMessage(`Processando ${files.length} foto(s)...`);
@@ -2672,7 +4031,7 @@ function Checklist({
     }
 
     const now = new Date().toISOString();
-    const stages = attendance.stages.map((item) => item.id === stage.id ? { ...item, status: "CONCLUIDO" as StageStatus, completedAt: now, completedBy: attendance.reception.responsible || "Petrick" } : item);
+    const stages = attendance.stages.map((item) => item.id === stage.id ? { ...item, status: "CONCLUIDO" as StageStatus, completedAt: now, completedBy: attendance.reception.responsible || "Usuário do sistema" } : item);
     let status: AttendanceStatus;
     if (stage.id === "checkin") status = "AGUARDANDO_CHECKUP";
     else if (stage.id === "checkup") status = "AGUARDANDO_QUALITY";
@@ -2697,14 +4056,12 @@ function Checklist({
   return (
     <div className="check-page workshop-checklist">
       <article className="panel reception-board">
-        <header className="row-head"><div><small>{store.name.toUpperCase()} · {attendance.code}</small><h3>Ficha do veículo</h3></div><button className="outline" onClick={onExit}>← Voltar aos atendimentos</button></header>
+        <header className="row-head"><div><small>{store.companyName.toUpperCase()} · {attendance.code}</small><h3>Ficha do veículo</h3></div><button className="outline" onClick={onExit}>← Voltar aos atendimentos</button></header>
         <div className="reception">
           <Field label="Cliente"><input value={attendance.reception.customer} disabled={isLocked} onChange={(e) => setReception("customer", e.target.value)} placeholder="Nome do cliente" /></Field>
           <Field label="WhatsApp"><input value={attendance.reception.phone} disabled={isLocked} onChange={(e) => setReception("phone", e.target.value)} placeholder="(00) 00000-0000" /></Field>
           <Field label="Veículo"><input value={attendance.reception.vehicle} disabled={isLocked} onChange={(e) => setReception("vehicle", e.target.value)} placeholder="Modelo e versão" /></Field>
           <Field label="Placa"><input value={attendance.reception.plate} disabled={isLocked} maxLength={7} onChange={(e) => setReception("plate", e.target.value)} placeholder="ABC1D23" /></Field>
-          <Field label="Quilometragem"><input value={attendance.reception.mileage} disabled={isLocked} onChange={(e) => setReception("mileage", e.target.value)} placeholder="0" /></Field>
-          <Field label="Combustível"><select value={attendance.reception.fuel} disabled={isLocked} onChange={(e) => setReception("fuel", e.target.value)}><option>Reserva</option><option>1/4</option><option>1/2</option><option>3/4</option><option>Cheio</option></select></Field>
           <Field label="Responsável"><input value={attendance.reception.responsible} disabled={isLocked} onChange={(e) => setReception("responsible", e.target.value)} /></Field>
           {stage.id !== "checkin" && <Field label="Técnico"><input value={attendance.reception.technician} disabled={isLocked} onChange={(e) => setReception("technician", e.target.value)} /></Field>}
         </div>
@@ -2759,7 +4116,11 @@ function Checklist({
                   <div className="bulk-actions"><small>Marcar módulo:</small><button onClick={() => fillGroup(items, "BOM")}>Tudo bom</button><button onClick={() => fillGroup(items, "REGULAR")}>Tudo regular</button><button onClick={() => fillGroup(items, "RUIM")}>Tudo ruim</button></div>
                 )}
               </header>
-              {items.map((item) => (
+              {items.map((item) => item.mode === "MILEAGE" ? (
+                <MileageChecklistRow key={item.id} item={item} value={attendance.reception.mileage} locked={isLocked} onChange={(value) => updateCheckinField(item.id, "mileage", value)} />
+              ) : item.mode === "FUEL" ? (
+                <FuelChecklistRow key={item.id} item={item} value={attendance.reception.fuel} locked={isLocked} onChange={(value) => updateCheckinField(item.id, "fuel", value)} />
+              ) : (
                 <ChecklistItemRow
                   key={item.id}
                   item={item}
@@ -2851,20 +4212,41 @@ function TechnicalReportPanel({
 }
 
 function itemValueSymbol(value: ItemValue) {
-  if (value === "BOM" || value === "SIM") return "✓";
-  if (value === "REGULAR" || value === "AVARIADO") return "!";
-  if (value === "RUIM" || value === "NAO") return "×";
-  if (value === "NAO_SE_APLICA") return "—";
+  if (["BOM", "SIM", "OK", "NORMAL"].includes(value)) return "✓";
+  if (["REGULAR", "AVARIADO", "AVARIA", "INCOMPLETO", "MAL_ODOR"].includes(value)) return "!";
+  if (["RUIM", "NAO"].includes(value)) return "×";
+  if (["NAO_SE_APLICA", "NAO_POSSUI"].includes(value)) return "—";
   if (value === "EXPRESSA") return "⚡";
   if (value === "OUTRO") return "+";
   return "·";
 }
 
-function optionsForMode(mode: ResponseMode) {
+function optionsForMode(mode: ResponseMode): ItemOption[] {
   if (mode === "PRESENCE") return PRESENCE_OPTIONS;
   if (mode === "YES_NO") return YES_NO_OPTIONS;
   if (mode === "WASH") return WASH_OPTIONS;
+  if (mode === "MATS") return MATS_OPTIONS;
+  if (mode === "PRESENCE_DAMAGE") return PRESENCE_DAMAGE_OPTIONS;
+  if (mode === "AIR_CONDITIONING") return AIR_CONDITIONING_OPTIONS;
+  if (mode === "BELONGINGS") return BELONGINGS_OPTIONS;
+  if (mode === "TIRE") return TIRE_OPTIONS;
+  if (mode === "SIDE_TRIM") return SIDE_TRIM_OPTIONS;
+  if (mode === "MIRROR") return MIRROR_OPTIONS;
+  if (mode === "OK_DAMAGE_OTHER") return OK_DAMAGE_OTHER_OPTIONS;
+  if (mode === "OK_DAMAGE_NA") return OK_DAMAGE_NA_OPTIONS;
+  if (mode === "GOOD_OTHER") return GOOD_OTHER_OPTIONS;
+  if (mode === "GOOD_NA") return GOOD_NA_OPTIONS;
+  if (mode === "TOOLS") return TOOLS_OPTIONS;
   return CONDITION_OPTIONS;
+}
+
+function MileageChecklistRow({ item, value, locked, onChange }: { item: CheckItem; value: string; locked: boolean; onChange: (value: string) => void }) {
+  return <div id={`check-${item.key}`} className={`check-item workshop-item checklist-special-row ${value ? "value-sim" : "value-pendente"}`}><div className="special-check-main"><div className="item-title"><strong>{item.label}</strong><span>{value ? `${Number(value).toLocaleString("pt-BR")} km` : "Pendente"}</span></div><div className="mileage-check-control"><input aria-label="Quilometragem" inputMode="numeric" pattern="[0-9]*" disabled={locked} value={value} onChange={(event) => onChange(event.target.value)} placeholder="Digite a quilometragem" /><small>No celular será aberto somente o teclado numérico.</small></div></div></div>;
+}
+
+function FuelChecklistRow({ item, value, locked, onChange }: { item: CheckItem; value: string; locked: boolean; onChange: (value: string) => void }) {
+  const levels = [{ value: "0", label: "Reserva" }, { value: "1", label: "1/4" }, { value: "2", label: "1/2" }, { value: "3", label: "3/4" }, { value: "4", label: "Cheio" }];
+  return <div id={`check-${item.key}`} className={`check-item workshop-item checklist-special-row ${value !== "" ? "value-sim" : "value-pendente"}`}><div className="special-check-main"><div className="item-title"><strong>{item.label}</strong><span>{value !== "" ? fuelLevelLabel(value) : "Pendente"}</span></div><div className="fuel-segment-control" role="group" aria-label="Nível de combustível">{levels.map((level, index) => <button type="button" disabled={locked} key={level.value} className={value === level.value ? "active" : value !== "" && Number(value) >= index ? "filled" : ""} onClick={() => onChange(level.value)}><i /><span>{level.label}</span></button>)}</div></div></div>;
 }
 
 function ChecklistItemRow({
@@ -2883,7 +4265,7 @@ function ChecklistItemRow({
   onAddPhotos: (event: ChangeEvent<HTMLInputElement>) => void;
 }) {
   const options = optionsForMode(item.mode);
-  const showNote = noteOpen || Boolean(item.note) || item.key === "wash-request" || item.key === "belongings" || item.key.startsWith("road-test") || ["REGULAR", "RUIM", "AVARIADO", "NAO", "OUTRO"].includes(item.value);
+  const showNote = noteOpen || Boolean(item.note) || item.key === "wash-request" || item.key === "belongings" || item.key.startsWith("road-test") || ["REGULAR", "RUIM", "AVARIADO", "AVARIA", "INCOMPLETO", "MAL_ODOR", "NAO", "OUTRO"].includes(item.value);
   return (
     <div id={`check-${item.key}`} className={`check-item workshop-item value-${item.value.toLowerCase()}`}>
       <div className="item-row">
@@ -2903,8 +4285,17 @@ function ChecklistItemRow({
 }
 
 function ReportActions({ store, attendance }: { store: Store; attendance: Attendance }) {
+  const [open, setOpen] = useState(false);
+  const [config, setConfig] = useState<ReportConfig>({
+    includeCustomer: true,
+    stageIds: attendance.stages.map((stage) => stage.id),
+    includeTechnicalReport: true,
+    includeGeneralPhotos: true,
+    includeItemPhotos: true,
+    includeSignatures: true,
+  });
   function saveReport() {
-    const blob = new Blob([createReportHtml(store, attendance, "FULL")], { type: "text/html;charset=utf-8" });
+    const blob = new Blob([createReportHtml(store, attendance, "MODULAR", config)], { type: "text/html;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
@@ -2912,10 +4303,10 @@ function ReportActions({ store, attendance }: { store: Store; attendance: Attend
     anchor.click();
     URL.revokeObjectURL(url);
   }
-  function printReport(mode: ReportMode) {
+  function printReport(mode: ReportMode, customConfig?: Partial<ReportConfig>) {
     const popup = window.open("", "_blank", "width=1100,height=800");
     if (!popup) return window.alert("O navegador bloqueou a janela de impressão.");
-    popup.document.write(createReportHtml(store, attendance, mode));
+    popup.document.write(createReportHtml(store, attendance, mode, customConfig));
     popup.document.close();
     popup.focus();
     window.setTimeout(() => popup.print(), 300);
@@ -2927,12 +4318,30 @@ function ReportActions({ store, attendance }: { store: Store; attendance: Attend
     }
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
   }
-  return <div className="report-buttons"><button onClick={saveReport}>Salvar relatório</button><button onClick={() => printReport("SUMMARY")}>Imprimir resumo</button><button onClick={() => printReport("FULL")}>Imprimir completo</button><button className="primary" onClick={shareReport}>Enviar ao cliente</button></div>;
+  function toggleStage(stageId: StageId) {
+    setConfig({ ...config, stageIds: config.stageIds.includes(stageId) ? config.stageIds.filter((id) => id !== stageId) : [...config.stageIds, stageId] });
+  }
+  return <>
+    <div className="report-buttons"><button onClick={() => setOpen(true)}>Impressão modular</button><button onClick={() => printReport("SUMMARY")}>Resumo</button><button className="primary" onClick={shareReport}>Compartilhar</button></div>
+    {open && <div className="modal-backdrop"><section className="compact-modal report-config-modal">
+      <header><div><small>RELATÓRIO MODULAR</small><h2>Selecione o conteúdo</h2></div><button onClick={() => setOpen(false)}>×</button></header>
+      <div className="report-config-grid">
+        <label><input type="checkbox" checked={config.includeCustomer} onChange={(e) => setConfig({ ...config, includeCustomer: e.target.checked })} /> Dados do cliente e veículo</label>
+        {attendance.stages.map((stage) => <label key={stage.id}><input type="checkbox" checked={config.stageIds.includes(stage.id)} onChange={() => toggleStage(stage.id)} /> {stage.label}</label>)}
+        <label><input type="checkbox" checked={config.includeTechnicalReport} onChange={(e) => setConfig({ ...config, includeTechnicalReport: e.target.checked })} /> Laudo técnico</label>
+        <label><input type="checkbox" checked={config.includeGeneralPhotos} onChange={(e) => setConfig({ ...config, includeGeneralPhotos: e.target.checked })} /> Fotos gerais</label>
+        <label><input type="checkbox" checked={config.includeItemPhotos} onChange={(e) => setConfig({ ...config, includeItemPhotos: e.target.checked })} /> Fotos dos itens</label>
+        <label><input type="checkbox" checked={config.includeSignatures} onChange={(e) => setConfig({ ...config, includeSignatures: e.target.checked })} /> Assinaturas</label>
+      </div>
+      <footer><button className="outline" onClick={saveReport}>Baixar HTML</button><button className="primary" onClick={() => printReport("MODULAR", config)}>Imprimir / PDF</button></footer>
+    </section></div>}
+  </>;
 }
+
 function StoreSwitcherModal({ stores, currentStoreId, onClose, onSelect }: { stores: Store[]; currentStoreId: string; onClose: () => void; onSelect: (storeId: string) => void }) {
   return <div className="modal-backdrop"><section className="compact-modal store-switcher-modal">
-    <header><div><small>EMPRESA E LOJA</small><h2>Onde deseja trabalhar?</h2><p>Os dados e configurações mudam conforme a loja selecionada.</p></div><button onClick={onClose}>×</button></header>
-    <div className="store-options">{stores.map((store) => <button key={store.id} className={store.id === currentStoreId ? "store-option active" : "store-option"} onClick={() => onSelect(store.id)}><span><PremiumIcon name="store" size={20} /></span><div><strong>{store.name}</strong><small>{store.id === currentStoreId ? "Loja atual" : "Acessar esta loja"}</small></div>{store.id === currentStoreId ? <b>Atual</b> : <PremiumIcon name="chevron" size={16} />}</button>)}</div>
+    <header><div><small>EMPRESAS</small><h2>Selecione a empresa</h2></div><button onClick={onClose}>×</button></header>
+    <div className="store-options">{stores.map((store) => <button key={store.id} className={store.id === currentStoreId ? "store-option active" : "store-option"} onClick={() => onSelect(store.id)}><span><PremiumIcon name="store" size={20} /></span><div><strong>{store.companyName}</strong></div>{store.id === currentStoreId ? <b>Atual</b> : <PremiumIcon name="chevron" size={16} />}</button>)}</div>
   </section></div>;
 }
 
@@ -2947,7 +4356,7 @@ function UserProfileModal({ profile, onClose, onSave }: { profile: UserProfile; 
   }
   return <div className="modal-backdrop"><section className="compact-modal profile-modal">
     <header><div><small>MEU PERFIL</small><h2>Informações pessoais</h2><p>Personalize como seu nome e contato aparecem no Gerivo.</p></div><button onClick={onClose}>×</button></header>
-    <div className="profile-content"><div className="profile-photo-editor"><div>{draft.photo ? <img src={draft.photo} alt="Foto do perfil" /> : <PremiumIcon name="user" size={34} />}</div><label><PremiumIcon name="camera" size={16} /> {processing ? "Processando..." : "Alterar foto"}<input type="file" accept="image/*" onChange={changePhoto} /></label>{draft.photo && <button onClick={() => setDraft({ ...draft, photo: "" })}>Remover foto</button>}</div><div className="profile-fields"><Field label="Como deseja ser chamado"><input value={draft.preferredName} onChange={(e) => setDraft({ ...draft, preferredName: e.target.value })} placeholder="Seu nome" /></Field><Field label="Telefone"><input value={draft.phone} onChange={(e) => setDraft({ ...draft, phone: e.target.value })} placeholder="(00) 00000-0000" /></Field><Field label="E-mail"><input type="email" value={draft.email} onChange={(e) => setDraft({ ...draft, email: e.target.value })} placeholder="seuemail@empresa.com" /></Field></div></div>
+    <div className="profile-content"><div className="profile-photo-editor"><div>{draft.photo ? <img src={draft.photo} alt="Foto do perfil" /> : <PremiumIcon name="user" size={34} />}</div><label><PremiumIcon name="camera" size={16} /> {processing ? "Processando..." : "Alterar foto"}<input type="file" accept="image/*" onChange={changePhoto} /></label>{draft.photo && <button onClick={() => setDraft({ ...draft, photo: "" })}>Remover foto</button>}</div><div className="profile-fields"><Field label="Como deseja ser chamado"><input value={draft.preferredName} onChange={(e) => setDraft({ ...draft, preferredName: e.target.value })} placeholder="Seu nome" /></Field><Field label="Usuário"><input value={draft.username} disabled /></Field><Field label="Telefone"><input value={draft.phone} onChange={(e) => setDraft({ ...draft, phone: e.target.value })} placeholder="(00) 00000-0000" /></Field><Field label="E-mail de recuperação"><input type="email" value={draft.email} disabled /></Field></div></div>
     <footer><button className="outline" onClick={onClose}>Cancelar</button><button className="primary" onClick={() => onSave(draft)}>Salvar perfil</button></footer>
   </section></div>;
 }
@@ -2956,6 +4365,7 @@ function CompanySettingsModal({
   companySettings,
   companyIdentity,
   checklistSettings,
+  isPlatformMaster,
   onClose,
   onSave,
   initialTab,
@@ -2963,6 +4373,7 @@ function CompanySettingsModal({
   companySettings: CompanySettings;
   companyIdentity: CompanyIdentity;
   checklistSettings: ChecklistSettings;
+  isPlatformMaster: boolean;
   onClose: () => void;
   onSave: (companySettings: CompanySettings, checklistSettings: ChecklistSettings, companyIdentity: CompanyIdentity) => void;
   initialTab: SettingsTab;
@@ -2971,15 +4382,15 @@ function CompanySettingsModal({
   const [identityDraft, setIdentityDraft] = useState<CompanyIdentity>(() => ({ ...companyIdentity }));
   const [logoProcessing, setLogoProcessing] = useState(false);
   const [checklistDraft, setChecklistDraft] = useState<ChecklistSettings>(() => JSON.parse(JSON.stringify(checklistSettings)) as ChecklistSettings);
-  const [tab, setTab] = useState<SettingsTab>(initialTab);
+  const [tab, setTab] = useState<SettingsTab>(initialTab === "MODULES" && !isPlatformMaster ? "IDENTITY" : initialTab);
 
   function setProfile(profile: CompanyProfile) {
     if (profile === "FULL") {
-      setCompanyDraft({ ...companyDraft, profile, modules: { CATALOG: true, CHECKLIST: true, ORDERS: true, QUOTES: true } });
+      setCompanyDraft({ ...companyDraft, profile, modules: { APPOINTMENTS: true, CATALOG: true, INVENTORY: true, CHECKLIST: true, ORDERS: true, QUOTES: true, ASSISTANT: true } });
       return;
     }
     if (profile === "QUOTE_ONLY") {
-      setCompanyDraft({ ...companyDraft, profile, modules: { CATALOG: true, CHECKLIST: false, ORDERS: false, QUOTES: true } });
+      setCompanyDraft({ ...companyDraft, profile, modules: { APPOINTMENTS: false, CATALOG: true, INVENTORY: false, CHECKLIST: false, ORDERS: false, QUOTES: true, ASSISTANT: false } });
       return;
     }
     setCompanyDraft({ ...companyDraft, profile });
@@ -3034,8 +4445,8 @@ function CompanySettingsModal({
   }
 
   return <div className="modal-backdrop"><section className="settings-modal company-settings-modal">
-    <header><div><small>CONFIGURAÇÃO POR EMPRESA</small><h2>{tab === "IDENTITY" ? "Identidade visual" : tab === "CHECKLIST" ? "Modelos de checklist" : tab === "QUOTES" ? "Configuração de orçamentos" : "Módulos e funcionamento"}</h2><p>{tab === "IDENTITY" ? "Personalize a apresentação da empresa sem esconder a tecnologia Gerivo." : tab === "CHECKLIST" ? "Defina os itens e etapas aplicáveis ao fluxo da empresa." : "Defina o que esta empresa utilizará dentro do Gerivo."}</p></div><button onClick={onClose}>×</button></header>
-    <nav className="settings-tabs"><button className={tab === "IDENTITY" ? "active" : ""} onClick={() => setTab("IDENTITY")}>Identidade</button><button className={tab === "MODULES" ? "active" : ""} onClick={() => setTab("MODULES")}>Módulos</button><button disabled={!companyDraft.modules.CHECKLIST} className={tab === "CHECKLIST" ? "active" : ""} onClick={() => setTab("CHECKLIST")}>Checklist</button><button disabled={!companyDraft.modules.QUOTES} className={tab === "QUOTES" ? "active" : ""} onClick={() => setTab("QUOTES")}>Orçamentos</button></nav>
+    <header><div><small>CONFIGURAÇÃO POR EMPRESA</small><h2>{tab === "IDENTITY" ? "Identidade visual" : tab === "CHECKLIST" ? "Modelos de checklist" : tab === "QUOTES" ? "Orçamentos" : tab === "PRICING" ? "Formação de preço" : "Módulos contratados"}</h2></div><button onClick={onClose}>×</button></header>
+    <nav className="settings-tabs"><button className={tab === "IDENTITY" ? "active" : ""} onClick={() => setTab("IDENTITY")}>Identidade</button><button className={tab === "PRICING" ? "active" : ""} onClick={() => setTab("PRICING")}>Preços</button>{isPlatformMaster && <button className={tab === "MODULES" ? "active" : ""} onClick={() => setTab("MODULES")}>Módulos</button>}<button disabled={!companyDraft.modules.CHECKLIST} className={tab === "CHECKLIST" ? "active" : ""} onClick={() => setTab("CHECKLIST")}>Checklist</button><button disabled={!companyDraft.modules.QUOTES} className={tab === "QUOTES" ? "active" : ""} onClick={() => setTab("QUOTES")}>Orçamentos</button></nav>
 
     {tab === "IDENTITY" && <div className="company-settings-content identity-settings-content">
       <section className="identity-editor-grid">
@@ -3046,23 +4457,27 @@ function CompanySettingsModal({
         </div>
         <div className="identity-controls">
           <Field label="Nome exibido no sistema"><input value={identityDraft.displayName} onChange={(event) => setIdentityDraft({ ...identityDraft, displayName: event.target.value })} placeholder="Nome da oficina ou empresa" /></Field>
-          <label className="logo-upload-control"><span>Logo da empresa</span><div>{identityDraft.logo && <img src={identityDraft.logo} alt="Prévia da logo" />}<label className="outline">{logoProcessing ? "Processando..." : identityDraft.logo ? "Trocar logo" : "Escolher logo"}<input type="file" accept="image/*" onChange={uploadCompanyLogo} disabled={logoProcessing} /></label>{identityDraft.logo && <button className="danger" type="button" onClick={() => setIdentityDraft({ ...identityDraft, logo: "" })}>Remover</button>}</div><small>PNG, JPG ou WEBP. A logo fica separada por empresa/loja.</small></label>
-          <div className="sidebar-color-control"><span>Cor da barra lateral</span><div><input type="color" value={identityDraft.sidebarColor} onChange={(event) => setIdentityDraft({ ...identityDraft, sidebarColor: event.target.value })} /><input value={identityDraft.sidebarColor} maxLength={7} onChange={(event) => setIdentityDraft({ ...identityDraft, sidebarColor: event.target.value })} /></div><div className="color-presets">{["#0d1b28", "#0d3f46", "#176b5a", "#152a4a", "#3b224f", "#4a1f27"].map((color) => <button key={color} type="button" style={{ background: color }} aria-label={`Usar cor ${color}`} onClick={() => setIdentityDraft({ ...identityDraft, sidebarColor: color })} />)}</div></div>
-          <p className="identity-note">Quando a empresa usa marca própria, o Gerivo permanece identificado no rodapé como tecnologia da plataforma.</p>
+          <label className="logo-upload-control"><span>Logo da empresa</span><div>{identityDraft.logo && <img src={identityDraft.logo} alt="Prévia da logo" />}<label className="outline">{logoProcessing ? "Processando..." : identityDraft.logo ? "Trocar logo" : "Escolher logo"}<input type="file" accept="image/*" onChange={uploadCompanyLogo} disabled={logoProcessing} /></label>{identityDraft.logo && <button className="danger" type="button" onClick={() => setIdentityDraft({ ...identityDraft, logo: "" })}>Remover</button>}</div></label>
+          <div className="identity-color-grid">
+            <div className="sidebar-color-control"><span>Cor da barra lateral</span><div><input type="color" value={identityDraft.sidebarColor} onChange={(event) => setIdentityDraft({ ...identityDraft, sidebarColor: event.target.value })} /><input value={identityDraft.sidebarColor} maxLength={7} onChange={(event) => setIdentityDraft({ ...identityDraft, sidebarColor: event.target.value })} /></div><div className="color-presets">{["#0B1F3A", "#2B2F36", "#152A4A", "#0D3F46", "#3B224F", "#4A1F27"].map((color) => <button key={color} type="button" style={{ background: color }} aria-label={`Usar cor ${color}`} onClick={() => setIdentityDraft({ ...identityDraft, sidebarColor: color })} />)}</div></div>
+            <div className="sidebar-color-control"><span>Cor das seleções e destaques</span><div><input type="color" value={identityDraft.selectionColor} onChange={(event) => setIdentityDraft({ ...identityDraft, selectionColor: event.target.value })} /><input value={identityDraft.selectionColor} maxLength={7} onChange={(event) => setIdentityDraft({ ...identityDraft, selectionColor: event.target.value })} /></div><div className="color-presets">{["#C89B3C", "#0B1F3A", "#1268B3", "#7C3AED", "#C2415D", "#334155"].map((color) => <button key={color} type="button" style={{ background: color }} aria-label={`Usar cor ${color}`} onClick={() => setIdentityDraft({ ...identityDraft, selectionColor: color })} />)}</div><div className="selection-preview" style={selectionThemeVariables(identityDraft.selectionColor) as any}><span>Prévia</span><button type="button">Seleção ativa</button></div></div>
+          </div>
         </div>
       </section>
     </div>}
 
-    {tab === "MODULES" && <div className="company-settings-content">
+    {tab === "PRICING" && <div className="company-settings-content pricing-settings"><div className="pricing-general-card"><small>MARGEM GERAL</small><h3>Formação de preço padrão</h3><Field label="Margem sobre o custo (%)"><input inputMode="decimal" value={companyDraft.generalMargin} onChange={(e) => setCompanyDraft({ ...companyDraft, generalMargin: Math.max(0, Number(e.target.value) || 0) })} /></Field><p>Itens sem margem individual utilizam automaticamente esta configuração.</p></div></div>}
+
+    {tab === "MODULES" && isPlatformMaster && <div className="company-settings-content">
       <div className="profile-selector">
-        <button className={companyDraft.profile === "FULL" ? "active" : ""} onClick={() => setProfile("FULL")}><strong>Sistema completo</strong><span>Catálogo, checklist, O.S. e orçamentos.</span></button>
-        <button className={companyDraft.profile === "QUOTE_ONLY" ? "active" : ""} onClick={() => setProfile("QUOTE_ONLY")}><strong>Somente orçamentos</strong><span>Catálogo e criação de orçamento sem fluxo de oficina.</span></button>
-        <button className={companyDraft.profile === "CUSTOM" ? "active" : ""} onClick={() => setProfile("CUSTOM")}><strong>Personalizado</strong><span>Escolha os módulos individualmente.</span></button>
+        <button className={companyDraft.profile === "FULL" ? "active" : ""} onClick={() => setProfile("FULL")}><strong>Sistema completo</strong></button>
+        <button className={companyDraft.profile === "QUOTE_ONLY" ? "active" : ""} onClick={() => setProfile("QUOTE_ONLY")}><strong>Somente orçamentos</strong></button>
+        <button className={companyDraft.profile === "CUSTOM" ? "active" : ""} onClick={() => setProfile("CUSTOM")}><strong>Personalizado</strong></button>
       </div>
       <div className="module-selector">
         {(Object.keys(MODULE_INFO) as CompanyModule[]).map((module) => <label key={module} className={companyDraft.modules[module] ? "module-card enabled" : "module-card"}>
           <input type="checkbox" checked={companyDraft.modules[module]} onChange={() => toggleModule(module)} />
-          <div><strong>{MODULE_INFO[module].label}</strong><span>{MODULE_INFO[module].description}</span></div>
+          <div><strong>{MODULE_INFO[module].label}</strong></div>
         </label>)}
       </div>
     </div>}
@@ -3092,7 +4507,7 @@ function CompanySettingsModal({
       <div className="settings-stages">{CHECKLIST_TEMPLATE.map((stage) => <section key={stage.id}><h3>{stage.label}</h3>{stage.groups.map((group) => { const groupKeys = group.items.map((item) => item.key); const checked = groupKeys.every((key) => checklistDraft.enabledItemKeys[stage.id].includes(key)); return <details key={group.key} open><summary><label><input type="checkbox" checked={checked} onChange={() => toggleGroup(stage.id, group)} /> {group.label}</label><span>{group.items.filter((item) => checklistDraft.enabledItemKeys[stage.id].includes(item.key)).length}/{group.items.length}</span></summary><div>{group.items.map((item) => <label key={item.key}><input type="checkbox" checked={checklistDraft.enabledItemKeys[stage.id].includes(item.key)} onChange={() => toggleItem(stage.id, item.key)} /> {item.label}</label>)}</div></details>})}</section>)}</div>
     </div>}
 
-    <footer><button className="outline" onClick={onClose}>Cancelar</button><button className="primary" onClick={() => onSave(companyDraft, checklistDraft, { ...identityDraft, displayName: identityDraft.displayName.trim() || companyIdentity.displayName, sidebarColor: /^#[0-9a-f]{6}$/i.test(identityDraft.sidebarColor) ? identityDraft.sidebarColor : companyIdentity.sidebarColor })}>Salvar configuração</button></footer>
+    <footer><button className="outline" onClick={onClose}>Cancelar</button><button className="primary" onClick={() => onSave(isPlatformMaster ? companyDraft : { ...companyDraft, profile: companySettings.profile, modules: companySettings.modules }, checklistDraft, { ...identityDraft, displayName: identityDraft.displayName.trim() || companyIdentity.displayName, sidebarColor: /^#[0-9a-f]{6}$/i.test(identityDraft.sidebarColor) ? identityDraft.sidebarColor : companyIdentity.sidebarColor, selectionColor: /^#[0-9a-f]{6}$/i.test(identityDraft.selectionColor) ? identityDraft.selectionColor : companyIdentity.selectionColor })}>Salvar configuração</button></footer>
   </section></div>;
 }
 function FilterToolbar({
@@ -3147,7 +4562,7 @@ function ChecklistIndex({
 
   return (
     <section className="module-list-page">
-      <div className="module-intro"><div><small>CONTROLE DE CHECKLISTS</small><h2>Recepções e inspeções</h2><p>Consulte cada atendimento sem abrir automaticamente o último checklist utilizado.</p></div><button className="primary" onClick={onCreate}>+ Nova recepção</button></div>
+      <div className="module-intro compact"><div><small>CONTROLE DE CHECKLISTS</small><h2>Recepções e inspeções</h2></div></div>
       <FilterToolbar
         search={search}
         onSearch={setSearch}
@@ -3198,7 +4613,7 @@ function OrdersPage({
 
   return (
     <section className="module-list-page">
-      <div className="module-intro"><div><small>EXECUÇÃO E CONTROLE</small><h2>Gestão de ordens de serviço</h2><p>A abertura pelo menu não vincula automaticamente o checklist selecionado. O vínculo só acontece por uma ação explícita no atendimento.</p></div><button className="primary" onClick={onCreate}>+ Nova O.S.</button></div>
+      <div className="module-intro compact"><div><small>EXECUÇÃO E CONTROLE</small><h2>Gestão de ordens de serviço</h2></div></div>
       <FilterToolbar
         search={search}
         onSearch={setSearch}
@@ -3251,7 +4666,7 @@ function QuotesPage({
 
   return (
     <section className="module-list-page">
-      <div className="module-intro"><div><small>ORÇAMENTAÇÃO</small><h2>Gestão de orçamentos</h2><p>Padrão de envio da empresa: <strong>{quoteDeliveryLabel(deliveryMode)}</strong>. A abertura pelo menu sempre inicia na lista, sem importar automaticamente um checklist.</p></div><button className="primary" onClick={onCreate}>+ Novo orçamento</button></div>
+      <div className="module-intro compact"><div><small>ORÇAMENTAÇÃO</small><h2>Gestão de orçamentos</h2></div></div>
       <FilterToolbar
         search={search}
         onSearch={setSearch}
@@ -3322,7 +4737,7 @@ function DocumentItemsEditor({
       <header><div><small>ITENS DO DOCUMENTO</small><h3>Serviços, peças e produtos</h3></div><div className="document-item-add"><select value={selectedCatalogId} onChange={(event) => setSelectedCatalogId(event.target.value)}><option value="">Selecionar do catálogo</option>{activeCatalog.map((item) => <option key={item.id} value={item.id}>{item.name} · {money(item.price)}</option>)}</select><button className="outline" type="button" disabled={!selectedCatalogId} onClick={addCatalogItem}>Adicionar</button><button className="primary" type="button" onClick={addCustomItem}>+ Item livre</button></div></header>
       <div className="document-items-table">
         <div className="document-items-head"><span>Tipo</span><span>Descrição</span><span>Qtd.</span><span>Valor unit.</span><span>Total</span><span /></div>
-        {items.length === 0 ? <div className="document-items-empty">Nenhum item adicionado. Use o catálogo ou crie um item livre.</div> : items.map((item) => <div key={item.id} className="document-item-row"><select value={item.kind} onChange={(event) => updateItem(item.id, { kind: event.target.value as CatalogKind })}><option value="SERVICO">Serviço</option><option value="PECA">Peça</option><option value="PRODUTO">Produto</option></select><div className="document-item-description"><input value={item.name} onChange={(event) => updateItem(item.id, { name: event.target.value })} placeholder="Descrição do item" /><input value={item.description} onChange={(event) => updateItem(item.id, { description: event.target.value })} placeholder="Detalhe, categoria ou observação" /></div><input type="number" min="0" step="1" value={item.quantity} onChange={(event) => updateItem(item.id, { quantity: Math.max(0, Number(event.target.value) || 0) })} /><input type="number" min="0" step="0.01" value={item.unitPrice} onChange={(event) => updateItem(item.id, { unitPrice: Math.max(0, Number(event.target.value) || 0) })} /><strong>{money(lineTotal(item))}</strong><button className="document-remove-item" type="button" onClick={() => onChange(items.filter((current) => current.id !== item.id))}><PremiumIcon name="trash" size={16} /></button></div>)}
+        {items.length === 0 ? <div className="document-items-empty">Nenhum item adicionado. Use o catálogo ou crie um item livre.</div> : items.map((item) => <div key={item.id} className="document-item-row"><select value={item.kind} onChange={(event) => updateItem(item.id, { kind: event.target.value as CatalogKind })}><option value="SERVICO">Serviço</option><option value="PECA">Peça</option><option value="PRODUTO">Produto</option><option value="KIT">Kit</option><option value="MATERIAL">Material</option></select><div className="document-item-description"><input value={item.name} onChange={(event) => updateItem(item.id, { name: event.target.value })} placeholder="Descrição do item" /><input value={item.description} onChange={(event) => updateItem(item.id, { description: event.target.value })} placeholder="Detalhe, categoria ou observação" /></div><input type="number" min="0" step="1" value={item.quantity} onChange={(event) => updateItem(item.id, { quantity: Math.max(0, Number(event.target.value) || 0) })} /><input type="number" min="0" step="0.01" value={item.unitPrice} onChange={(event) => updateItem(item.id, { unitPrice: Math.max(0, Number(event.target.value) || 0) })} /><strong>{money(lineTotal(item))}</strong><button className="document-remove-item" type="button" onClick={() => onChange(items.filter((current) => current.id !== item.id))}><PremiumIcon name="trash" size={16} /></button></div>)}
       </div>
     </section>
   );
@@ -3503,7 +4918,7 @@ function buildQuoteConsultiveSuggestions(quote: Quote) {
 function buildQuoteDocumentHtml(quote: Quote, companyIdentity: CompanyIdentity, customer: Customer | null) {
   const subtotal = itemsSubtotal(quote.items);
   const discount = Math.max(0, subtotal - quote.total);
-  const accent = /^#[0-9a-f]{6}$/i.test(companyIdentity.sidebarColor) ? companyIdentity.sidebarColor : "#0f766e";
+  const accent = /^#[0-9a-f]{6}$/i.test(companyIdentity.selectionColor) ? companyIdentity.selectionColor : "#0f766e";
   const rows = quote.items.filter((item) => item.name.trim()).map((item, index) => `<tr><td class="index">${String(index + 1).padStart(2, "0")}</td><td><b>${escapeHtml(item.name)}</b>${item.description ? `<small>${escapeHtml(item.description)}</small>` : ""}<em>${item.kind === "SERVICO" ? "Serviço" : item.kind === "PECA" ? "Peça" : "Produto"}</em></td><td>${item.quantity}</td><td>${money(item.unitPrice)}</td><td>${money(lineTotal(item))}</td></tr>`).join("");
   const logo = companyIdentity.logo ? `<img src="${companyIdentity.logo}" alt="${escapeHtml(companyIdentity.displayName)}">` : `<div class="logo-fallback">${escapeHtml(companyIdentity.displayName.slice(0, 2).toUpperCase())}</div>`;
   const validity = quote.validityDays > 0 ? `<div><span>Validade</span><strong>${quote.validityDays} dias</strong></div>` : "";
