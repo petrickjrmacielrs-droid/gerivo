@@ -18,6 +18,9 @@ type Page =
   | "orders"
   | "quotes"
   | "assistant"
+  | "bi"
+  | "messages"
+  | "knowledge"
   | "management"
   | "catalog"
   | "inventory"
@@ -126,7 +129,15 @@ type ChecklistListStatus = "TODOS" | "ABERTO" | "CONCLUIDO" | "INCOMPLETO" | "EM
 type OrderListStatus = "TODOS" | ServiceOrderStatus;
 type QuoteListStatus = "TODOS" | QuoteStatus;
 type PaymentMethod = "PIX" | "DEBITO" | "CREDITO" | "DINHEIRO" | "OUTRO";
-type QuoteMessageTemplate = "PROFISSIONAL" | "DIRETA" | "CONSULTIVA" | "PREVENTIVA";
+type QuoteMessageTemplate =
+  | "PROFISSIONAL"
+  | "DIRETA"
+  | "CONSULTIVA"
+  | "PREVENTIVA"
+  | "AMIGAVEL"
+  | "FORMAL"
+  | "COMERCIAL"
+  | "CURTA";
 type AppointmentStatus = "AGENDADO" | "CONFIRMADO" | "EM_ATENDIMENTO" | "CONCLUIDO" | "CANCELADO";
 type AppointmentSettings = {
   startTime: string;
@@ -137,6 +148,16 @@ type AppointmentSettings = {
   workingDays: number[];
   allowOverlap: boolean;
 };
+type KnowledgeEntry = {
+  id: string;
+  title: string;
+  content: string;
+  tags: string[];
+  source: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 type AppointmentBlock = {
   id: string;
   storeId: string;
@@ -364,6 +385,7 @@ type Quote = {
   discountAmount: number;
   discountPercent: number;
   messageTemplate: QuoteMessageTemplate;
+  combinePartsLabor: boolean;
   items: DocumentLine[];
 };
 type StoreData = {
@@ -381,6 +403,7 @@ type StoreData = {
   attendances: Attendance[];
   orders: ServiceOrder[];
   quotes: Quote[];
+  knowledgeBase: KnowledgeEntry[];
 };
 
 const EMPTY_STORE_ID = "pending";
@@ -401,6 +424,9 @@ const NAV: Array<{ id: Page; label: string; icon: IconName; module?: CompanyModu
   { id: "orders", label: "Ordens de serviço", icon: "wrench", module: "ORDERS" },
   { id: "quotes", label: "Orçamentos", icon: "file", module: "QUOTES" },
   { id: "assistant", label: "Assistente Gerivo", icon: "sparkle", module: "ASSISTANT" },
+  { id: "bi", label: "Gerivo BI", icon: "chart", module: "ASSISTANT" },
+  { id: "messages", label: "Central de mensagens", icon: "file", hidden: true },
+  { id: "knowledge", label: "Conhecimento da IA", icon: "sparkle", hidden: true },
   { id: "management", label: "Gestão", icon: "settings" },
   { id: "master", label: "Gerivo MASTER", icon: "shield", masterOnly: true },
   { id: "catalog", label: "Catálogo", icon: "layers", module: "CATALOG", hidden: true },
@@ -842,6 +868,10 @@ function quoteMessageTemplateLabel(template: QuoteMessageTemplate) {
     DIRETA: "Direta e objetiva",
     CONSULTIVA: "Consultiva",
     PREVENTIVA: "Preventiva",
+    AMIGAVEL: "Amigável",
+    FORMAL: "Formal",
+    COMERCIAL: "Comercial",
+    CURTA: "Curta",
   } as const)[template];
 }
 
@@ -1071,6 +1101,7 @@ function seedStoreData(storeId: string, segment = "OUTRO"): StoreData {
     attendances: [],
     orders: [],
     quotes: [],
+    knowledgeBase: [],
   };
 }
 
@@ -1174,12 +1205,13 @@ function createQuote(quotes: Quote[], identity: LinkedIdentity, storeId: string,
     discountAmount: 0,
     discountPercent: 0,
     messageTemplate,
+    combinePartsLabor: false,
     items: [],
   };
 }
 
 function keyFor(storeId: string) {
-  return `gerivo:prototype:v17:store:${storeId}`;
+  return `gerivo:prototype:v176:store:${storeId}`;
 }
 
 function legacyKeysFor(storeId: string) {
@@ -1399,6 +1431,7 @@ function normalizeStoreData(parsed: Partial<StoreData>, storeId: string): StoreD
       discountAmount,
       discountPercent,
       messageTemplate: quote.messageTemplate ?? companySettings.quoteMessageTemplate ?? "PROFISSIONAL",
+      combinePartsLabor: Boolean(quote.combinePartsLabor),
       items,
       total,
       updatedAt: quote.updatedAt ?? quote.createdAt ?? new Date().toISOString(),
@@ -1425,7 +1458,17 @@ function normalizeStoreData(parsed: Partial<StoreData>, storeId: string): StoreD
     return { ...attendance, customerId: customer.id, vehicleId: vehicle.id };
   });
 
-  return { customers: linkedCustomers, vehicles: linkedVehicles, catalog, suppliers, appointments, appointmentSettings, appointmentBlocks, serviceTypes, checklistSettings: settings, companySettings, companyIdentity, attendances: linkedAttendances, orders, quotes };
+  const knowledgeBase: KnowledgeEntry[] = (parsed.knowledgeBase ?? []).map((entry) => ({
+    id: entry.id || uid(),
+    title: entry.title || "Procedimento sem título",
+    content: entry.content || "",
+    tags: Array.isArray(entry.tags) ? entry.tags.filter(Boolean) : [],
+    source: entry.source || "Cadastro manual",
+    createdAt: entry.createdAt || new Date().toISOString(),
+    updatedAt: entry.updatedAt || entry.createdAt || new Date().toISOString(),
+  }));
+
+  return { customers: linkedCustomers, vehicles: linkedVehicles, catalog, suppliers, appointments, appointmentSettings, appointmentBlocks, serviceTypes, checklistSettings: settings, companySettings, companyIdentity, attendances: linkedAttendances, orders, quotes, knowledgeBase };
 }
 
 function isolateStoreData(storeId: string, data: StoreData): StoreData {
@@ -1453,7 +1496,7 @@ function loadStore(storeId: string, segment = "OUTRO"): StoreData {
       return normalized;
     }
 
-    const previousRaw = localStorage.getItem(`gerivo:prototype:v16:store:${storeId}`) ?? localStorage.getItem(`gerivo:prototype:v14:store:${storeId}`) ?? localStorage.getItem(`gerivo:prototype:v13:store:${storeId}`);
+    const previousRaw = localStorage.getItem(`gerivo:prototype:v17:store:${storeId}`) ?? localStorage.getItem(`gerivo:prototype:v16:store:${storeId}`) ?? localStorage.getItem(`gerivo:prototype:v14:store:${storeId}`) ?? localStorage.getItem(`gerivo:prototype:v13:store:${storeId}`);
     if (previousRaw) {
       const migrated = isolateStoreData(storeId, normalizeStoreData(JSON.parse(previousRaw) as Partial<StoreData>, storeId));
       localStorage.setItem(keyFor(storeId), JSON.stringify(migrated));
@@ -1483,6 +1526,7 @@ function loadStore(storeId: string, segment = "OUTRO"): StoreData {
           attendances: [],
           orders: [],
           quotes: [],
+          knowledgeBase: legacyParsed.knowledgeBase,
         },
         storeId,
       );
@@ -2261,7 +2305,7 @@ export default function Home() {
     await supabase.auth.signOut();
   }
 
-  async function bootstrapCompany(companyName: string, storeName: string, segment: string) {
+  async function bootstrapCompany(companyName: string, storeName: string, segment: string, groupId = "", groupName = "", document = "") {
     setAuthError("");
     if (!session?.access_token || !session.user) {
       const message = "Sua sessão expirou. Entre novamente no Gerivo.";
@@ -2283,6 +2327,9 @@ export default function Home() {
           name: companyName,
           storeName: storeName || companyName,
           segment,
+          groupId,
+          groupName,
+          document,
         }),
         signal: controller.signal,
       });
@@ -2685,6 +2732,21 @@ export default function Home() {
             <AssistantPage store={brandedStore} data={data} />
           )}
 
+          {page === "bi" && (
+            <BusinessIntelligencePage data={data} />
+          )}
+
+          {page === "messages" && (
+            <MessageCenterPage store={brandedStore} />
+          )}
+
+          {page === "knowledge" && (
+            <KnowledgeBasePage
+              entries={data.knowledgeBase}
+              onChange={(knowledgeBase) => setData({ ...data, knowledgeBase })}
+            />
+          )}
+
           {page === "management" && (
             <ManagementHub
               store={brandedStore}
@@ -2697,6 +2759,9 @@ export default function Home() {
               onOpenPricing={() => { setSettingsTab("PRICING"); setSettingsOpen(true); }}
               onOpenModules={() => { setSettingsTab("MODULES"); setSettingsOpen(true); }}
               onOpenChecklist={() => { setSettingsTab("CHECKLIST"); setSettingsOpen(true); }}
+              onOpenKnowledge={() => setPage("knowledge")}
+              onOpenMessages={() => setPage("messages")}
+              onOpenBi={() => setPage("bi")}
             />
           )}
 
@@ -2723,7 +2788,7 @@ export default function Home() {
           )}
 
           {page === "master" && platformRole === "MASTER" && (
-            <MasterCommercialPage stores={stores} currentStore={brandedStore} onCreateCompany={(name, segment) => bootstrapCompany(name, name, segment)} />
+            <MasterCommercialPage stores={stores} currentStore={brandedStore} onCreateCompany={(input) => bootstrapCompany(input.companyName, input.storeName, input.segment, input.groupId, input.groupName, input.document)} />
           )}
 
           {page === "checklist" && (
@@ -2908,6 +2973,11 @@ function Login({
   const [submitting, setSubmitting] = useState(false);
   const [recovering, setRecovering] = useState(false);
   const [recoveryEmail, setRecoveryEmail] = useState("");
+  const [clientAccess, setClientAccess] = useState(false);
+
+  useEffect(() => {
+    setClientAccess(window.location.pathname.startsWith("/cliente"));
+  }, []);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -2924,24 +2994,8 @@ function Login({
     finally { setSubmitting(false); }
   }
 
-  return (
-    <main className="public-site">
-      <header className="public-header">
-        <a className="public-logo" href="#inicio" aria-label="Gerivo - início"><img src="/gerivo-logo-light.png" alt="Gerivo" /><span>Gestão que gera resultados</span></a>
-        <nav aria-label="Navegação pública"><a href="#recursos">Conheça a ferramenta</a><a href="#planos">Planos</a><a href="#contato">Contato</a></nav>
-        <a className="public-client-button" href="#acesso">Área do cliente</a>
-      </header>
-
-      <section className="public-hero" id="inicio">
-        <div className="public-hero-copy">
-          <small>GESTÃO INTELIGENTE PARA EMPRESAS</small>
-          <h1>Controle completo.<br />Decisões melhores.</h1>
-          <p>Organize clientes, serviços, vendas, estoque, atendimentos e indicadores em uma plataforma modular criada para gerar mais controle, tempo e resultado.</p>
-          <div className="public-hero-actions"><a className="public-primary-link" href="#recursos">Conheça o Gerivo</a><a className="public-secondary-link" href="#planos">Conheça nossos planos</a></div>
-          <div className="public-trust-row"><span>Multiempresa</span><span>Personalizável</span><span>Desktop e celular</span></div>
-        </div>
-
-        <form className="public-login-card" id="acesso" onSubmit={submit}>
+  const loginForm = (
+      <form className="public-login-card" id="acesso" onSubmit={submit}>
           <div className="public-login-heading"><small>JÁ É CLIENTE?</small><h2>{recovering ? "Recuperar acesso" : "Entre no Gerivo"}</h2><p>{recovering ? "Informe o e-mail cadastrado para receber as instruções." : "Acesse sua empresa com usuário ou e-mail."}</p></div>
           {recovering ? (
             <label>E-mail de recuperação
@@ -2969,7 +3023,33 @@ function Login({
             <><button className="primary login-button" disabled={submitting}>{submitting ? "Entrando..." : "Entrar no Gerivo"}</button><button type="button" className="login-link" onClick={() => { setRecovering(true); setRecoveryEmail(identifier.includes("@") ? identifier : ""); }}>Esqueci minha senha ou usuário</button></>
           )}
           <div className="public-new-client"><span>Ainda não utiliza o Gerivo?</span><a href="#recursos">Conheça a plataforma</a></div>
-        </form>
+      </form>
+  );
+
+  if (clientAccess) return (
+    <main className="client-access-page">
+      <header><a href="/"><img src="/gerivo-logo-light.png" alt="Gerivo" /></a><a href="/">← Voltar ao site</a></header>
+      <section><div className="client-access-copy"><small>ACESSO DO CLIENTE</small><h1>Entre no Gerivo</h1><p>Acesse a empresa e a unidade vinculadas ao seu usuário.</p></div>{loginForm}</section>
+    </main>
+  );
+
+  return (
+    <main className="public-site">
+      <header className="public-header">
+        <a className="public-logo" href="#inicio" aria-label="Gerivo - início"><img src="/gerivo-logo-light.png" alt="Gerivo" /><span>Gestão que gera resultados</span></a>
+        <a className="public-client-button" href="/cliente">Acesso do cliente</a>
+      </header>
+
+      <section className="public-hero" id="inicio">
+        <div className="public-hero-copy">
+          <small>GESTÃO INTELIGENTE PARA EMPRESAS</small>
+          <h1>Controle completo.<br />Decisões melhores.</h1>
+          <p>Organize clientes, serviços, vendas, estoque, atendimentos e indicadores em uma plataforma modular criada para gerar mais controle, tempo e resultado.</p>
+          <div className="public-hero-actions"><a className="public-primary-link" href="#recursos">Conheça o Gerivo</a><a className="public-secondary-link" href="#planos">Conheça nossos planos</a></div>
+
+        </div>
+
+        <figure className="public-hero-product"><img src="/gerivo-showcase.webp" alt="Gerivo em computador e celular" /><figcaption>Operação conectada no computador e no celular.</figcaption></figure>
       </section>
 
       <section className="public-brand-showcase" aria-label="Visão geral do Gerivo">
@@ -2999,13 +3079,14 @@ function Login({
         <div className="public-plan-grid">
           <article><small>ESSENCIAL</small><h3>Gerivo Essencial</h3><strong>R$ 119<em>/mês</em></strong><p>1 empresa · 1 unidade · 3 usuários</p><ul><li>Painel e clientes</li><li>Catálogo e orçamentos</li><li>Agenda básica</li></ul><a href="mailto:gerivo.sistemas@gmail.com?subject=Interesse%20no%20Gerivo%20Essencial">Tenho interesse</a></article>
           <article className="recommended"><b>Mais indicado</b><small>GESTÃO</small><h3>Gerivo Gestão</h3><strong>R$ 219<em>/mês</em></strong><p>1 empresa · até 2 unidades · 8 usuários</p><ul><li>Tudo do Essencial</li><li>O.S., estoque e compras</li><li>Indicadores e satisfação</li></ul><a href="mailto:gerivo.sistemas@gmail.com?subject=Interesse%20no%20Gerivo%20Gest%C3%A3o">Tenho interesse</a></article>
-          <article><small>PROFISSIONAL</small><h3>Gerivo Profissional</h3><strong>R$ 349<em>/mês</em></strong><p>Até 2 empresas · 5 unidades · 20 usuários</p><ul><li>Financeiro gerencial</li><li>Automações e auditoria</li><li>Assistente Gerivo inicial</li></ul><a href="mailto:gerivo.sistemas@gmail.com?subject=Interesse%20no%20Gerivo%20Profissional">Tenho interesse</a></article>
+          <article><small>PROFISSIONAL</small><h3>Gerivo Profissional</h3><strong>R$ 349<em>/mês</em></strong><p>Até 2 empresas · 5 unidades · 20 usuários</p><ul><li>Indicadores gerenciais</li><li>Automações e auditoria</li><li>Assistente Gerivo inicial</li></ul><a href="mailto:gerivo.sistemas@gmail.com?subject=Interesse%20no%20Gerivo%20Profissional">Tenho interesse</a></article>
           <article><small>ENTERPRISE</small><h3>Gerivo Enterprise</h3><strong>R$ 599<em>/mês</em></strong><p>Estrutura e limites personalizados</p><ul><li>Múltiplas empresas</li><li>Implantação acompanhada</li><li>Integrações e suporte prioritário</li></ul><a href="mailto:gerivo.sistemas@gmail.com?subject=Interesse%20no%20Gerivo%20Enterprise">Solicitar proposta</a></article>
         </div>
       </section>
 
-      <section className="public-contact" id="contato"><div><small>CONTATE-NOS</small><h2>Vamos entender a operação da sua empresa</h2><p>Converse com o Gerivo sobre módulos, implantação e estrutura adequada para o seu negócio.</p></div><a href="mailto:gerivo.sistemas@gmail.com?subject=Quero%20conhecer%20o%20Gerivo">gerivo.sistemas@gmail.com</a></section>
-      <footer className="public-footer"><img src="/gerivo-logo-light.png" alt="Gerivo" /><span>Gestão que gera resultados.</span><span>Gerivo v1.7.4 · Sistema desenvolvido por Petrick Maciel</span></footer>
+      <section className="public-contact public-contact-form" id="contato"><div><small>CONTATE-NOS</small><h2>Vamos entender a sua operação</h2><p>Preencha os dados e envie a solicitação para a equipe Gerivo.</p></div><form action="mailto:gerivo.sistemas@gmail.com" method="post" encType="text/plain"><input name="nome" placeholder="Nome" required /><input name="telefone" placeholder="Telefone" required /><input name="email" type="email" placeholder="E-mail" required /><input name="assunto" placeholder="Assunto" required /><textarea name="mensagem" rows={4} placeholder="Mensagem" required /><button className="primary">Enviar contato</button></form></section>
+      <a className="public-floating-contact" href="#contato">Fale com a gente</a>
+      <footer className="public-footer"><img src="/gerivo-logo-light.png" alt="Gerivo" /><span>Gestão que gera resultados.</span><span>Gerivo v1.7.6</span></footer>
     </main>
   );
 }
@@ -3193,6 +3274,9 @@ function ManagementHub({
   onOpenPricing,
   onOpenModules,
   onOpenChecklist,
+  onOpenKnowledge,
+  onOpenMessages,
+  onOpenBi,
 }: {
   store: Store;
   data: StoreData;
@@ -3204,6 +3288,9 @@ function ManagementHub({
   onOpenPricing: () => void;
   onOpenModules: () => void;
   onOpenChecklist: () => void;
+  onOpenKnowledge: () => void;
+  onOpenMessages: () => void;
+  onOpenBi: () => void;
 }) {
   const [usersOpen, setUsersOpen] = useState(false);
   const activeItems = data.catalog.filter((item) => item.active).length;
@@ -3215,6 +3302,9 @@ function ManagementHub({
     { key: "pricing", label: "Formação de preço", icon: "chart" as IconName, value: `${data.companySettings.generalMargin}% margem geral`, action: onOpenPricing },
     { key: "inventory", label: "Estoque", icon: "box" as IconName, value: lowStock ? `${lowStock} alertas` : "Estoque regular", action: onOpenInventory },
     { key: "checklist", label: "Modelos de checklist", icon: "clipboard" as IconName, value: data.checklistSettings.name, action: onOpenChecklist },
+    { key: "knowledge", label: "Conhecimento da IA", icon: "sparkle" as IconName, value: `${data.knowledgeBase.length} procedimentos`, action: onOpenKnowledge },
+    { key: "messages", label: "Central de mensagens", icon: "file" as IconName, value: "Modelos comerciais", action: onOpenMessages },
+    { key: "bi", label: "Gerivo BI", icon: "chart" as IconName, value: "Indicadores 3, 6 e 12 meses", action: onOpenBi },
     { key: "users", label: "Usuários e acessos", icon: "users" as IconName, value: "Gerenciar acessos", action: () => setUsersOpen(true) },
   ];
   if (isPlatformMaster) cards.splice(3, 0, { key: "modules", label: "Módulos contratados", icon: "modules" as IconName, value: "Controle MASTER", action: onOpenModules });
@@ -3814,90 +3904,228 @@ function InventoryPage({ items, suppliers, generalMargin, onItemsChange, onSuppl
   return <div className="inventory-page"><section className="metrics metrics-3"><Metric label="Custo em estoque" value={money(stockCost)} detail={`${products.length} itens controlados`} /><Metric label="Venda potencial" value={money(potentialRevenue)} detail={`Margem geral ${generalMargin}%`} /><Metric label="Reposição necessária" value={String(lowStock.length)} detail="Itens no mínimo ou abaixo" /></section><section className="inventory-grid"><article className="panel"><header><div><small>ASSISTENTE DE ESTOQUE</small><h3>Sugestões de compra</h3></div></header>{suggestions.length ? suggestions.map(({ item, supplier, suggestedQty }) => <div className="stock-suggestion" key={item.id}><span><PremiumIcon name="sparkle" size={18} /></span><div><strong>Comprar {suggestedQty} un. de {item.name}</strong><small>{supplier?.name || "Fornecedor não definido"} · saldo atual {item.stock}</small></div><button className="outline small" onClick={() => onItemsChange(items.map((current) => current.id === item.id ? { ...current, stock: current.stock + suggestedQty } : current))}>Registrar entrada</button></div>) : <div className="empty-inline">Nenhuma reposição urgente.</div>}</article><article className="panel"><header><div><small>FORNECEDORES</small><h3>{suppliers.filter((s) => s.active).length} cadastrados</h3></div></header><div className="supplier-list">{suppliers.map((supplier) => <div key={supplier.id}><strong>{supplier.name}</strong><span>{supplier.paymentTerms || "Sem condição"} · {supplier.leadTimeDays} dias</span></div>)}</div><div className="supplier-add"><input value={supplierName} onChange={(e) => setSupplierName(e.target.value)} placeholder="Nome do fornecedor" /><button className="primary small" onClick={() => { if (!supplierName.trim()) return; onSuppliersChange([...suppliers, { id: uid(), name: supplierName.trim(), document: "", phone: "", email: "", paymentTerms: "", leadTimeDays: 0, active: true }]); setSupplierName(""); }}>Cadastrar</button></div></article></section><section className="panel inventory-table"><header><div><small>POSIÇÃO ATUAL</small><h3>Estoque</h3></div></header>{products.map((item) => <div className={item.stock <= item.minimumStock ? "inventory-row alert" : "inventory-row"} key={item.id}><div><strong>{item.name}</strong><small>{item.category} · {item.sku || "sem código"}</small></div><label>Saldo<input inputMode="numeric" value={item.stock} onChange={(e) => onItemsChange(items.map((current) => current.id === item.id ? { ...current, stock: Math.max(0, Number(e.target.value) || 0) } : current))} /></label><span>{money(item.cost)} custo</span><span>{money(item.price)} venda</span></div>)}</section></div>;
 }
 
-function AssistantPage({ store, data }: { store: Store; data: StoreData }) {
-  const [question, setQuestion] = useState("Quero que você calcule o faturamento dos últimos 12 meses e me diga em que mês vendemos mais.");
-  const [answer, setAnswer] = useState<{ text: string; rows?: Array<{ label: string; value: number }> } | null>(null);
-  function analyze() {
-    const normalized = question.toLowerCase();
-    if (normalized.includes("faturamento") || normalized.includes("vendeu mais")) {
-      const now = new Date();
-      const rows = Array.from({ length: 12 }, (_, index) => {
-        const date = new Date(now.getFullYear(), now.getMonth() - (11 - index), 1);
-        const value = data.orders.filter((item) => item.status === "FECHADA" && new Date(item.updatedAt).getMonth() === date.getMonth() && new Date(item.updatedAt).getFullYear() === date.getFullYear()).reduce((total, item) => total + item.total, 0);
-        return { label: date.toLocaleDateString("pt-BR", { month: "short", year: "2-digit" }), value };
-      });
-      const total = rows.reduce((sum, row) => sum + row.value, 0);
-      const best = rows.reduce((current, row) => row.value > current.value ? row : current, rows[0]);
-      setAnswer({ text: total ? `Nos últimos 12 meses, o faturamento registrado foi ${money(total)}. O melhor mês foi ${best.label}, com ${money(best.value)}.` : "Ainda não existem O.S. fechadas suficientes para calcular o faturamento dos últimos 12 meses.", rows });
-    } else if (normalized.includes("estoque")) {
-      const low = data.catalog.filter((item) => item.kind !== "SERVICO" && item.active && item.stock <= item.minimumStock);
-      setAnswer({ text: low.length ? `${low.length} itens exigem atenção: ${low.slice(0, 5).map((item) => item.name).join(", ")}.` : "O estoque não possui itens abaixo do mínimo." });
-    } else if (normalized.includes("orçamento")) {
-      const open = data.quotes.filter((item) => item.status !== "FECHADO");
-      setAnswer({ text: `Existem ${open.length} orçamentos abertos, somando ${money(open.reduce((total, item) => total + item.total, 0))}.` });
-    } else if (normalized.includes("agenda") || normalized.includes("agend")) {
-      setAnswer({ text: `Há ${data.appointments.filter((item) => item.status !== "CANCELADO" && item.status !== "CONCLUIDO").length} agendamentos ativos nesta loja.` });
-    } else {
-      setAnswer({ text: "Posso analisar faturamento, orçamentos, estoque e agenda com os dados disponíveis nesta loja." });
-    }
-  }
-  const max = Math.max(1, ...(answer?.rows?.map((row) => row.value) || [1]));
-  return <div className="assistant-page"><section className="assistant-hero"><span><PremiumIcon name="sparkle" size={28} /></span><div><small>ASSISTENTE GERIVO</small><h2>Pergunte sobre sua operação</h2><p>{store.companyName}</p></div></section><section className="panel assistant-chat"><textarea value={question} onChange={(e) => setQuestion(e.target.value)} /><button className="primary" onClick={analyze}>Analisar dados</button>{answer && <div className="assistant-answer"><strong>Análise Gerivo</strong><p>{answer.text}</p>{answer.rows && <div className="assistant-chart">{answer.rows.map((row) => <div key={row.label}><span>{row.label}</span><i><em style={{ width: `${Math.max(2, row.value / max * 100)}%` }} /></i><b>{money(row.value)}</b></div>)}</div>}<small>A análise respeita a empresa, a loja e as permissões do usuário.</small></div>}</section></div>;
+function monthKey(value: string | Date) {
+  const date = value instanceof Date ? value : new Date(value);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
 }
 
-function MasterCommercialPage({ stores, currentStore, onCreateCompany }: { stores: Store[]; currentStore: Store; onCreateCompany: (name: string, segment: string) => Promise<void> }) {
+function operationalHealth(data: StoreData) {
+  const closedOrders = data.orders.filter((item) => item.status === "FECHADA");
+  const openQuotes = data.quotes.filter((item) => item.status !== "FECHADO");
+  const incompleteAttendances = data.attendances.filter((item) => item.status !== "CONCLUIDO");
+  const lowStock = data.catalog.filter((item) => item.active && item.kind !== "SERVICO" && item.stock <= item.minimumStock);
+  const quoteConversion = data.quotes.length ? data.quotes.filter((item) => item.status === "FECHADO").length / data.quotes.length : 0;
+  let score = 100;
+  score -= Math.min(25, openQuotes.length * 3);
+  score -= Math.min(20, incompleteAttendances.length * 2);
+  score -= Math.min(20, lowStock.length * 4);
+  if (data.quotes.length >= 3 && quoteConversion < 0.3) score -= 15;
+  if (!closedOrders.length) score -= 10;
+  return Math.max(0, Math.round(score));
+}
+
+function BusinessIntelligencePage({ data }: { data: StoreData }) {
+  const [period, setPeriod] = useState<3 | 6 | 12>(6);
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth() - (period - 1), 1);
+  const closedOrders = data.orders.filter((item) => item.status === "FECHADA" && new Date(item.updatedAt) >= start);
+  const closedQuotes = data.quotes.filter((item) => item.status === "FECHADO" && new Date(item.updatedAt) >= start);
+  const revenue = closedOrders.reduce((total, item) => total + item.total, 0);
+  const averageTicket = closedOrders.length ? revenue / closedOrders.length : 0;
+  const periodQuotes = data.quotes.filter((item) => new Date(item.updatedAt) >= start);
+  const conversion = periodQuotes.length ? closedQuotes.length / periodQuotes.length * 100 : 0;
+  const lowStock = data.catalog.filter((item) => item.active && item.kind !== "SERVICO" && item.stock <= item.minimumStock).length;
+  const rows = Array.from({ length: period }, (_, index) => {
+    const date = new Date(now.getFullYear(), now.getMonth() - (period - 1 - index), 1);
+    const key = monthKey(date);
+    return {
+      label: date.toLocaleDateString("pt-BR", { month: "short", year: "2-digit" }),
+      value: closedOrders.filter((item) => monthKey(item.updatedAt) === key).reduce((total, item) => total + item.total, 0),
+      orders: closedOrders.filter((item) => monthKey(item.updatedAt) === key).length,
+    };
+  });
+  const max = Math.max(1, ...rows.map((row) => row.value));
+  return <div className="bi-page">
+    <section className="bi-heading"><div><small>GERIVO BI</small><h2>Indicadores da operação</h2><p>Leitura consolidada dos registros salvos nesta unidade.</p></div><div className="bi-periods">{([3, 6, 12] as const).map((value) => <button key={value} className={period === value ? "active" : ""} onClick={() => setPeriod(value)}>{value} meses</button>)}</div></section>
+    <section className="metrics bi-metrics"><Metric label="Faturamento realizado" value={money(revenue)} detail={`${closedOrders.length} O.S. fechadas`} /><Metric label="Ticket médio" value={money(averageTicket)} detail="Média por O.S. fechada" /><Metric label="Conversão de propostas" value={`${conversion.toFixed(1)}%`} detail={`${closedQuotes.length} de ${periodQuotes.length} orçamentos`} /><Metric label="Saúde operacional" value={`${operationalHealth(data)}/100`} detail={lowStock ? `${lowStock} alerta(s) de estoque` : "Sem alertas críticos de estoque"} /></section>
+    <section className="bi-grid"><article className="panel bi-chart-card"><header><div><small>EVOLUÇÃO</small><h3>Faturamento mensal</h3></div></header><div className="bi-bars">{rows.map((row) => <div key={row.label}><span>{row.label}</span><i><em style={{ width: `${Math.max(2, row.value / max * 100)}%` }} /></i><b>{money(row.value)}</b><small>{row.orders} O.S.</small></div>)}</div></article><article className="panel bi-attention-card"><header><div><small>ATENÇÃO</small><h3>O que acompanhar</h3></div></header><ul><li><strong>{data.quotes.filter((item) => item.status !== "FECHADO").length}</strong> orçamentos ainda abertos</li><li><strong>{data.attendances.filter((item) => item.status !== "CONCLUIDO").length}</strong> atendimentos em andamento</li><li><strong>{data.appointments.filter((item) => !["CONCLUIDO", "CANCELADO"].includes(item.status)).length}</strong> agendamentos ativos</li><li><strong>{lowStock}</strong> itens no estoque mínimo ou abaixo</li></ul></article></section>
+  </div>;
+}
+
+function buildCentralMessage(input: { situation: string; tone: QuoteMessageTemplate; customer: string; vehicle: string; value: string; details: string; company: string; variation: number }) {
+  const customer = firstName(input.customer || "cliente");
+  const vehicle = input.vehicle.trim() ? ` sobre o ${input.vehicle.trim()}` : "";
+  const value = input.value.trim() ? ` no valor de ${input.value.trim()}` : "";
+  const details = input.details.trim() ? `\n\n${input.details.trim()}` : "";
+  const openers: Record<QuoteMessageTemplate, string> = {
+    PROFISSIONAL: `Olá, ${customer}. Tudo bem?`,
+    DIRETA: `Olá, ${customer}.`,
+    CONSULTIVA: `Olá, ${customer}! Analisamos seu atendimento com atenção.`,
+    PREVENTIVA: `Olá, ${customer}! Pensando em segurança e prevenção,`,
+    AMIGAVEL: `Oi, ${customer}! Tudo certo? 😊`,
+    FORMAL: `Prezado(a) ${customer},`,
+    COMERCIAL: `Olá, ${customer}! Temos uma atualização importante para você.`,
+    CURTA: `${customer},`,
+  };
+  const situations: Record<string, string[]> = {
+    ORCAMENTO: [`seu orçamento${vehicle}${value} está pronto para análise.`, `preparamos a proposta solicitada${vehicle}${value}.`],
+    APROVACAO: [`o orçamento enviado aguarda sua aprovação para seguirmos com o atendimento.`, `podemos prosseguir assim que você confirmar a proposta.`],
+    LEMBRETE: [`passando para lembrar do atendimento combinado${vehicle}.`, `este é um lembrete sobre a próxima etapa do seu atendimento${vehicle}.`],
+    AGENDAMENTO: [`seu agendamento${vehicle} está confirmado.`, `reservamos o horário do seu atendimento${vehicle}.`],
+    POS_VENDA: [`queremos saber como foi sua experiência após o atendimento${vehicle}.`, `estamos entrando em contato para acompanhar o resultado do serviço${vehicle}.`],
+    RETORNO: [`ainda aguardamos seu retorno para dar continuidade ao atendimento${vehicle}.`, `ficamos à disposição para concluir os próximos passos${vehicle}.`],
+  };
+  const body = (situations[input.situation] || situations.ORCAMENTO)[input.variation % 2];
+  const closing = input.tone === "CURTA" ? "Responda por aqui." : input.tone === "FORMAL" ? `Permanecemos à disposição.\n\nAtenciosamente,\n${input.company}` : `Qualquer dúvida, responda esta mensagem.\n\n${input.company}`;
+  return `${openers[input.tone]}\n\n${body}${details}\n\n${closing}`;
+}
+
+function MessageCenterPage({ store }: { store: Store }) {
+  const [situation, setSituation] = useState("ORCAMENTO");
+  const [tone, setTone] = useState<QuoteMessageTemplate>("PROFISSIONAL");
+  const [customer, setCustomer] = useState("Cliente");
+  const [vehicle, setVehicle] = useState("");
+  const [value, setValue] = useState("");
+  const [details, setDetails] = useState("");
+  const [variation, setVariation] = useState(0);
+  const message = buildCentralMessage({ situation, tone, customer, vehicle, value, details, company: store.companyName, variation });
+  async function copy() { try { await navigator.clipboard.writeText(message); } catch { window.alert(message); } }
+  return <div className="messages-page"><section className="management-heading"><div><small>CENTRAL DE MENSAGENS</small><h2>Comunicação pronta para o cliente</h2><p>Escolha a situação, o tom e os dados que devem entrar no texto.</p></div></section><section className="message-center-grid"><article className="panel message-builder"><div className="message-form-grid"><Field label="Situação"><select value={situation} onChange={(event) => setSituation(event.target.value)}><option value="ORCAMENTO">Envio de orçamento</option><option value="APROVACAO">Aguardando aprovação</option><option value="LEMBRETE">Lembrete</option><option value="AGENDAMENTO">Confirmação de agendamento</option><option value="POS_VENDA">Pós-venda</option><option value="RETORNO">Aguardando retorno</option></select></Field><Field label="Tom"><select value={tone} onChange={(event) => setTone(event.target.value as QuoteMessageTemplate)}>{(["PROFISSIONAL", "DIRETA", "CONSULTIVA", "PREVENTIVA", "AMIGAVEL", "FORMAL", "COMERCIAL", "CURTA"] as QuoteMessageTemplate[]).map((item) => <option value={item} key={item}>{quoteMessageTemplateLabel(item)}</option>)}</select></Field><Field label="Cliente"><input value={customer} onChange={(event) => setCustomer(event.target.value)} /></Field><Field label="Veículo / referência"><input value={vehicle} onChange={(event) => setVehicle(event.target.value)} /></Field><Field label="Valor"><input value={value} onChange={(event) => setValue(event.target.value)} placeholder="R$ 0,00" /></Field><Field label="Informações adicionais"><textarea rows={4} value={details} onChange={(event) => setDetails(event.target.value)} /></Field></div></article><article className="panel message-preview"><header><div><small>PRÉVIA</small><h3>Mensagem gerada</h3></div></header><textarea rows={15} value={message} readOnly /><div><button className="outline" onClick={() => setVariation((current) => current + 1)}>Gerar outra variação</button><button className="primary" onClick={copy}>Copiar mensagem</button></div></article></section></div>;
+}
+
+function parseKnowledgeFile(name: string, text: string): KnowledgeEntry[] {
+  const now = new Date().toISOString();
+  if (name.toLowerCase().endsWith(".csv")) {
+    const rows = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    return rows.slice(rows[0]?.toLowerCase().includes("titulo") ? 1 : 0).map((line, index) => {
+      const parts = line.split(/[;,]/).map((part) => part.trim().replace(/^"|"$/g, ""));
+      return { id: uid(), title: parts[0] || `Procedimento ${index + 1}`, content: parts.slice(1).join(" · ") || parts[0] || "", tags: [], source: name, createdAt: now, updatedAt: now };
+    });
+  }
+  const chunks = text.split(/\n(?=#{1,3}\s)|\n{2,}/).map((part) => part.trim()).filter(Boolean);
+  return chunks.map((part, index) => {
+    const lines = part.split(/\r?\n/);
+    const title = lines[0].replace(/^#{1,3}\s*/, "").slice(0, 100) || `Procedimento ${index + 1}`;
+    return { id: uid(), title, content: lines.slice(1).join("\n").trim() || part, tags: [], source: name, createdAt: now, updatedAt: now };
+  });
+}
+
+function KnowledgeBasePage({ entries, onChange }: { entries: KnowledgeEntry[]; onChange: (entries: KnowledgeEntry[]) => void }) {
+  const [title, setTitle] = useState("");
+  const [content, setContent] = useState("");
+  const [tags, setTags] = useState("");
+  const [search, setSearch] = useState("");
+  const filtered = entries.filter((entry) => `${entry.title} ${entry.content} ${entry.tags.join(" ")}`.toLowerCase().includes(search.trim().toLowerCase()));
+  function add() { if (!title.trim() || !content.trim()) return; const now = new Date().toISOString(); onChange([{ id: uid(), title: title.trim(), content: content.trim(), tags: tags.split(",").map((item) => item.trim()).filter(Boolean), source: "Cadastro manual", createdAt: now, updatedAt: now }, ...entries]); setTitle(""); setContent(""); setTags(""); }
+  async function importFile(event: ChangeEvent<HTMLInputElement>) { const file = event.target.files?.[0]; if (!file) return; const text = await file.text(); onChange([...parseKnowledgeFile(file.name, text), ...entries]); event.target.value = ""; }
+  return <div className="knowledge-page"><section className="management-heading"><div><small>CONHECIMENTO DA IA</small><h2>Procedimentos e padrões da empresa</h2><p>O Assistente Gerivo utiliza estas informações junto aos dados operacionais.</p></div><label className="primary knowledge-import">Importar TXT, CSV ou Markdown<input type="file" accept=".txt,.csv,.md,text/plain,text/csv,text/markdown" onChange={importFile} /></label></section><section className="knowledge-grid"><article className="panel knowledge-form"><header><div><small>NOVO CONHECIMENTO</small><h3>Cadastrar procedimento</h3></div></header><div><Field label="Título"><input value={title} onChange={(event) => setTitle(event.target.value)} /></Field><Field label="Conteúdo"><textarea rows={9} value={content} onChange={(event) => setContent(event.target.value)} /></Field><Field label="Tags separadas por vírgula"><input value={tags} onChange={(event) => setTags(event.target.value)} /></Field><button className="primary" onClick={add}>Salvar conhecimento</button></div></article><article className="panel knowledge-list"><header><div><small>BASE LOCAL</small><h3>{entries.length} registro(s)</h3></div><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar procedimento" /></header><div>{filtered.length ? filtered.map((entry) => <article key={entry.id}><div><strong>{entry.title}</strong><small>{entry.source} · {formatDate(entry.updatedAt)}</small><p>{entry.content}</p>{entry.tags.length > 0 && <span>{entry.tags.join(" · ")}</span>}</div><button className="danger small" onClick={() => onChange(entries.filter((item) => item.id !== entry.id))}>Excluir</button></article>) : <div className="empty-inline">Nenhum procedimento encontrado.</div>}</div></article></section></div>;
+}
+
+function localAssistantAnswer(question: string, data: StoreData) {
+  const normalized = question.toLowerCase();
+  const knowledge = data.knowledgeBase.find((entry) => `${entry.title} ${entry.content} ${entry.tags.join(" ")}`.toLowerCase().split(/\s+/).some((term) => term.length > 4 && normalized.includes(term)));
+  if (knowledge) return { text: `${knowledge.title}: ${knowledge.content}`, source: "Conhecimento da empresa" };
+  if (normalized.includes("faturamento") || normalized.includes("vendeu mais")) {
+    const now = new Date();
+    const rows = Array.from({ length: 12 }, (_, index) => { const date = new Date(now.getFullYear(), now.getMonth() - (11 - index), 1); const value = data.orders.filter((item) => item.status === "FECHADA" && monthKey(item.updatedAt) === monthKey(date)).reduce((total, item) => total + item.total, 0); return { label: date.toLocaleDateString("pt-BR", { month: "short", year: "2-digit" }), value }; });
+    const total = rows.reduce((sum, row) => sum + row.value, 0); const best = rows.reduce((current, row) => row.value > current.value ? row : current, rows[0]);
+    return { text: total ? `Nos últimos 12 meses, o faturamento registrado foi ${money(total)}. O melhor mês foi ${best.label}, com ${money(best.value)}.` : "Ainda não existem O.S. fechadas suficientes para calcular o faturamento.", rows, source: "Motor local" };
+  }
+  if (normalized.includes("ticket") || normalized.includes("convers")) { const closed = data.orders.filter((item) => item.status === "FECHADA"); const revenue = closed.reduce((total, item) => total + item.total, 0); const conversion = data.quotes.length ? data.quotes.filter((item) => item.status === "FECHADO").length / data.quotes.length * 100 : 0; return { text: `O ticket médio das O.S. fechadas é ${money(closed.length ? revenue / closed.length : 0)}. A conversão dos orçamentos registrados está em ${conversion.toFixed(1)}%.`, source: "Motor local" }; }
+  if (normalized.includes("estoque") || normalized.includes("comprar")) { const low = data.catalog.filter((item) => item.kind !== "SERVICO" && item.active && item.stock <= item.minimumStock); return { text: low.length ? `${low.length} itens exigem reposição: ${low.slice(0, 8).map((item) => item.name).join(", ")}.` : "O estoque não possui itens abaixo do mínimo.", source: "Motor local" }; }
+  if (normalized.includes("orçamento")) { const open = data.quotes.filter((item) => item.status !== "FECHADO"); return { text: `Existem ${open.length} orçamentos abertos, somando ${money(open.reduce((total, item) => total + item.total, 0))}.`, source: "Motor local" }; }
+  if (normalized.includes("agenda") || normalized.includes("agend")) return { text: `Há ${data.appointments.filter((item) => !["CANCELADO", "CONCLUIDO"].includes(item.status)).length} agendamentos ativos nesta loja.`, source: "Motor local" };
+  return { text: "Posso analisar faturamento, ticket médio, conversão, orçamentos, estoque, agenda e os procedimentos cadastrados em Conhecimento da IA.", source: "Motor local" };
+}
+
+function AssistantPage({ store, data }: { store: Store; data: StoreData }) {
+  const [question, setQuestion] = useState("Quais pontos da operação precisam de atenção?");
+  const [answer, setAnswer] = useState<{ text: string; rows?: Array<{ label: string; value: number }>; source?: string } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [engine, setEngine] = useState("Motor local");
+  const health = operationalHealth(data);
+  const alerts = [data.quotes.filter((item) => item.status !== "FECHADO").length ? `${data.quotes.filter((item) => item.status !== "FECHADO").length} orçamentos em aberto` : "Orçamentos sob controle", data.catalog.filter((item) => item.kind !== "SERVICO" && item.active && item.stock <= item.minimumStock).length ? "Estoque com necessidade de reposição" : "Estoque sem alertas críticos", data.appointments.filter((item) => !["CANCELADO", "CONCLUIDO"].includes(item.status)).length ? "Agenda possui compromissos ativos" : "Agenda sem pendências" ];
+  async function analyze(customQuestion?: string) {
+    const currentQuestion = customQuestion || question;
+    if (customQuestion) setQuestion(customQuestion);
+    setLoading(true);
+    const local = localAssistantAnswer(currentQuestion, data);
+    try {
+      const response = await fetch("/api/ai", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question: currentQuestion, company: store.companyName, summary: { health, openQuotes: data.quotes.filter((item) => item.status !== "FECHADO").length, closedOrders: data.orders.filter((item) => item.status === "FECHADA").length, lowStock: data.catalog.filter((item) => item.kind !== "SERVICO" && item.active && item.stock <= item.minimumStock).map((item) => item.name), appointments: data.appointments.filter((item) => !["CANCELADO", "CONCLUIDO"].includes(item.status)).length }, knowledge: data.knowledgeBase.slice(0, 20).map((entry) => ({ title: entry.title, content: entry.content })) }) });
+      const payload = await response.json().catch(() => ({}));
+      if (response.ok && payload.answer) { setAnswer({ text: payload.answer, source: "IA conectada" }); setEngine("IA conectada"); }
+      else { setAnswer(local); setEngine("Motor local"); }
+    } catch { setAnswer(local); setEngine("Motor local"); }
+    finally { setLoading(false); }
+  }
+  const max = Math.max(1, ...(answer?.rows?.map((row) => row.value) || [1]));
+  return <div className="assistant-page"><section className="assistant-hero assistant-hero-v176"><span><PremiumIcon name="sparkle" size={28} /></span><div><small>ASSISTENTE GERIVO</small><h2>Saúde operacional {health}/100</h2><p>{store.companyName}</p></div><b className={engine === "IA conectada" ? "engine online" : "engine"}>{engine}</b></section><section className="assistant-overview">{alerts.map((alert, index) => <article key={alert}><span>{index + 1}</span><p>{alert}</p></article>)}</section><section className="panel assistant-chat"><div className="assistant-quick-questions">{["Calcule o faturamento dos últimos 12 meses.", "Compare ticket médio e conversão.", "Quais orçamentos precisam de atenção?", "O que devo comprar para o estoque?"].map((item) => <button key={item} onClick={() => void analyze(item)}>{item}</button>)}</div><textarea value={question} onChange={(event) => setQuestion(event.target.value)} /><button className="primary" disabled={loading} onClick={() => void analyze()}>{loading ? "Analisando..." : "Analisar dados"}</button>{answer && <div className="assistant-answer"><strong>{answer.source || "Análise Gerivo"}</strong><p>{answer.text}</p>{answer.rows && <div className="assistant-chart">{answer.rows.map((row) => <div key={row.label}><span>{row.label}</span><i><em style={{ width: `${Math.max(2, row.value / max * 100)}%` }} /></i><b>{money(row.value)}</b></div>)}</div>}<small>A análise respeita a empresa, a loja e os dados disponíveis.</small></div>}</section></div>;
+}
+
+type MasterCompanyInput = { groupMode: "NEW" | "EXISTING"; groupId: string; groupName: string; companyName: string; document: string; storeName: string; segment: string };
+
+function MasterCommercialPage({ stores, currentStore, onCreateCompany }: { stores: Store[]; currentStore: Store; onCreateCompany: (input: MasterCompanyInput) => Promise<void> }) {
   const supabase = useMemo(() => getSupabaseBrowserClient(), []);
   const [plans, setPlans] = useState<any[]>([]);
   const [subscriptions, setSubscriptions] = useState<any[]>([]);
+  const [groups, setGroups] = useState<any[]>([]);
   const [message, setMessage] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
+  const [groupMode, setGroupMode] = useState<"NEW" | "EXISTING">("NEW");
+  const [groupId, setGroupId] = useState("");
+  const [groupName, setGroupName] = useState("");
   const [companyName, setCompanyName] = useState("");
+  const [document, setDocument] = useState("");
+  const [storeName, setStoreName] = useState("");
   const [segment, setSegment] = useState("OUTRO");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState("");
   const [search, setSearch] = useState("");
+
   async function load() {
-    const [plansResult, subscriptionsResult] = await Promise.all([
+    const [plansResult, subscriptionsResult, groupsResult] = await Promise.all([
       supabase.from("subscription_plans").select("*").eq("active", true).order("sort_order"),
-      supabase.from("company_subscriptions").select("*, companies(name), subscription_plans(name, code)").order("created_at", { ascending: false }),
+      supabase.from("company_subscriptions").select("*, companies(name, group_id), subscription_plans(name, code)").order("created_at", { ascending: false }),
+      supabase.from("business_groups").select("id, name, status, active, companies(id, name, document, status, stores(id, name, public_code))").order("name"),
     ]);
-    setPlans(plansResult.data || []); setSubscriptions(subscriptionsResult.data || []);
-  }
-  useEffect(() => { void load(); }, []);
-  async function activate(companyId: string, planId: string, months: number) {
-    const { error } = await supabase.rpc("master_activate_subscription", { p_company_id: companyId, p_plan_id: planId, p_duration_months: months });
-    setMessage(error ? error.message : "Assinatura ativada. A vigência começou agora.");
-    if (!error) await load();
-  }
-  function closeCreateCompany() {
-    if (creating) return;
-    setCreateOpen(false);
-    setCreateError("");
-  }
-  async function createCompany() {
-    if (!companyName.trim() || creating) return;
-    setCreating(true);
-    setMessage("");
-    setCreateError("");
-    try {
-      await onCreateCompany(companyName.trim(), segment);
-      setCreateOpen(false);
-      setCompanyName("");
-      setSegment("OUTRO");
-      setMessage("Empresa criada. Defina o plano e ative a assinatura para iniciar a vigência.");
-    } catch (error) {
-      const errorMessage = error instanceof Error && error.message
-        ? error.message
-        : "Não foi possível criar a empresa.";
-      setCreateError(errorMessage);
-    } finally {
-      setCreating(false);
+    setPlans(plansResult.data || []);
+    setSubscriptions(subscriptionsResult.data || []);
+    if (!groupsResult.error) setGroups(groupsResult.data || []);
+    else {
+      const fallback = Array.from(new Map(stores.map((store) => [store.companyId, { id: store.companyId, name: store.companyName, companies: [{ id: store.companyId, name: store.companyName, document: "", status: "ACTIVE", stores: [{ id: store.id, name: store.name, public_code: store.publicCode }] }] }])).values());
+      setGroups(fallback);
     }
   }
+  useEffect(() => { void load(); }, []);
+
+  async function activate(companyId: string, planId: string, months: number) {
+    const { error } = await supabase.rpc("master_activate_subscription", { p_company_id: companyId, p_plan_id: planId, p_duration_months: months });
+    setMessage(error ? error.message : "Assinatura ativada para todo o grupo empresarial.");
+    if (!error) await load();
+  }
+  function resetCreate() { setGroupMode("NEW"); setGroupId(""); setGroupName(""); setCompanyName(""); setDocument(""); setStoreName(""); setSegment("OUTRO"); setCreateError(""); }
+  function closeCreateCompany() { if (creating) return; setCreateOpen(false); resetCreate(); }
+  async function createCompany() {
+    if (!companyName.trim() || !storeName.trim() || creating) return;
+    if (groupMode === "NEW" && !groupName.trim()) return setCreateError("Informe o nome do novo grupo empresarial.");
+    if (groupMode === "EXISTING" && !groupId) return setCreateError("Selecione o grupo empresarial.");
+    setCreating(true); setMessage(""); setCreateError("");
+    try {
+      await onCreateCompany({ groupMode, groupId, groupName: groupName.trim(), companyName: companyName.trim(), document: document.trim(), storeName: storeName.trim(), segment });
+      setCreateOpen(false); resetCreate(); setMessage("Empresa criada. Defina o plano e ative a assinatura do grupo."); await load();
+    } catch (error) { setCreateError(error instanceof Error && error.message ? error.message : "Não foi possível criar a empresa."); }
+    finally { setCreating(false); }
+  }
   const currentSubscription = subscriptions.find((item) => item.company_id === currentStore.companyId);
-  const companies = Array.from(new Map(stores.map((store) => [store.companyId, { id: store.companyId, name: store.companyName, publicCode: store.publicCode }])).values());
-  const filteredCompanies = companies.filter((company) => `${company.name} ${company.publicCode}`.toLowerCase().includes(search.trim().toLowerCase()));
-  return <div className="master-page"><section className="master-heading"><div><small>ADMINISTRAÇÃO COMERCIAL GERIVO</small><h2>Planos, empresas e acessos</h2></div><button type="button" className="primary" onClick={() => { setCreateError(""); setCreateOpen(true); }}>+ Nova empresa</button></section><section className="plan-mini-grid">{plans.map((plan) => <article key={plan.id}><small>{plan.code}</small><h3>{plan.name}</h3><strong>{money(plan.monthly_price)}/mês</strong><span>{plan.company_limit} empresa · {plan.store_limit} lojas · {plan.user_limit} usuários</span><button className="primary small" onClick={() => activate(currentStore.companyId, plan.id, 12)}>Ativar 12 meses</button></article>)}</section><section className="panel subscription-current"><header><div><small>EMPRESA SELECIONADA</small><h3>{currentStore.companyName}</h3></div></header>{currentSubscription ? <div className="subscription-detail"><strong>{currentSubscription.subscription_plans?.name || "Plano"}</strong><span>Status: {currentSubscription.status}</span><span>Ativação: {currentSubscription.activated_at ? formatDate(currentSubscription.activated_at) : "não ativada"}</span><span>Vencimento: {currentSubscription.expires_at ? formatDate(currentSubscription.expires_at) : "—"}</span></div> : <div className="empty-inline">Empresa ainda sem assinatura ativa.</div>}{message && <div className={message.startsWith("Não") ? "auth-error" : "auth-success"}>{message}</div>}</section><section className="panel"><header><div><small>EMPRESAS DA PLATAFORMA</small><h3>{companies.length} empresas</h3></div><input className="master-company-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar por empresa ou ID" /></header><div className="master-company-list">{filteredCompanies.map((company) => <div key={company.id}><strong>{company.name}</strong><span>{subscriptions.find((item) => item.company_id === company.id)?.status || "AGUARDANDO_ATIVAÇÃO"}</span><small>ID de busca: {company.publicCode}</small></div>)}</div></section>{createOpen && <div className="modal-backdrop"><section className="compact-modal master-company-modal"><header><div><small>NOVA EMPRESA</small><h2>Cadastrar cliente Gerivo</h2></div><button type="button" disabled={creating} onClick={closeCreateCompany}>×</button></header><div className="master-company-form" aria-busy={creating}><Field label="Nome da empresa"><input autoFocus value={companyName} onChange={(event) => setCompanyName(event.target.value)} placeholder="Nome que aparecerá no sistema" /></Field><Field label="Segmento"><select value={segment} onChange={(event) => setSegment(event.target.value)}><option value="OFICINA">Oficina e centro automotivo</option><option value="CONCESSIONARIA">Concessionária</option><option value="VAREJO">Comércio varejista</option><option value="CONFEITARIA">Confeitaria</option><option value="SALAO_BELEZA">Salão de beleza</option><option value="ESTETICA_AUTOMOTIVA">Lavagem e estética</option><option value="DELIVERY">Delivery de comida</option><option value="SERVICOS">Prestação de serviços</option><option value="OUTRO">Outro</option></select></Field>{createError && <div className="auth-error master-company-error" role="alert">{createError}</div>}</div><footer><button type="button" className="outline" disabled={creating} onClick={closeCreateCompany}>Cancelar</button><button type="button" className="primary" disabled={creating || !companyName.trim()} onClick={createCompany}>{creating ? "Criando empresa..." : "Criar empresa"}</button></footer></section></div>}</div>;
+  const normalizedSearch = search.trim().toLowerCase();
+  const filteredGroups = groups.filter((group) => JSON.stringify(group).toLowerCase().includes(normalizedSearch));
+  return <div className="master-page">
+    <section className="master-heading"><div><small>GERIVO MASTER</small><h2>Grupos, empresas, unidades e usuários</h2><p>Estrutura: Grupo empresarial → Empresa/CNPJ → Unidade → Usuário.</p></div><button type="button" className="primary" onClick={() => { resetCreate(); setCreateOpen(true); }}>+ Nova empresa</button></section>
+    <section className="plan-mini-grid">{plans.map((plan) => { const enterprise = plan.code === "ENTERPRISE"; return <article key={plan.id}><small>{plan.code}</small><h3>{plan.name}</h3><strong>{enterprise ? "A partir de R$ 599/mês" : `${money(plan.monthly_price)}/mês`}</strong><span>{enterprise ? "Empresas, unidades e usuários personalizados" : `${plan.company_limit} empresa(s) · ${plan.store_limit} unidade(s) · ${plan.user_limit} usuários`}</span><button className="primary small" onClick={() => activate(currentStore.companyId, plan.id, 12)}>Ativar 12 meses</button></article>; })}</section>
+    <section className="panel subscription-current"><header><div><small>GRUPO DA EMPRESA SELECIONADA</small><h3>{currentStore.companyName}</h3></div></header>{currentSubscription ? <div className="subscription-detail"><strong>{currentSubscription.subscription_plans?.name || "Plano"}</strong><span>Status: {currentSubscription.status}</span><span>Ativação: {currentSubscription.activated_at ? formatDate(currentSubscription.activated_at) : "não ativada"}</span><span>Vencimento: {currentSubscription.expires_at ? formatDate(currentSubscription.expires_at) : "—"}</span></div> : <div className="empty-inline">Grupo ainda sem assinatura ativa.</div>}{message && <div className={message.toLowerCase().includes("não") ? "auth-error" : "auth-success"}>{message}</div>}</section>
+    <section className="panel master-groups-panel"><header><div><small>ESTRUTURA EMPRESARIAL</small><h3>{groups.length} grupo(s)</h3></div><input className="master-company-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar grupo, CNPJ, empresa ou unidade" /></header><div className="master-group-list">{filteredGroups.map((group) => <article key={group.id}><header><div><strong>{group.name}</strong><small>{group.companies?.length || 0} empresa(s)</small></div><span>{group.status || "ATIVO"}</span></header><div>{(group.companies || []).map((company: any) => <section key={company.id}><div><b>{company.name}</b><small>{company.document || "CNPJ não informado"}</small></div><ul>{(company.stores || []).map((store: any) => <li key={store.id}>{store.name}<span>ID {store.public_code}</span></li>)}</ul></section>)}</div></article>)}</div></section>
+    {createOpen && <div className="modal-backdrop"><section className="compact-modal master-company-modal master-company-modal-v176"><header><div><small>NOVA EMPRESA</small><h2>Cadastrar estrutura do cliente</h2></div><button type="button" disabled={creating} onClick={closeCreateCompany}>×</button></header><div className="master-company-form" aria-busy={creating}><Field label="Vínculo empresarial"><select value={groupMode} onChange={(event) => setGroupMode(event.target.value as "NEW" | "EXISTING")}><option value="NEW">Novo grupo</option><option value="EXISTING">Grupo existente</option></select></Field>{groupMode === "NEW" ? <Field label="Nome do grupo empresarial"><input value={groupName} onChange={(event) => setGroupName(event.target.value)} placeholder="Proprietário ou grupo econômico" /></Field> : <Field label="Grupo empresarial"><select value={groupId} onChange={(event) => setGroupId(event.target.value)}><option value="">Selecione</option>{groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</select></Field>}<Field label="Empresa / razão exibida"><input autoFocus value={companyName} onChange={(event) => { setCompanyName(event.target.value); if (!storeName) setStoreName(event.target.value); }} /></Field><Field label="CNPJ"><input value={document} onChange={(event) => setDocument(event.target.value)} placeholder="00.000.000/0000-00" /></Field><Field label="Unidade principal"><input value={storeName} onChange={(event) => setStoreName(event.target.value)} placeholder="Matriz, Centro, Loja 1..." /></Field><Field label="Segmento"><select value={segment} onChange={(event) => setSegment(event.target.value)}><option value="OFICINA">Oficina e centro automotivo</option><option value="CONCESSIONARIA">Concessionária</option><option value="VAREJO">Comércio varejista</option><option value="CONFEITARIA">Confeitaria</option><option value="SALAO_BELEZA">Salão de beleza</option><option value="ESTETICA_AUTOMOTIVA">Lavagem e estética</option><option value="DELIVERY">Delivery de comida</option><option value="SERVICOS">Prestação de serviços</option><option value="OUTRO">Outro</option></select></Field>{createError && <div className="auth-error master-company-error" role="alert">{createError}</div>}</div><footer><button type="button" className="outline" disabled={creating} onClick={closeCreateCompany}>Cancelar</button><button type="button" className="primary" disabled={creating || !companyName.trim() || !storeName.trim()} onClick={createCompany}>{creating ? "Criando empresa..." : "Criar empresa"}</button></footer></section></div>}
+  </div>;
 }
 
 function Checklist({
@@ -4016,6 +4244,12 @@ function Checklist({
     updateStage({ ...stage, items: stage.items.map((item) => ids.has(item.id) ? { ...item, value } : item) });
   }
 
+  function goToNextPending() {
+    const pending = stage.items.find((item) => item.value === "PENDENTE");
+    if (!pending) { window.alert("Todos os itens desta etapa já foram respondidos."); return; }
+    document.getElementById(`check-${pending.key}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+
   function completeStage() {
     if (stage.id === "checkup") {
       const report = attendance.technicalReport;
@@ -4088,7 +4322,7 @@ function Checklist({
       <article className="panel stage-panel workshop-stage">
         <header className="stage-head workshop-stage-head">
           <div><small>ETAPA EM EXECUÇÃO</small><h2>{stage.label}</h2><p>{stage.description}</p>{stage.completedAt && <span className="completion-info">Concluído por {stage.completedBy} em {formatDate(stage.completedAt)}</span>}</div>
-          <div className="stage-header-actions">{isLocked && <button className="reopen-button" onClick={reopenStage}>Reabrir etapa</button>}<label className={isLocked ? "photo-button disabled" : "photo-button"}>📷 Fotos gerais<input disabled={isLocked} type="file" accept="image/*" capture="environment" multiple onChange={addStagePhotos} /></label></div>
+          <div className="stage-header-actions">{!isLocked && <button className="outline" type="button" onClick={goToNextPending}>Próximo pendente</button>}{isLocked && <button className="reopen-button" onClick={reopenStage}>Reabrir etapa</button>}<label className={isLocked ? "photo-button disabled" : "photo-button"}>📷 Fotos gerais<input disabled={isLocked} type="file" accept="image/*" capture="environment" multiple onChange={addStagePhotos} /></label></div>
         </header>
 
         {photoMessage && <div className="message">{photoMessage}</div>}
@@ -4140,7 +4374,7 @@ function Checklist({
           {isLocked ? (
             <><div><strong>{stage.label} concluído</strong><span>A etapa está protegida no histórico.</span></div><button className="outline" onClick={onExit}>Voltar para atendimentos</button></>
           ) : (
-            <><div><strong>Finalizar {stage.label}</strong><span>Ao concluir, o atendimento volta para a tela principal.</span></div><button className="primary" onClick={completeStage}>Concluir e salvar módulo</button></>
+            <><div><strong>Finalizar {stage.label}</strong><span>Ao concluir, o atendimento volta para a tela principal.</span></div><button className="primary" onClick={completeStage}>{stage.id === "checkin" ? "Concluir Check-in" : `Concluir ${stage.label}`}</button></>
           )}
         </footer>
       </article>
@@ -4492,7 +4726,7 @@ function CompanySettingsModal({
         <small>MODELO PADRÃO DA MENSAGEM</small>
         <h3>Qual abordagem o Gerivo deve sugerir primeiro?</h3>
         <div>
-          {(["PROFISSIONAL", "DIRETA", "CONSULTIVA", "PREVENTIVA"] as QuoteMessageTemplate[]).map((template) => (
+          {(["PROFISSIONAL", "DIRETA", "CONSULTIVA", "PREVENTIVA", "AMIGAVEL", "FORMAL", "COMERCIAL", "CURTA"] as QuoteMessageTemplate[]).map((template) => (
             <button key={template} className={companyDraft.quoteMessageTemplate === template ? "active" : ""} onClick={() => setCompanyDraft({ ...companyDraft, quoteMessageTemplate: template })}>
               <strong>{quoteMessageTemplateLabel(template)}</strong>
               <span>{template === "PROFISSIONAL" ? "Apresentação completa e equilibrada." : template === "DIRETA" ? "Texto curto para retorno rápido." : template === "CONSULTIVA" ? "Explica a recomendação e convida para conversar." : "Reforça segurança e manutenção preventiva."}</span>
@@ -4794,109 +5028,40 @@ function firstName(name: string) {
   return name.trim().split(/\s+/)[0] || "cliente";
 }
 
+function quoteDisplayItems(quote: Quote) {
+  const valid = quote.items.filter((item) => item.name.trim());
+  if (!quote.combinePartsLabor || valid.length <= 1) return valid;
+  const services = valid.filter((item) => item.kind === "SERVICO");
+  const materials = valid.filter((item) => item.kind !== "SERVICO");
+  if (!materials.length) return valid;
+  const base = services[0] ?? materials[0];
+  const total = valid.reduce((sum, item) => sum + lineTotal(item), 0);
+  const names = valid.map((item) => item.name.trim()).filter(Boolean);
+  const description = services.length
+    ? [base.description.trim(), `Inclui: ${names.join(" · ")}`].filter(Boolean).join(" — ")
+    : [base.description.trim(), names.slice(1).length ? `Composição: ${names.join(" · ")}` : ""].filter(Boolean).join(" — ");
+  return [{ ...base, id: `${base.id}-combined`, quantity: 1, unitPrice: total, description, kind: services.length ? "SERVICO" as CatalogKind : base.kind }];
+}
+
 function buildQuoteMessage(quote: Quote, companyName: string, consultiveEnhancement = false) {
-  const validItems = quote.items.filter((item) => item.name.trim());
-  const lines = validItems.map((item) => `• ${item.name} — ${money(lineTotal(item))}`);
+  const validItems = quoteDisplayItems(quote);
+  const lines = validItems.map((item) => `• ${item.name}${item.description ? ` — ${item.description}` : ""} — ${money(lineTotal(item))}`);
   const greeting = `Olá, ${firstName(quote.customer)}! 👋`;
   const vehicle = `${quote.vehicle}${quote.plate ? ` · ${quote.plate}` : ""}`;
   const payment = `💳 Condição de pagamento: ${paymentDescription(quote)}`;
   const validity = quote.validityDays > 0 ? `📅 Validade da proposta: ${quote.validityDays} dias` : "";
   const notes = quote.notes.trim() ? `📝 Observações: ${quote.notes.trim()}` : "";
-  const consultiveSummary = consultiveEnhancement
-    ? [
-        "",
-        "💡 Para facilitar sua decisão, podemos esclarecer cada item e organizar a execução conforme a sua prioridade.",
-        validItems.length > 3 ? `O orçamento contempla ${validItems.length} itens entre serviços, peças e produtos.` : "",
-      ].filter(Boolean)
-    : [];
+  const consultiveSummary = consultiveEnhancement ? ["", "💡 Podemos esclarecer cada item e organizar a execução conforme a sua prioridade."] : [];
+  const common = [`🚗 Veículo: ${vehicle}`, "", "📋 Itens da proposta:", ...lines, "", `💰 Total: ${money(quote.total)}`, payment, validity, notes].filter(Boolean);
 
-  if (quote.messageTemplate === "DIRETA") {
-    return [
-      greeting,
-      "",
-      `📄 Orçamento ${quote.code} — ${companyName}`,
-      `🚗 Veículo: ${vehicle}`,
-      "",
-      "🔧 Itens orçados:",
-      ...lines,
-      "",
-      `💰 Total: ${money(quote.total)}`,
-      payment,
-      validity,
-      notes,
-      ...consultiveSummary,
-      "",
-      "✅ Para aprovar, responda *APROVO*. Para ajustes, envie sua dúvida por aqui.",
-    ].filter(Boolean).join("\n");
-  }
-
-  if (quote.messageTemplate === "CONSULTIVA") {
-    return [
-      greeting,
-      "",
-      `Realizamos a análise do atendimento do seu veículo e preparamos o orçamento ${quote.code}.`,
-      `🚗 Veículo: ${vehicle}`,
-      "",
-      "🔎 Serviços, peças e produtos recomendados:",
-      ...lines,
-      "",
-      `💰 Investimento total: ${money(quote.total)}`,
-      payment,
-      validity,
-      notes,
-      "",
-      "💡 Nossa equipe está disponível para explicar cada recomendação e organizar a execução conforme sua necessidade.",
-      ...consultiveSummary,
-      "",
-      "✅ Para autorizar ou solicitar uma revisão do orçamento, basta responder esta mensagem.",
-      "",
-      `Atenciosamente,\n${companyName}`,
-    ].filter(Boolean).join("\n");
-  }
-
-  if (quote.messageTemplate === "PREVENTIVA") {
-    return [
-      greeting,
-      "",
-      `🛡️ Pensando na segurança e na confiabilidade do seu veículo, preparamos o orçamento ${quote.code}.`,
-      `🚗 Veículo: ${vehicle}`,
-      "",
-      "🔧 Itens recomendados:",
-      ...lines,
-      "",
-      `💰 Investimento previsto: ${money(quote.total)}`,
-      payment,
-      validity,
-      notes,
-      "",
-      "🔍 A manutenção preventiva contribui para reduzir o risco de falhas e ajuda a preservar o bom funcionamento do veículo.",
-      ...consultiveSummary,
-      "",
-      "✅ Responda esta mensagem para aprovar os itens desejados ou conversar com nossa equipe.",
-      "",
-      companyName,
-    ].filter(Boolean).join("\n");
-  }
-
-  return [
-    greeting,
-    "",
-    `A ${companyName} preparou o orçamento ${quote.code} para o seu veículo.`,
-    `🚗 Veículo: ${vehicle}`,
-    "",
-    "📋 Serviços, peças e produtos:",
-    ...lines,
-    "",
-    `💰 Valor total: ${money(quote.total)}`,
-    payment,
-    validity,
-    notes,
-    ...consultiveSummary,
-    "",
-    "✅ Para aprovar, solicitar alterações ou esclarecer dúvidas, responda esta mensagem.",
-    "",
-    `Atenciosamente,\n${companyName}`,
-  ].filter(Boolean).join("\n");
+  if (quote.messageTemplate === "CURTA") return [`${firstName(quote.customer)}, orçamento ${quote.code}:`, ...lines, `Total: ${money(quote.total)}.`, "Responda para aprovar ou solicitar ajuste."].join("\n");
+  if (quote.messageTemplate === "FORMAL") return [`Prezado(a) ${quote.customer || "cliente"},`, "", `Encaminhamos a proposta ${quote.code} elaborada pela ${companyName}.`, ...common, "", "Permanecemos à disposição para esclarecimentos e autorização.", "", `Atenciosamente,\n${companyName}`].join("\n");
+  if (quote.messageTemplate === "AMIGAVEL") return [`Oi, ${firstName(quote.customer)}! Tudo certo? 😊`, "", `Preparamos o orçamento ${quote.code} para você.`, ...common, "", "Pode chamar por aqui para aprovar ou ajustar qualquer item. 👍", "", companyName].join("\n");
+  if (quote.messageTemplate === "COMERCIAL") return [greeting, "", `Temos sua proposta ${quote.code} pronta para avançar.`, ...common, "", "✨ Podemos organizar a melhor condição para você e reservar a execução após a confirmação.", "", `Fale com a equipe da ${companyName}.`].join("\n");
+  if (quote.messageTemplate === "DIRETA") return [greeting, "", `📄 Orçamento ${quote.code} — ${companyName}`, ...common, ...consultiveSummary, "", "✅ Para aprovar, responda *APROVO*. Para ajustes, envie sua dúvida por aqui."].filter(Boolean).join("\n");
+  if (quote.messageTemplate === "CONSULTIVA") return [greeting, "", `Realizamos a análise do atendimento e preparamos o orçamento ${quote.code}.`, ...common, "", "💡 Nossa equipe está disponível para explicar cada recomendação e organizar a execução conforme sua necessidade.", ...consultiveSummary, "", "✅ Para autorizar ou solicitar uma revisão, basta responder esta mensagem.", "", `Atenciosamente,\n${companyName}`].filter(Boolean).join("\n");
+  if (quote.messageTemplate === "PREVENTIVA") return [greeting, "", `🛡️ Pensando na segurança e na confiabilidade do seu veículo, preparamos o orçamento ${quote.code}.`, ...common, "", "🔍 A manutenção preventiva ajuda a reduzir falhas e preservar o bom funcionamento do veículo.", ...consultiveSummary, "", "✅ Responda para aprovar os itens desejados ou conversar com nossa equipe.", "", companyName].filter(Boolean).join("\n");
+  return [greeting, "", `A ${companyName} preparou o orçamento ${quote.code} para o seu veículo.`, ...common, ...consultiveSummary, "", "✅ Para aprovar, solicitar alterações ou esclarecer dúvidas, responda esta mensagem.", "", `Atenciosamente,\n${companyName}`].filter(Boolean).join("\n");
 }
 
 function buildQuoteConsultiveSuggestions(quote: Quote) {
@@ -4916,20 +5081,20 @@ function buildQuoteConsultiveSuggestions(quote: Quote) {
 }
 
 function buildQuoteDocumentHtml(quote: Quote, companyIdentity: CompanyIdentity, customer: Customer | null) {
+  const displayItems = quoteDisplayItems(quote);
   const subtotal = itemsSubtotal(quote.items);
   const discount = Math.max(0, subtotal - quote.total);
   const accent = /^#[0-9a-f]{6}$/i.test(companyIdentity.selectionColor) ? companyIdentity.selectionColor : "#0f766e";
-  const rows = quote.items.filter((item) => item.name.trim()).map((item, index) => `<tr><td class="index">${String(index + 1).padStart(2, "0")}</td><td><b>${escapeHtml(item.name)}</b>${item.description ? `<small>${escapeHtml(item.description)}</small>` : ""}<em>${item.kind === "SERVICO" ? "Serviço" : item.kind === "PECA" ? "Peça" : "Produto"}</em></td><td>${item.quantity}</td><td>${money(item.unitPrice)}</td><td>${money(lineTotal(item))}</td></tr>`).join("");
+  const rows = displayItems.map((item, index) => `<tr><td>${String(index + 1).padStart(2, "0")}</td><td><b>${escapeHtml(item.name)}</b>${item.description ? `<small>${escapeHtml(item.description)}</small>` : ""}</td><td>${item.quantity}</td><td>${money(item.unitPrice)}</td><td>${money(lineTotal(item))}</td></tr>`).join("");
   const logo = companyIdentity.logo ? `<img src="${companyIdentity.logo}" alt="${escapeHtml(companyIdentity.displayName)}">` : `<div class="logo-fallback">${escapeHtml(companyIdentity.displayName.slice(0, 2).toUpperCase())}</div>`;
-  const validity = quote.validityDays > 0 ? `<div><span>Validade</span><strong>${quote.validityDays} dias</strong></div>` : "";
-  const customerPhone = customer?.phone?.trim() || "Não informado";
-  const customerEmail = customer?.email?.trim() || "Não informado";
   const emittedAt = new Date(quote.updatedAt).toLocaleDateString("pt-BR");
-  const payment = paymentDescription(quote);
-
-  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(quote.code)} - ${escapeHtml(companyIdentity.displayName)}</title><style>
-  :root{--accent:${accent};--ink:#14212c;--muted:#64727d;--line:#d9e1e6;--soft:#f5f8f9} @page{size:A4;margin:12mm}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:#eef2f4;font-family:Inter,Arial,Helvetica,sans-serif;font-size:11px}.sheet{max-width:210mm;min-height:273mm;margin:16px auto;padding:16mm;background:#fff;box-shadow:0 18px 50px rgba(20,33,44,.12)}.toolbar{max-width:210mm;margin:14px auto;text-align:right}.toolbar button{padding:10px 16px;border:0;border-radius:8px;color:#fff;background:var(--accent);font-weight:700;cursor:pointer}.top-accent{height:7px;margin:-16mm -16mm 15mm;background:var(--accent)}.header{display:flex;align-items:flex-start;justify-content:space-between;gap:28px}.brand{display:flex;align-items:center;gap:14px}.brand img{max-width:160px;max-height:65px;object-fit:contain}.logo-fallback{width:66px;height:66px;display:grid;place-items:center;border-radius:14px;color:#fff;background:var(--accent);font-size:22px;font-weight:900}.brand h1{margin:0;font-size:23px;letter-spacing:-.02em}.brand p{margin:5px 0 0;color:var(--muted)}.document{text-align:right}.document .label{color:var(--muted);font-size:9px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}.document h2{margin:5px 0 7px;font-size:25px}.status{display:inline-block;padding:6px 10px;border:1px solid var(--accent);border-radius:999px;color:var(--accent);font-size:9px;font-weight:800;text-transform:uppercase}.customer-panel{margin-top:22px;border:1px solid var(--line);border-radius:13px;overflow:hidden}.section-title{display:flex;align-items:center;justify-content:space-between;padding:10px 13px;color:#fff;background:var(--accent);font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.customer-grid{display:grid;grid-template-columns:1.4fr 1fr 1fr 1fr}.customer-grid>div{min-height:64px;padding:11px 13px;border-right:1px solid var(--line);border-bottom:1px solid var(--line)}.customer-grid>div:nth-child(4n){border-right:0}.customer-grid>div:nth-last-child(-n+4){border-bottom:0}.customer-grid span,.commercial-grid span{display:block;margin-bottom:5px;color:var(--muted);font-size:8px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.customer-grid strong,.commercial-grid strong{font-size:11px}.commercial-panel{margin-top:13px;padding:13px;border:1px solid var(--line);border-radius:12px;background:var(--soft)}.commercial-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.items-title{display:flex;align-items:end;justify-content:space-between;margin-top:22px;padding-bottom:8px;border-bottom:2px solid var(--accent)}.items-title h3{margin:0;font-size:15px}.items-title span{color:var(--muted);font-size:9px}table{width:100%;border-collapse:collapse;margin-top:8px}th{padding:10px 8px;color:#fff;background:#23313c;text-align:left;font-size:8px;letter-spacing:.06em;text-transform:uppercase}td{padding:11px 8px;border-bottom:1px solid var(--line);vertical-align:top}.index{width:32px;color:var(--muted)}td:nth-child(3),td:nth-child(4),td:nth-child(5),th:nth-child(3),th:nth-child(4),th:nth-child(5){text-align:right}td small{display:block;margin-top:4px;color:var(--muted);line-height:1.35}td em{display:inline-block;margin-top:6px;padding:3px 6px;border-radius:999px;color:var(--accent);background:#edf6f4;font-size:7px;font-style:normal;font-weight:800;text-transform:uppercase}.bottom-grid{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:16px;margin-top:17px}.notes{min-height:118px;padding:13px;border:1px solid var(--line);border-radius:11px;white-space:pre-wrap}.notes b{display:block;margin-bottom:8px;font-size:10px;text-transform:uppercase}.summary{padding:14px;border:1px solid var(--line);border-radius:11px;background:var(--soft)}.summary div{display:flex;justify-content:space-between;padding:5px 0}.summary .discount{color:#b42334}.summary .total{margin-top:8px;padding-top:12px;border-top:2px solid var(--accent);font-size:18px;font-weight:900}.approval{margin-top:24px;padding:14px;border:1px solid var(--line);border-radius:11px}.approval h4{margin:0 0 6px;font-size:11px}.approval p{margin:0;color:var(--muted);line-height:1.5}.signature{display:grid;grid-template-columns:1fr 1fr;gap:45px;margin-top:40px}.signature div{padding-top:8px;border-top:1px solid #87939c;text-align:center;color:var(--muted)}.footer{display:flex;justify-content:space-between;gap:20px;margin-top:28px;padding-top:13px;border-top:1px solid var(--line);color:var(--muted);font-size:8px}@media print{body{background:#fff}.toolbar{display:none}.sheet{max-width:none;min-height:auto;margin:0;padding:0;box-shadow:none}.top-accent{margin:0 0 12mm}}@media(max-width:760px){.sheet{margin:0;padding:20px}.top-accent{margin:-20px -20px 20px}.header,.bottom-grid{grid-template-columns:1fr;display:grid}.document{text-align:left}.customer-grid,.commercial-grid{grid-template-columns:1fr 1fr}.customer-grid>div{border-right:0}.toolbar{margin:10px}}
-  </style></head><body><div class="toolbar"><button onclick="window.print()">Imprimir / salvar PDF</button></div><main class="sheet"><div class="top-accent"></div><header class="header"><div class="brand">${logo}<div><h1>${escapeHtml(companyIdentity.displayName)}</h1><p>Proposta de serviços, peças e produtos</p></div></div><div class="document"><span class="label">Orçamento</span><h2>${escapeHtml(quote.code)}</h2><span class="status">${escapeHtml(quoteStatusLabel(quote.status))}</span></div></header><section class="customer-panel"><div class="section-title"><span>Dados do cliente e do veículo</span><span>Emissão ${emittedAt}</span></div><div class="customer-grid"><div><span>Cliente</span><strong>${escapeHtml(quote.customer)}</strong></div><div><span>WhatsApp</span><strong>${escapeHtml(customerPhone)}</strong></div><div><span>E-mail</span><strong>${escapeHtml(customerEmail)}</strong></div><div><span>Responsável</span><strong>${escapeHtml(quote.responsible)}</strong></div><div><span>Veículo</span><strong>${escapeHtml(quote.vehicle)}</strong></div><div><span>Placa</span><strong>${escapeHtml(quote.plate)}</strong></div><div><span>Código da proposta</span><strong>${escapeHtml(quote.code)}</strong></div><div><span>Data de emissão</span><strong>${emittedAt}</strong></div></div></section><section class="commercial-panel"><div class="commercial-grid"><div><span>Forma de pagamento</span><strong>${escapeHtml(payment)}</strong></div>${validity}<div><span>Status</span><strong>${escapeHtml(quoteStatusLabel(quote.status))}</strong></div><div><span>Responsável</span><strong>${escapeHtml(quote.responsible)}</strong></div></div></section><div class="items-title"><h3>Itens da proposta</h3><span>${quote.items.filter((item) => item.name.trim()).length} item(ns)</span></div><table><thead><tr><th>#</th><th>Descrição</th><th>Qtd.</th><th>Valor unit.</th><th>Total</th></tr></thead><tbody>${rows || '<tr><td colspan="5">Nenhum item informado.</td></tr>'}</tbody></table><section class="bottom-grid"><div class="notes"><b>Observações e condições</b>${quote.notes ? escapeHtml(quote.notes) : "Nenhuma observação adicional informada."}</div><aside class="summary"><div><span>Subtotal</span><b>${money(subtotal)}</b></div><div class="discount"><span>Descontos</span><b>- ${money(discount)}</b></div><div class="total"><span>Total final</span><b>${money(quote.total)}</b></div></aside></section><section class="approval"><h4>Aprovação da proposta</h4><p>A execução dos serviços e o fornecimento dos itens desta proposta dependem da aprovação do cliente e da disponibilidade de agenda e estoque.</p></section><section class="signature"><div>Responsável pela empresa</div><div>Cliente / autorização</div></section><footer class="footer"><span>Documento emitido por ${escapeHtml(companyIdentity.displayName)}.</span><span>Tecnologia Gerivo · Sistema desenvolvido por Petrick Maciel</span></footer></main></body></html>`;
+  const validity = quote.validityDays > 0 ? `<div><span>Validade</span><strong>${quote.validityDays} dias</strong></div>` : "";
+  const payment = paymentDescription(quote).trim() ? `<div><span>Forma de pagamento</span><strong>${escapeHtml(paymentDescription(quote))}</strong></div>` : "";
+  const discountRow = discount > 0 ? `<div class="discount"><span>Descontos</span><b>- ${money(discount)}</b></div>` : "";
+  const title = [quote.vehicle.trim(), quote.plate.trim()].filter(Boolean).join(" · ") || quote.code;
+  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Orçamento ${escapeHtml(title)}</title><style>
+  :root{--accent:${accent};--ink:#14212c;--muted:#64727d;--line:#d9e1e6;--soft:#f5f8f9}@page{size:A4;margin:11mm}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:#eef2f4;font-family:Inter,Arial,sans-serif;font-size:11px}.sheet{max-width:210mm;min-height:275mm;margin:14px auto;padding:14mm;background:#fff;box-shadow:0 18px 50px rgba(20,33,44,.12)}.toolbar{max-width:210mm;margin:10px auto;text-align:right}.toolbar button{padding:10px 16px;border:0;border-radius:8px;color:#fff;background:var(--accent);font-weight:800}.accent{height:7px;margin:-14mm -14mm 12mm;background:var(--accent)}.header{display:flex;align-items:flex-start;justify-content:space-between;gap:24px}.brand{display:flex;align-items:center;gap:13px}.brand img{max-width:150px;max-height:60px;object-fit:contain}.logo-fallback{width:58px;height:58px;display:grid;place-items:center;border-radius:13px;color:#fff;background:var(--accent);font-size:20px;font-weight:900}.brand h1{margin:0;font-size:22px}.brand p{margin:5px 0 0;color:var(--muted)}.document{text-align:right}.document small{color:var(--muted);font-weight:800;letter-spacing:.1em}.document h2{max-width:320px;margin:5px 0;font-size:20px}.document b{color:var(--accent)}.data{margin-top:20px;border:1px solid var(--line);border-radius:12px;overflow:hidden}.section-title{padding:9px 12px;color:#fff;background:var(--accent);font-size:9px;font-weight:900;letter-spacing:.09em;text-transform:uppercase}.data-grid{display:grid;grid-template-columns:1.4fr 1.2fr .8fr .8fr}.data-grid div,.commercial div{padding:11px 12px}.data-grid span,.commercial span{display:block;margin-bottom:4px;color:var(--muted);font-size:8px;font-weight:800;text-transform:uppercase}.commercial{display:flex;gap:10px;margin-top:10px;padding:3px;border:1px solid var(--line);border-radius:10px;background:var(--soft)}.items-title{display:flex;justify-content:space-between;align-items:end;margin-top:19px;padding-bottom:7px;border-bottom:2px solid var(--accent)}.items-title h3{margin:0}table{width:100%;border-collapse:collapse;margin-top:7px}th{padding:9px 7px;color:#fff;background:#23313c;text-align:left;font-size:8px;text-transform:uppercase}td{padding:10px 7px;border-bottom:1px solid var(--line);vertical-align:top}td:nth-child(n+3),th:nth-child(n+3){text-align:right}td small{display:block;margin-top:4px;color:var(--muted);line-height:1.4}.bottom{display:grid;grid-template-columns:1fr 280px;gap:14px;margin-top:15px}.notes,.summary{padding:12px;border:1px solid var(--line);border-radius:10px}.notes{white-space:pre-wrap}.notes b{display:block;margin-bottom:7px}.summary{background:var(--soft)}.summary div{display:flex;justify-content:space-between;padding:5px 0}.summary .discount{color:#b42334}.summary .total{margin-top:7px;padding-top:10px;border-top:2px solid var(--accent);font-size:17px}.footer{margin-top:22px;padding-top:10px;border-top:1px solid var(--line);color:var(--muted);text-align:center;font-size:8px}@media print{body{background:#fff}.toolbar{display:none}.sheet{margin:0;padding:0;box-shadow:none}.accent{margin:0 0 10mm}}@media(max-width:760px){.sheet{margin:0;padding:18px}.accent{margin:-18px -18px 18px}.header,.bottom{display:grid;grid-template-columns:1fr}.document{text-align:left}.data-grid{grid-template-columns:1fr 1fr}}
+  </style></head><body><div class="toolbar"><button onclick="window.print()">Imprimir / salvar PDF</button></div><main class="sheet"><div class="accent"></div><header class="header"><div class="brand">${logo}<div><h1>${escapeHtml(companyIdentity.displayName)}</h1><p>Proposta de serviços, peças e produtos</p></div></div><div class="document"><small>ORÇAMENTO</small><h2>${escapeHtml(title)}</h2><b>${escapeHtml(quote.code)}</b></div></header><section class="data"><div class="section-title">Dados</div><div class="data-grid"><div><span>Cliente</span><strong>${escapeHtml(quote.customer)}</strong></div><div><span>Veículo</span><strong>${escapeHtml(quote.vehicle)}</strong></div><div><span>Placa</span><strong>${escapeHtml(quote.plate)}</strong></div><div><span>Emissão</span><strong>${emittedAt}</strong></div></div></section>${payment || validity ? `<section class="commercial">${payment}${validity}</section>` : ""}<div class="items-title"><h3>Itens do orçamento</h3><span>${displayItems.length} item(ns)</span></div><table><thead><tr><th>#</th><th>Descrição</th><th>Qtd.</th><th>Valor unit.</th><th>Total</th></tr></thead><tbody>${rows || '<tr><td colspan="5">Nenhum item informado.</td></tr>'}</tbody></table><section class="bottom"><div class="notes"><b>Observações</b>${quote.notes ? escapeHtml(quote.notes) : "Nenhuma observação adicional informada."}</div><aside class="summary"><div><span>Subtotal</span><b>${money(subtotal)}</b></div>${discountRow}<div class="total"><span>Total final</span><b>${money(quote.total)}</b></div></aside></section><footer class="footer">Gerivo</footer></main></body></html>`;
 }
 
 function QuoteEditor({
@@ -5020,12 +5185,12 @@ function QuoteEditor({
   return <section className="document-editor-page">
     <header className="document-editor-header"><div><small>ORÇAMENTO · {companyName}</small><h2>{quote.code}</h2><p>{quote.customer} · {quote.vehicle} · {quote.plate}</p></div><div><button className="outline" onClick={onBack}>← Voltar à lista</button><button className="outline" onClick={downloadQuote}>Baixar orçamento</button><button className="outline" onClick={printQuote}>Imprimir / PDF</button><button className="primary" onClick={onSaved}>Salvar orçamento</button></div></header>
     <section className="document-editor-grid quote-editor-grid">
-      <article className="document-editor-card"><h3>Condições comerciais</h3><div className="document-form-grid"><Field label="Status"><select value={quote.status} onChange={(event) => update({ status: event.target.value as QuoteStatus })}><option value="ABERTO">Aberto</option><option value="FECHADO">Fechado</option><option value="AGUARDANDO_APROVACAO">Aguardando aprovação</option><option value="AGUARDANDO_COTACAO">Aguardando cotação</option><option value="AGUARDANDO_DIGITACAO">Aguardando digitação</option><option value="INCOMPLETO">Incompleto</option><option value="AGUARDANDO_RETORNO_CLIENTE">Aguardando retorno do cliente</option><option value="AGUARDANDO_DESCONTO">Aguardando desconto</option></select></Field><Field label="Validade"><div className="validity-field"><div className="input-suffix"><input type="number" min="0" value={quote.validityDays} onChange={(event) => update({ validityDays: Math.max(0, Number(event.target.value) || 0) })} /><span>dias</span></div><small>Use 0 para não exibir validade.</small></div></Field><Field label="Forma de pagamento"><select value={quote.paymentMethod} onChange={(event) => update({ paymentMethod: event.target.value as PaymentMethod })}><option value="PIX">Pix</option><option value="DEBITO">Débito</option><option value="CREDITO">Crédito</option><option value="DINHEIRO">Dinheiro</option><option value="OUTRO">Outro</option></select></Field>{quote.paymentMethod === "CREDITO" && <Field label="Parcelamento em até"><select value={quote.installments} onChange={(event) => update({ installments: Number(event.target.value) })}>{Array.from({ length: 12 }, (_, index) => index + 1).map((value) => <option key={value} value={value}>{value}x</option>)}</select></Field>}<Field label="Desconto R$"><input type="number" min="0" step="0.01" value={quote.discountAmount} onChange={(event) => update({ discountAmount: Math.max(0, Number(event.target.value) || 0) })} /></Field><Field label="Desconto %"><input type="number" min="0" max="100" step="0.01" value={quote.discountPercent} onChange={(event) => update({ discountPercent: Math.max(0, Math.min(100, Number(event.target.value) || 0)) })} /></Field></div></article>
-      <article className="document-editor-card quote-message-card"><div className="message-card-heading"><div><h3>Mensagem ao cliente</h3><span>Modelo profissional com emojis e edição livre.</span></div><select value={quote.messageTemplate} onChange={(event) => changeTemplate(event.target.value as QuoteMessageTemplate)}>{(["PROFISSIONAL", "DIRETA", "CONSULTIVA", "PREVENTIVA"] as QuoteMessageTemplate[]).map((template) => <option key={template} value={template}>{quoteMessageTemplateLabel(template)}</option>)}</select></div><textarea rows={14} value={message} onChange={(event) => setMessageOverride(event.target.value)} /><div className="quote-message-actions"><span>Padrão da empresa: {quoteDeliveryLabel(deliveryMode)}</span><button className="outline" type="button" onClick={() => setMessageOverride(null)}>Restaurar automático</button>{deliveryMode !== "LINK" && <button className="outline" type="button" onClick={copyMessage}>Copiar mensagem</button>}<button className="primary" type="button" onClick={shareWhatsApp}>Abrir WhatsApp</button></div></article>
+      <article className="document-editor-card"><h3>Condições comerciais</h3><div className="document-form-grid"><Field label="Status"><select value={quote.status} onChange={(event) => update({ status: event.target.value as QuoteStatus })}><option value="ABERTO">Aberto</option><option value="FECHADO">Fechado</option><option value="AGUARDANDO_APROVACAO">Aguardando aprovação</option><option value="AGUARDANDO_COTACAO">Aguardando cotação</option><option value="AGUARDANDO_DIGITACAO">Aguardando digitação</option><option value="INCOMPLETO">Incompleto</option><option value="AGUARDANDO_RETORNO_CLIENTE">Aguardando retorno do cliente</option><option value="AGUARDANDO_DESCONTO">Aguardando desconto</option></select></Field><Field label="Validade"><div className="validity-field"><div className="input-suffix"><input type="number" min="0" value={quote.validityDays} onChange={(event) => update({ validityDays: Math.max(0, Number(event.target.value) || 0) })} /><span>dias</span></div><small>Use 0 para não exibir validade.</small></div></Field><Field label="Forma de pagamento"><select value={quote.paymentMethod} onChange={(event) => update({ paymentMethod: event.target.value as PaymentMethod })}><option value="PIX">Pix</option><option value="DEBITO">Débito</option><option value="CREDITO">Crédito</option><option value="DINHEIRO">Dinheiro</option><option value="OUTRO">Outro</option></select></Field>{quote.paymentMethod === "CREDITO" && <Field label="Parcelamento em até"><select value={quote.installments} onChange={(event) => update({ installments: Number(event.target.value) })}>{Array.from({ length: 12 }, (_, index) => index + 1).map((value) => <option key={value} value={value}>{value}x</option>)}</select></Field>}<Field label="Desconto R$"><input type="number" min="0" step="0.01" value={quote.discountAmount} onChange={(event) => update({ discountAmount: Math.max(0, Number(event.target.value) || 0) })} /></Field><Field label="Desconto %"><input type="number" min="0" max="100" step="0.01" value={quote.discountPercent} onChange={(event) => update({ discountPercent: Math.max(0, Math.min(100, Number(event.target.value) || 0)) })} /></Field></div><label className="quote-combine-toggle"><input type="checkbox" checked={quote.combinePartsLabor} onChange={(event) => update({ combinePartsLabor: event.target.checked })} /><span><strong>Unir peça + mão de obra</strong><small>Oculta peças e materiais no documento e soma seus valores ao serviço.</small></span></label></article>
+      <article className="document-editor-card quote-message-card"><div className="message-card-heading"><div><h3>Mensagem ao cliente</h3><span>Modelo profissional com emojis e edição livre.</span></div><select value={quote.messageTemplate} onChange={(event) => changeTemplate(event.target.value as QuoteMessageTemplate)}>{(["PROFISSIONAL", "DIRETA", "CONSULTIVA", "PREVENTIVA", "AMIGAVEL", "FORMAL", "COMERCIAL", "CURTA"] as QuoteMessageTemplate[]).map((template) => <option key={template} value={template}>{quoteMessageTemplateLabel(template)}</option>)}</select></div><textarea rows={14} value={message} onChange={(event) => setMessageOverride(event.target.value)} /><div className="quote-message-actions"><span>Padrão da empresa: {quoteDeliveryLabel(deliveryMode)}</span><button className="outline" type="button" onClick={() => setMessageOverride(null)}>Restaurar automático</button>{deliveryMode !== "LINK" && <button className="outline" type="button" onClick={copyMessage}>Copiar mensagem</button>}<button className="primary" type="button" onClick={shareWhatsApp}>Abrir WhatsApp</button></div></article>
     </section>
     <section className="quote-ai-assistant"><div className="quote-ai-heading"><div className="quote-ai-icon">✦</div><div><small>ASSISTENTE CONSULTIVO GERIVO</small><h3>Análise inteligente da proposta</h3><p>Revisa clareza, condições comerciais e prontidão para envio.</p></div><div><button className="outline" type="button" onClick={() => setAssistantOpen((current) => !current)}>{assistantOpen ? "Ocultar análise" : "Analisar orçamento"}</button><button className="primary" type="button" onClick={applyConsultiveImprovement}>Melhorar mensagem</button></div></div>{assistantOpen && <div className="quote-ai-suggestions">{suggestions.map((suggestion, index) => <div key={`${index}-${suggestion}`}><span>{index + 1}</span><p>{suggestion}</p></div>)}</div>}</section>
     <DocumentItemsEditor items={quote.items} catalog={catalog} onChange={(items) => update({ items })} />
-    <section className="quote-summary-grid"><Field label="Observações da proposta"><textarea rows={4} value={quote.notes} onChange={(event) => update({ notes: event.target.value })} placeholder="Prazo de execução, garantia, disponibilidade de peças ou informações adicionais." /></Field><aside><span>Subtotal</span><b>{money(subtotal)}</b><span>Descontos</span><b>- {money(Math.max(0, subtotal - total))}</b><strong>Total final</strong><em>{money(total)}</em></aside></section>
+    <section className="quote-summary-grid"><Field label="Observações da proposta"><textarea rows={4} value={quote.notes} onChange={(event) => update({ notes: event.target.value })} placeholder="Prazo de execução, garantia, disponibilidade de peças ou informações adicionais." /></Field><aside><span>Subtotal</span><b>{money(subtotal)}</b>{Math.max(0, subtotal - total) > 0 && <><span>Descontos</span><b>- {money(Math.max(0, subtotal - total))}</b></>}<strong>Total final</strong><em>{money(total)}</em></aside></section>
   </section>;
 }
 

@@ -1,0 +1,39 @@
+GERIVO v1.7.6 — PACOTE CUMULATIVO
+==================================
+
+Base utilizada
+--------------
+Esta versão foi reconstruída diretamente sobre o último ZIP funcional enviado no outro chat.
+Ela preserva agenda, estoque, catálogo, checklist, O.S., orçamento, portal público, identidade white-label, MASTER e autenticação já existentes.
+
+Principais atualizações
+-----------------------
+1. Portal público separado do acesso do cliente em /cliente.
+2. Estrutura Grupo empresarial > Empresa/CNPJ > Unidade > Usuário.
+3. Planos Gerivo com valores de R$ 119, R$ 219, R$ 349 e Enterprise a partir de R$ 599.
+4. Gerivo BI com períodos de 3, 6 e 12 meses.
+5. Assistente Gerivo com avaliação operacional, perguntas rápidas, motor local e IA online opcional.
+6. Conhecimento da IA com cadastro e importação TXT, CSV e Markdown.
+7. Central de mensagens com situações comerciais e oito tons.
+8. Orçamento com oito modelos de mensagem e opção Unir peça + mão de obra.
+9. Documento de orçamento simplificado: quadro Dados, descontos ocultos quando zerados, sem bloco de aprovação e rodapé somente Gerivo.
+10. Recepção mobile com Próximo pendente, botão de foto separado e Concluir Check-in.
+11. Salvamento local migrado para a chave v1.7.6 sem perder os dados da chave v17.
+
+Banco de dados
+--------------
+Execute no Supabase SQL Editor, nesta ordem:
+
+1. supabase/migrations/005_v173_selection_color.sql
+2. supabase/migrations/006_v175_groups_plans.sql
+3. supabase/migrations/007_v176_messages_ai.sql
+
+IA online opcional
+------------------
+Sem chave, o Assistente utiliza o Motor local.
+Para ativar a IA online, configure no .env.local e na Vercel:
+
+OPENAI_API_KEY=SUA_CHAVE
+OPENAI_MODEL=gpt-5-mini
+
+A chave nunca deve usar o prefixo NEXT_PUBLIC_ e não deve ser enviada ao GitHub.
