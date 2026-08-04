@@ -52,7 +52,7 @@ type IconName =
   | "shield"
   | "truck"
   | "image";
-type CompanyModule = "APPOINTMENTS" | "CATALOG" | "INVENTORY" | "CHECKLIST" | "ORDERS" | "QUOTES" | "ASSISTANT";
+type CompanyModule = "APPOINTMENTS" | "CATALOG" | "INVENTORY" | "CHECKLIST" | "ORDERS" | "QUOTES" | "ASSISTANT" | "BI" | "MESSAGES";
 type CompanyProfile = "FULL" | "QUOTE_ONLY" | "CUSTOM";
 type QuoteDeliveryMode = "LINK" | "MESSAGE" | "BOTH";
 type ReportMode = "SUMMARY" | "FULL" | "MODULAR";
@@ -187,6 +187,7 @@ type DocumentLine = {
   id: string;
   catalogItemId: string | null;
   name: string;
+  category: string;
   description: string;
   kind: CatalogKind;
   quantity: number;
@@ -405,6 +406,28 @@ type StoreData = {
   quotes: Quote[];
   knowledgeBase: KnowledgeEntry[];
 };
+type PublicPlan = {
+  id: string;
+  code: string;
+  name: string;
+  monthly_price: number;
+  annual_price: number;
+  company_limit: number;
+  store_limit: number;
+  user_limit: number;
+  public_description: string;
+  public_features: string[];
+  public_cta_label: string;
+  recommended: boolean;
+  public_sort_order: number;
+};
+
+const DEFAULT_PUBLIC_PLANS: PublicPlan[] = [
+  { id: "essential", code: "ESSENCIAL", name: "Gerivo Essencial", monthly_price: 119, annual_price: 0, company_limit: 1, store_limit: 1, user_limit: 3, public_description: "1 empresa · 1 unidade · 3 usuários", public_features: ["Painel e clientes", "Catálogo e orçamentos", "Agenda básica"], public_cta_label: "Tenho interesse", recommended: false, public_sort_order: 1 },
+  { id: "management", code: "GESTAO", name: "Gerivo Gestão", monthly_price: 219, annual_price: 0, company_limit: 1, store_limit: 2, user_limit: 8, public_description: "1 empresa · até 2 unidades · 8 usuários", public_features: ["Tudo do Essencial", "O.S., estoque e compras", "Indicadores e satisfação"], public_cta_label: "Tenho interesse", recommended: true, public_sort_order: 2 },
+  { id: "professional", code: "PROFISSIONAL", name: "Gerivo Profissional", monthly_price: 349, annual_price: 0, company_limit: 2, store_limit: 5, user_limit: 20, public_description: "Até 2 empresas · 5 unidades · 20 usuários", public_features: ["Indicadores gerenciais", "Automações e auditoria", "Assistente Gerivo"], public_cta_label: "Tenho interesse", recommended: false, public_sort_order: 3 },
+  { id: "enterprise", code: "ENTERPRISE", name: "Gerivo Enterprise", monthly_price: 599, annual_price: 0, company_limit: 10, store_limit: 20, user_limit: 100, public_description: "Estrutura e limites personalizados", public_features: ["Múltiplas empresas", "Implantação acompanhada", "Integrações e suporte prioritário"], public_cta_label: "Solicitar proposta", recommended: false, public_sort_order: 4 },
+];
 
 const EMPTY_STORE_ID = "pending";
 const EMPTY_STORE: Store = {
@@ -424,8 +447,8 @@ const NAV: Array<{ id: Page; label: string; icon: IconName; module?: CompanyModu
   { id: "orders", label: "Ordens de serviço", icon: "wrench", module: "ORDERS" },
   { id: "quotes", label: "Orçamentos", icon: "file", module: "QUOTES" },
   { id: "assistant", label: "Assistente Gerivo", icon: "sparkle", module: "ASSISTANT" },
-  { id: "bi", label: "Gerivo BI", icon: "chart", module: "ASSISTANT" },
-  { id: "messages", label: "Central de mensagens", icon: "file", hidden: true },
+  { id: "bi", label: "Gerivo BI", icon: "chart", module: "BI" },
+  { id: "messages", label: "Central de mensagens", icon: "file", module: "MESSAGES", hidden: true },
   { id: "knowledge", label: "Conhecimento da IA", icon: "sparkle", hidden: true },
   { id: "management", label: "Gestão", icon: "settings" },
   { id: "master", label: "Gerivo MASTER", icon: "shield", masterOnly: true },
@@ -451,6 +474,8 @@ const MODULE_INFO: Record<CompanyModule, { label: string; description: string }>
   ORDERS: { label: "Ordens de serviço", description: "Execução, responsáveis, andamento e entrega." },
   QUOTES: { label: "Orçamentos", description: "Propostas, condições comerciais e aprovação." },
   ASSISTANT: { label: "Assistente Gerivo", description: "Análises consultivas dos dados autorizados." },
+  BI: { label: "Gerivo BI", description: "Indicadores, filtros personalizados, comparativos e visão executiva." },
+  MESSAGES: { label: "Central de mensagens", description: "Modelos comerciais, oportunidades e comunicação com clientes." },
 };
 
 function catalogSeedItem(
@@ -979,6 +1004,8 @@ function seedCompanySettings(segment = "OUTRO"): CompanySettings {
     ORDERS: ["OFICINA", "OFICINA_COMPLETA", "CONCESSIONARIA", "DEMO_ESTETICA", "ESTETICA_AUTOMOTIVA"].includes(key),
     QUOTES: key !== "DEMO_DELIVERY" && key !== "DELIVERY",
     ASSISTANT: true,
+    BI: true,
+    MESSAGES: true,
   };
   return {
     profile: "CUSTOM",
@@ -1118,6 +1145,7 @@ function normalizeDocumentLine(item: Partial<DocumentLine>): DocumentLine {
     id: item.id || uid(),
     catalogItemId: item.catalogItemId ?? null,
     name: item.name ?? "",
+    category: item.category ?? item.description ?? "Geral",
     description: item.description ?? "",
     kind: item.kind ?? "SERVICO",
     quantity: Math.max(0, Number(item.quantity) || 1),
@@ -1263,6 +1291,8 @@ function normalizeStoreData(parsed: Partial<StoreData>, storeId: string): StoreD
           ORDERS: parsed.companySettings.modules?.ORDERS ?? true,
           QUOTES: parsed.companySettings.modules?.QUOTES ?? true,
           ASSISTANT: parsed.companySettings.modules?.ASSISTANT ?? true,
+          BI: parsed.companySettings.modules?.BI ?? parsed.companySettings.modules?.ASSISTANT ?? true,
+          MESSAGES: parsed.companySettings.modules?.MESSAGES ?? parsed.companySettings.modules?.ASSISTANT ?? true,
         },
         quoteDeliveryMode: parsed.companySettings.quoteDeliveryMode ?? "BOTH",
         quoteMessageTemplate: parsed.companySettings.quoteMessageTemplate ?? "PROFISSIONAL",
@@ -1550,6 +1580,44 @@ function saveStore(storeId: string, data: StoreData) {
   } catch {
     return false;
   }
+}
+
+function mergeRecordsById<T extends { id: string }>(remote: T[], local: T[]): T[] {
+  const result = new Map<string, T>();
+  for (const item of remote) result.set(item.id, item);
+  for (const item of local) {
+    const current = result.get(item.id) as (T & { updatedAt?: string }) | undefined;
+    const candidate = item as T & { updatedAt?: string };
+    if (!current || (candidate.updatedAt && (!current.updatedAt || candidate.updatedAt > current.updatedAt))) result.set(item.id, item);
+  }
+  return Array.from(result.values());
+}
+
+function mergeRecordsByNaturalKey<T extends { id: string }>(remote: T[], local: T[], keyOf: (item: T) => string): T[] {
+  const result = [...remote];
+  const keys = new Set(remote.map(keyOf));
+  for (const item of local) {
+    const key = keyOf(item);
+    if (!keys.has(key)) { result.push(item); keys.add(key); }
+  }
+  return result;
+}
+
+function mergeStoreDataForFirstCloudSync(remote: StoreData, local: StoreData): StoreData {
+  return {
+    ...remote,
+    customers: mergeRecordsById(remote.customers, local.customers),
+    vehicles: mergeRecordsById(remote.vehicles, local.vehicles),
+    catalog: mergeRecordsByNaturalKey(remote.catalog, local.catalog, (item) => `${normalizeAssistantText(item.name)}|${item.kind}|${normalizeAssistantText(item.sku || "")}`),
+    suppliers: mergeRecordsByNaturalKey(remote.suppliers, local.suppliers, (item) => `${normalizeAssistantText(item.document || "")}|${normalizeAssistantText(item.name)}`),
+    appointments: mergeRecordsById(remote.appointments, local.appointments),
+    appointmentBlocks: mergeRecordsById(remote.appointmentBlocks, local.appointmentBlocks),
+    serviceTypes: mergeRecordsByNaturalKey(remote.serviceTypes, local.serviceTypes, (item) => normalizeAssistantText(item.name)),
+    attendances: mergeRecordsById(remote.attendances, local.attendances),
+    orders: mergeRecordsById(remote.orders, local.orders),
+    quotes: mergeRecordsById(remote.quotes, local.quotes),
+    knowledgeBase: mergeRecordsByNaturalKey(remote.knowledgeBase, local.knowledgeBase, (item) => normalizeAssistantText(item.title)),
+  };
 }
 
 function navigationKey(storeId: string) {
@@ -1901,10 +1969,20 @@ function PremiumIcon({ name, size = 19 }: { name: IconName; size?: number }) {
   return null;
 }
 
+function withClientTimeout<T>(promise: PromiseLike<T>, milliseconds: number, message: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => reject(new Error(message)), milliseconds);
+    Promise.resolve(promise)
+      .then((value) => { window.clearTimeout(timer); resolve(value); })
+      .catch((error) => { window.clearTimeout(timer); reject(error); });
+  });
+}
+
 export default function Home() {
   const supabase = useMemo(() => getSupabaseBrowserClient(), []);
   const [session, setSession] = useState<any>(null);
   const [authLoading, setAuthLoading] = useState(true);
+  const [authStage, setAuthStage] = useState("Confirmando sua sessão...");
   const [authError, setAuthError] = useState("");
   const [stores, setStores] = useState<Store[]>([]);
   const [needsOnboarding, setNeedsOnboarding] = useState(false);
@@ -1928,10 +2006,17 @@ export default function Home() {
   const [toast, setToast] = useState("");
   const saveToastTimer = useRef<number | null>(null);
   const pendingSaveTimer = useRef<number | null>(null);
+  const cloudSaveTimer = useRef<number | null>(null);
+  const suppressNextCloudSave = useRef(false);
+  const cloudSnapshotUpdatedAtRef = useRef("");
+  const logoutInProgressRef = useRef(false);
+  const [inactivityWarning, setInactivityWarning] = useState(0);
+  const [syncState, setSyncState] = useState<"LOCAL" | "SYNCING" | "SYNCED">("LOCAL");
   const loadedStoreIdRef = useRef(EMPTY_STORE_ID);
   const hasSavedOnce = useRef(false);
   const latestDataRef = useRef(data);
   const authenticatedUserIdRef = useRef<string | null>(null);
+  const accessLoadSequenceRef = useRef(0);
   const currentAccessRole = stores.find((store) => store.id === storeId)?.role ?? "MEMBER";
   const canManageCompany = ["MASTER", "ADMIN", "MANAGER"].includes(currentAccessRole);
 
@@ -1986,132 +2071,200 @@ export default function Home() {
   }, [supabase]);
 
   async function loadAccessContext(userId: string) {
+    const sequence = ++accessLoadSequenceRef.current;
     setAuthLoading(true);
     setAuthError("");
+    setAuthStage("Carregando seu perfil e acessos...");
 
-    const [profileResult, membershipsResult] = await Promise.all([
-      supabase.from("profiles").select("full_name, username, phone, email, avatar_url, platform_role").eq("id", userId).maybeSingle(),
-      supabase.from("store_members").select("store_id, role").eq("user_id", userId).eq("active", true),
-    ]);
+    try {
+      const [profileResult, membershipsResult] = await withClientTimeout(Promise.all([
+        supabase.from("profiles").select("full_name, username, phone, email, avatar_url, platform_role").eq("id", userId).maybeSingle(),
+        supabase.from("store_members").select("store_id, role").eq("user_id", userId).eq("active", true),
+      ]), 6500, "O carregamento do perfil e dos acessos excedeu o tempo esperado.");
+      if (sequence !== accessLoadSequenceRef.current) return;
 
-    if (profileResult.data) {
-      setUserProfile({
-        preferredName: profileResult.data.full_name || profileResult.data.username || profileResult.data.email || "Usuário",
-        username: profileResult.data.username || "",
-        phone: profileResult.data.phone || "",
-        email: profileResult.data.email || "",
-        photo: profileResult.data.avatar_url || "",
-      });
-    }
+      if (profileResult.error) throw new Error(`Falha ao carregar o perfil: ${profileResult.error.message}`);
+      if (membershipsResult.error) throw new Error(`Falha ao carregar empresas vinculadas: ${membershipsResult.error.message}`);
 
-    if (membershipsResult.error) {
-      setAuthError("Não foi possível carregar as empresas vinculadas ao usuário.");
-      setAuthLoading(false);
-      return;
-    }
+      if (profileResult.data) {
+        setUserProfile({
+          preferredName: profileResult.data.full_name || profileResult.data.username || profileResult.data.email || "Usuário",
+          username: profileResult.data.username || "",
+          phone: profileResult.data.phone || "",
+          email: profileResult.data.email || "",
+          photo: profileResult.data.avatar_url || "",
+        });
+      }
 
-    const memberships = membershipsResult.data ?? [];
-    const platformMaster = profileResult.data?.platform_role === "MASTER";
-    setPlatformRole(platformMaster ? "MASTER" : "USER");
+      const memberships = membershipsResult.data ?? [];
+      const platformMaster = profileResult.data?.platform_role === "MASTER";
+      setPlatformRole(platformMaster ? "MASTER" : "USER");
+      setAuthStage(platformMaster ? "Carregando empresas da plataforma..." : "Carregando empresas autorizadas...");
 
-    if (platformMaster) {
-      const { data: masterStoreRows, error: masterStoresError } = await supabase
-        .from("stores")
-        .select("id, public_code, name, company_id, companies(name, segment)")
-        .order("created_at", { ascending: true });
-
-      if (masterStoresError) {
-        setAuthError("Não foi possível carregar as empresas da plataforma.");
-        setAuthLoading(false);
+      if (platformMaster) {
+        const masterResult: any = await withClientTimeout<any>(
+          supabase.from("stores").select("id, public_code, name, company_id, companies(name, segment)").order("created_at", { ascending: true }),
+          6500,
+          "O carregamento das empresas da plataforma excedeu o tempo esperado.",
+        );
+        if (masterResult.error) throw new Error(`Falha ao carregar empresas da plataforma: ${masterResult.error.message}`);
+        const masterStores: Store[] = (masterResult.data ?? []).map((row: any) => {
+          const company = Array.isArray(row.companies) ? row.companies[0] : row.companies;
+          return { id: row.id, publicCode: Number(row.public_code) || 0, name: row.name, companyId: row.company_id, companyName: company?.name || row.name, segment: company?.segment || "OUTRO", role: "MASTER" };
+        });
+        if (!masterStores.length) {
+          setStores([]);
+          setNeedsOnboarding(true);
+          setReady(false);
+          return;
+        }
+        setStores(masterStores);
+        setNeedsOnboarding(false);
+        const savedStoreId = localStorage.getItem("gerivo:active-store");
+        const selected = masterStores.find((item) => item.id === savedStoreId) ?? masterStores[0];
+        setAuthStage(`Abrindo ${selected.companyName}...`);
+        await withClientTimeout(activateStore(selected, false, true), 5500, "A empresa demorou demais para abrir. Tente novamente.");
+        if (sequence !== accessLoadSequenceRef.current) return;
+        setReady(true);
         return;
       }
 
-      const masterStores: Store[] = (masterStoreRows ?? []).map((row: any) => {
-        const company = Array.isArray(row.companies) ? row.companies[0] : row.companies;
-        return {
-          id: row.id,
-          publicCode: Number(row.public_code) || 0,
-          name: row.name,
-          companyId: row.company_id,
-          companyName: company?.name || row.name,
-          segment: company?.segment || "OUTRO",
-          role: "MASTER",
-        };
-      });
-
-      if (!masterStores.length) {
+      if (!memberships.length) {
         setStores([]);
         setNeedsOnboarding(true);
-        setAuthLoading(false);
+        setReady(false);
         return;
       }
 
-      setStores(masterStores);
+      const storeIds = memberships.map((item: any) => item.store_id);
+      const storesResult: any = await withClientTimeout<any>(
+        supabase.from("stores").select("id, public_code, name, company_id, companies(name, segment)").in("id", storeIds).eq("active", true),
+        6500,
+        "O carregamento das unidades autorizadas excedeu o tempo esperado.",
+      );
+      if (storesResult.error) throw new Error(`Falha ao carregar unidades autorizadas: ${storesResult.error.message}`);
+      const nextStores: Store[] = (storesResult.data ?? []).map((row: any) => {
+        const membership = memberships.find((item: any) => item.store_id === row.id);
+        const company = Array.isArray(row.companies) ? row.companies[0] : row.companies;
+        return { id: row.id, publicCode: Number(row.public_code) || 0, name: row.name, companyId: row.company_id, companyName: company?.name || row.name, segment: company?.segment || "OUTRO", role: membership?.role || "MEMBER" };
+      });
+      if (!nextStores.length) {
+        setStores([]);
+        setNeedsOnboarding(true);
+        setReady(false);
+        return;
+      }
+
+      setStores(nextStores);
       setNeedsOnboarding(false);
       const savedStoreId = localStorage.getItem("gerivo:active-store");
-      const selected = masterStores.find((item) => item.id === savedStoreId) ?? masterStores[0];
-      await activateStore(selected, false, true);
+      const selected = nextStores.find((item) => item.id === savedStoreId) ?? nextStores[0];
+      setAuthStage(`Abrindo ${selected.companyName}...`);
+      await withClientTimeout(activateStore(selected, false, true), 5500, "A empresa demorou demais para abrir. Tente novamente.");
+      if (sequence !== accessLoadSequenceRef.current) return;
       setReady(true);
-      setAuthLoading(false);
-      return;
+    } catch (error) {
+      if (sequence !== accessLoadSequenceRef.current) return;
+      console.error("Gerivo bootstrap:", error);
+      setReady(false);
+      setAuthError(error instanceof Error ? error.message : "Não foi possível preparar seu ambiente.");
+    } finally {
+      if (sequence === accessLoadSequenceRef.current) setAuthLoading(false);
     }
+  }
 
-    if (!memberships.length) {
-      setStores([]);
-      setNeedsOnboarding(true);
-      setAuthLoading(false);
-      return;
+  async function loadSharedStoreData(targetStore: Store, localData: StoreData) {
+    try {
+      const result: any = await withClientTimeout<any>(
+        supabase.from("store_data_snapshots")
+          .select("payload, revision, updated_at, updated_by")
+          .eq("store_id", targetStore.id)
+          .maybeSingle(),
+        5200,
+        "Os dados compartilhados demoraram demais para carregar.",
+      );
+      if (result.error) throw result.error;
+      if (result.data?.payload && typeof result.data.payload === "object") {
+        cloudSnapshotUpdatedAtRef.current = result.data.updated_at || "";
+        setSyncState("SYNCED");
+        const shared = isolateStoreData(targetStore.id, normalizeStoreData(result.data.payload as Partial<StoreData>, targetStore.id));
+        const migrationKey = `gerivo:cloud-migrated:v178:${targetStore.id}`;
+        if (!localStorage.getItem(migrationKey)) {
+          const merged = mergeStoreDataForFirstCloudSync(shared, localData);
+          localStorage.setItem(migrationKey, "1");
+          saveStore(targetStore.id, merged);
+          const uploaded: any = await supabase.from("store_data_snapshots").upsert({
+            store_id: targetStore.id,
+            company_id: targetStore.companyId,
+            payload: merged,
+            updated_by: session?.user?.id || null,
+          }, { onConflict: "store_id" }).select("updated_at").maybeSingle();
+          if (!uploaded.error && uploaded.data?.updated_at) cloudSnapshotUpdatedAtRef.current = uploaded.data.updated_at;
+          return merged;
+        }
+        saveStore(targetStore.id, shared);
+        return shared;
+      }
+
+      const initial = isolateStoreData(targetStore.id, localData);
+      localStorage.setItem(`gerivo:cloud-migrated:v178:${targetStore.id}`, "1");
+      const inserted: any = await supabase.from("store_data_snapshots").upsert({
+        store_id: targetStore.id,
+        company_id: targetStore.companyId,
+        payload: initial,
+        updated_by: session?.user?.id || null,
+      }, { onConflict: "store_id" }).select("updated_at").maybeSingle();
+      if (!inserted.error && inserted.data?.updated_at) { cloudSnapshotUpdatedAtRef.current = inserted.data.updated_at; setSyncState("SYNCED"); }
+      return initial;
+    } catch (error) {
+      console.warn("Gerivo shared data fallback:", error);
+      setSyncState("LOCAL");
+      return localData;
     }
+  }
 
-    const storeIds = memberships.map((item: any) => item.store_id);
-    const { data: storeRows, error: storesError } = await supabase
-      .from("stores")
-      .select("id, public_code, name, company_id, companies(name, segment)")
-      .in("id", storeIds)
-      .eq("active", true);
-
-    if (storesError) {
-      setAuthError("Não foi possível carregar as lojas autorizadas.");
-      setAuthLoading(false);
-      return;
+  async function saveSharedStoreData(targetStore: Store, nextData: StoreData) {
+    if (!session?.user || targetStore.id === EMPTY_STORE_ID) return false;
+    setSyncState("SYNCING");
+    try {
+      const result: any = await supabase.from("store_data_snapshots").upsert({
+        store_id: targetStore.id,
+        company_id: targetStore.companyId,
+        payload: isolateStoreData(targetStore.id, nextData),
+        updated_by: session.user.id,
+      }, { onConflict: "store_id" }).select("updated_at").maybeSingle();
+      if (result.error) throw result.error;
+      cloudSnapshotUpdatedAtRef.current = result.data?.updated_at || cloudSnapshotUpdatedAtRef.current;
+      setSyncState("SYNCED");
+      return true;
+    } catch (error) {
+      console.warn("Gerivo cloud save:", error);
+      setSyncState("LOCAL");
+      return false;
     }
+  }
 
-    const nextStores: Store[] = (storeRows ?? []).map((row: any) => {
-      const membership = memberships.find((item: any) => item.store_id === row.id);
-      const company = Array.isArray(row.companies) ? row.companies[0] : row.companies;
-      return {
-        id: row.id,
-        publicCode: Number(row.public_code) || 0,
-        name: row.name,
-        companyId: row.company_id,
-        companyName: company?.name || row.name,
-        segment: company?.segment || "OUTRO",
-        role: membership?.role || "MEMBER",
-      };
-    });
-
-    if (!nextStores.length) {
-      setNeedsOnboarding(true);
-      setAuthLoading(false);
-      return;
-    }
-
-    setStores(nextStores);
-    setNeedsOnboarding(false);
-    const savedStoreId = localStorage.getItem("gerivo:active-store");
-    const selected = nextStores.find((item) => item.id === savedStoreId) ?? nextStores[0];
-    await activateStore(selected, false, true);
-    setReady(true);
-    setAuthLoading(false);
+  async function flushCurrentData() {
+    const activeId = loadedStoreIdRef.current;
+    if (activeId === EMPTY_STORE_ID) return;
+    saveStore(activeId, latestDataRef.current);
+    const targetStore = stores.find((item) => item.id === activeId);
+    if (targetStore) await saveSharedStoreData(targetStore, latestDataRef.current);
   }
 
   async function loadCloudSettings(targetStore: Store, localData: StoreData) {
-    const { data: settings } = await supabase
-      .from("store_settings")
-      .select("display_name, logo_value, sidebar_color, selection_color, company_profile, modules, quote_delivery_mode, quote_message_template, checklist_name, checklist_enabled_keys, general_margin")
-      .eq("store_id", targetStore.id)
-      .maybeSingle();
-
+    const settingsResult: any = await withClientTimeout<any>(
+      supabase.from("store_settings")
+        .select("display_name, logo_value, sidebar_color, selection_color, company_profile, modules, quote_delivery_mode, quote_message_template, checklist_name, checklist_enabled_keys, general_margin")
+        .eq("store_id", targetStore.id)
+        .maybeSingle(),
+      4200,
+      "As configurações online demoraram demais.",
+    ).catch((error) => {
+      console.warn("Gerivo settings fallback:", error);
+      return { data: null, error: null } as any;
+    });
+    const settings = settingsResult.data;
     if (!settings) return localData;
 
     return {
@@ -2149,12 +2302,12 @@ export default function Home() {
   }
 
   async function activateStore(targetStore: Store, showToast = true, restoreNavigation = false) {
-    if (pendingSaveTimer.current && loadedStoreIdRef.current !== EMPTY_STORE_ID) {
-      window.clearTimeout(pendingSaveTimer.current);
-      saveStore(loadedStoreIdRef.current, latestDataRef.current);
-    }
+    if (pendingSaveTimer.current && loadedStoreIdRef.current !== EMPTY_STORE_ID) window.clearTimeout(pendingSaveTimer.current);
+    if (cloudSaveTimer.current && loadedStoreIdRef.current !== EMPTY_STORE_ID) window.clearTimeout(cloudSaveTimer.current);
+    if (loadedStoreIdRef.current !== EMPTY_STORE_ID && loadedStoreIdRef.current !== targetStore.id) await flushCurrentData();
     const localData = loadStore(targetStore.id, targetStore.segment);
-    const nextData = await loadCloudSettings(targetStore, localData);
+    const sharedData = await loadSharedStoreData(targetStore, localData);
+    const nextData = await loadCloudSettings(targetStore, sharedData);
     loadedStoreIdRef.current = targetStore.id;
     hasSavedOnce.current = false;
     setStoreId(targetStore.id);
@@ -2184,15 +2337,13 @@ export default function Home() {
   ) {
     const targetStore = stores.find((item) => item.id === storeId);
     if (!targetStore || !session?.user) return;
-    const { error } = await supabase.from("store_settings").upsert({
+    const settingsPayload: Record<string, unknown> = {
       store_id: targetStore.id,
       company_id: targetStore.companyId,
       display_name: companyIdentity.displayName || targetStore.name,
       logo_value: companyIdentity.logo || null,
       sidebar_color: companyIdentity.sidebarColor || "#0B1F3A",
       selection_color: companyIdentity.selectionColor || "#C89B3C",
-      company_profile: companySettings.profile,
-      modules: companySettings.modules,
       quote_delivery_mode: companySettings.quoteDeliveryMode,
       quote_message_template: companySettings.quoteMessageTemplate,
       checklist_name: checklistSettings.name,
@@ -2200,7 +2351,14 @@ export default function Home() {
       general_margin: companySettings.generalMargin,
       updated_by: session.user.id,
       updated_at: new Date().toISOString(),
-    }, { onConflict: "store_id" });
+    };
+    // Perfil e módulos representam a contratação comercial. Somente o MASTER Gerivo
+    // pode enviá-los ao banco; gestores e administradores editam apenas configurações operacionais.
+    if (platformRole === "MASTER") {
+      settingsPayload.company_profile = companySettings.profile;
+      settingsPayload.modules = companySettings.modules;
+    }
+    const { error } = await supabase.from("store_settings").upsert(settingsPayload, { onConflict: "store_id" });
 
     if (error) throw error;
   }
@@ -2208,25 +2366,39 @@ export default function Home() {
   useEffect(() => {
     latestDataRef.current = data;
     if (!ready || loadedStoreIdRef.current === EMPTY_STORE_ID) return;
-    const saved = saveStore(loadedStoreIdRef.current, data);
+    const activeId = loadedStoreIdRef.current;
+    const saved = saveStore(activeId, data);
     if (!saved) {
-      setToast("Não foi possível salvar. Remova fotos muito grandes e tente novamente.");
+      setToast("Não foi possível salvar localmente. Remova fotos muito grandes e tente novamente.");
       return;
     }
+
     if (pendingSaveTimer.current) window.clearTimeout(pendingSaveTimer.current);
     if (hasSavedOnce.current) {
-      pendingSaveTimer.current = window.setTimeout(() => {
-        setToast("Alterações salvas automaticamente");
-        if (saveToastTimer.current) window.clearTimeout(saveToastTimer.current);
-        saveToastTimer.current = window.setTimeout(() => setToast(""), 1800);
-      }, 420);
+      pendingSaveTimer.current = window.setTimeout(() => setToast("Alterações salvas automaticamente"), 420);
     } else {
       hasSavedOnce.current = true;
     }
+
+    if (suppressNextCloudSave.current) {
+      suppressNextCloudSave.current = false;
+      return;
+    }
+    if (cloudSaveTimer.current) window.clearTimeout(cloudSaveTimer.current);
+    const targetStore = stores.find((item) => item.id === activeId);
+    if (targetStore) {
+      cloudSaveTimer.current = window.setTimeout(() => {
+        void saveSharedStoreData(targetStore, latestDataRef.current).then((synced) => {
+          if (!synced) setToast("Salvo neste dispositivo. A sincronização online será tentada novamente.");
+        });
+      }, 850);
+    }
+
     return () => {
       if (pendingSaveTimer.current) window.clearTimeout(pendingSaveTimer.current);
+      if (cloudSaveTimer.current) window.clearTimeout(cloudSaveTimer.current);
     };
-  }, [data, ready]);
+  }, [data, ready, stores, storeId]);
 
   useEffect(() => {
     if (!ready || storeId === EMPTY_STORE_ID) return;
@@ -2234,8 +2406,21 @@ export default function Home() {
   }, [ready, storeId, page, activeAttendanceId, activeOrderId, activeQuoteId, activeStageId]);
 
   useEffect(() => {
+    if (!toast) return;
+    if (saveToastTimer.current) window.clearTimeout(saveToastTimer.current);
+    saveToastTimer.current = window.setTimeout(() => setToast(""), 3000);
+    return () => {
+      if (saveToastTimer.current) window.clearTimeout(saveToastTimer.current);
+    };
+  }, [toast]);
+
+
+  useEffect(() => {
     const flush = () => {
-      if (loadedStoreIdRef.current !== EMPTY_STORE_ID) saveStore(loadedStoreIdRef.current, latestDataRef.current);
+      if (loadedStoreIdRef.current !== EMPTY_STORE_ID) {
+        saveStore(loadedStoreIdRef.current, latestDataRef.current);
+        void flushCurrentData();
+      }
     };
     window.addEventListener("beforeunload", flush);
     document.addEventListener("visibilitychange", flush);
@@ -2243,7 +2428,67 @@ export default function Home() {
       window.removeEventListener("beforeunload", flush);
       document.removeEventListener("visibilitychange", flush);
     };
-  }, []);
+  }, [stores, session?.user?.id]);
+
+  useEffect(() => {
+    if (!ready || storeId === EMPTY_STORE_ID || !session?.user?.id) return;
+    const channel = supabase
+      .channel(`gerivo-store-data-${storeId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "store_data_snapshots", filter: `store_id=eq.${storeId}` }, (event: any) => {
+        const remote = event.new as { payload?: Partial<StoreData>; updated_by?: string; updated_at?: string };
+        if (!remote?.payload || remote.updated_by === session.user.id) return;
+        if (remote.updated_at && remote.updated_at === cloudSnapshotUpdatedAtRef.current) return;
+        cloudSnapshotUpdatedAtRef.current = remote.updated_at || "";
+        setSyncState("SYNCED");
+        const nextData = isolateStoreData(storeId, normalizeStoreData(remote.payload, storeId));
+        suppressNextCloudSave.current = true;
+        saveStore(storeId, nextData);
+        setData(nextData);
+        setToast("Dados atualizados por outro usuário da loja");
+      })
+      .subscribe();
+    return () => { void supabase.removeChannel(channel); };
+  }, [ready, storeId, session?.user?.id, supabase]);
+
+  useEffect(() => {
+    if (!session?.user?.id || !ready) return;
+    const key = `gerivo:last-activity:${session.user.id}`;
+    const markActivity = () => {
+      localStorage.setItem(key, String(Date.now()));
+      setInactivityWarning(0);
+      logoutInProgressRef.current = false;
+    };
+    markActivity();
+    const events: Array<keyof WindowEventMap> = ["pointerdown", "keydown", "touchstart", "wheel"];
+    events.forEach((event) => window.addEventListener(event, markActivity, { passive: true }));
+    const check = window.setInterval(() => {
+      const last = Number(localStorage.getItem(key)) || Date.now();
+      const elapsed = Date.now() - last;
+      const remaining = Math.max(0, Math.ceil((30 * 60 * 1000 - elapsed) / 1000));
+      if (elapsed >= 30 * 60 * 1000 && !logoutInProgressRef.current) {
+        logoutInProgressRef.current = true;
+        void (async () => {
+          await flushCurrentData();
+          localStorage.setItem("gerivo:last-logout-reason", "INACTIVITY");
+          setInactivityWarning(0);
+          await supabase.auth.signOut();
+        })();
+      } else if (elapsed >= 28 * 60 * 1000) {
+        setInactivityWarning(remaining);
+      }
+    }, 1000);
+    return () => {
+      window.clearInterval(check);
+      events.forEach((event) => window.removeEventListener(event, markActivity));
+    };
+  }, [session?.user?.id, ready, stores, storeId, supabase]);
+
+  function continueActiveSession() {
+    if (!session?.user?.id) return;
+    localStorage.setItem(`gerivo:last-activity:${session.user.id}`, String(Date.now()));
+    setInactivityWarning(0);
+    logoutInProgressRef.current = false;
+  }
 
   useEffect(() => {
     document.body.style.overflow = mobileMenuOpen ? "hidden" : "";
@@ -2276,10 +2521,18 @@ export default function Home() {
       setAuthError(message);
       throw new Error(message);
     }
-    const { error } = await supabase.auth.setSession({ access_token: payload.access_token, refresh_token: payload.refresh_token });
+    setAuthLoading(true);
+    setAuthStage("Preparando seu ambiente...");
+    const { data: nextSessionData, error } = await supabase.auth.setSession({ access_token: payload.access_token, refresh_token: payload.refresh_token });
     if (error) {
+      setAuthLoading(false);
       setAuthError("Não foi possível iniciar a sessão.");
       throw error;
+    }
+    const nextUserId = nextSessionData.session?.user?.id;
+    if (nextUserId && authenticatedUserIdRef.current !== nextUserId) {
+      authenticatedUserIdRef.current = nextUserId;
+      await loadAccessContext(nextUserId);
     }
   }
 
@@ -2302,6 +2555,8 @@ export default function Home() {
   }
 
   async function logout() {
+    await flushCurrentData();
+    setInactivityWarning(0);
     await supabase.auth.signOut();
   }
 
@@ -2343,6 +2598,7 @@ export default function Home() {
       localStorage.setItem("gerivo:active-store", payload.store_id);
       await loadAccessContext(session.user.id);
       setPage("master");
+      return payload;
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
         const message = "A criação demorou mais que o esperado. Verifique a conexão e tente novamente.";
@@ -2474,7 +2730,7 @@ export default function Home() {
     if (activeAttendanceId === attendance.id) setActiveAttendanceId(null);
     setToast(`Atendimento ${attendance.code} excluído`);
     if (saveToastTimer.current) window.clearTimeout(saveToastTimer.current);
-    saveToastTimer.current = window.setTimeout(() => setToast(""), 2500);
+    saveToastTimer.current = window.setTimeout(() => setToast(""), 3000);
   }
 
   function openAttendance(attendance: Attendance, stageId?: StageId) {
@@ -2564,10 +2820,10 @@ export default function Home() {
   const selectionTheme = selectionThemeVariables(data.companyIdentity.selectionColor);
   const sidebarUsesDarkAssets = sidebarIsLight(data.companyIdentity.sidebarColor);
 
-  if (authLoading) return <SystemLoading />;
+  if (authLoading) return <SystemLoading stage={authStage} />;
   if (!session) return <Login onSubmit={login} onRecover={recoverPassword} error={authError} />;
   if (needsOnboarding) return platformRole === "MASTER" ? <CompanyOnboarding onSubmit={bootstrapCompany} onLogout={logout} error={authError} /> : <NoAccess onLogout={logout} />;
-  if (!ready || !stores.length) return <SystemLoading />;
+  if (!ready || !stores.length) return <EnvironmentRecovery error={authError || "Não foi possível terminar de carregar seu ambiente."} onRetry={() => session?.user && loadAccessContext(session.user.id)} onLogout={logout} />;
 
   return (
     <main style={{ ...sidebarTheme, ...selectionTheme } as any} className={`${sidebarCollapsed ? "shell sidebar-collapsed" : "shell"} ${mobileMenuOpen ? "mobile-menu-open" : ""}`}>
@@ -2683,6 +2939,7 @@ export default function Home() {
           </div>
 
           <div className="top-actions">
+            <span className={`cloud-sync-status sync-${syncState.toLowerCase()}`}><i />{syncState === "SYNCED" ? "Loja sincronizada" : syncState === "SYNCING" ? "Sincronizando..." : "Salvamento local"}</span>
             {page === "appointments" ? (
               <button className="primary" onClick={() => window.dispatchEvent(new CustomEvent("gerivo:new-appointment"))}>{isDeliverySegment(currentStore.segment) ? "+ Novo pedido" : "+ Novo agendamento"}</button>
             ) : page === "checklist" && !activeAttendance ? (
@@ -2698,6 +2955,7 @@ export default function Home() {
         </header>
 
         <div className="content">
+          <div className="page-view" key={`${page}-${activeAttendanceId || activeOrderId || activeQuoteId || "index"}`}>
           {page === "dashboard" && (
             <Dashboard
               store={brandedStore}
@@ -2729,7 +2987,7 @@ export default function Home() {
           )}
 
           {page === "assistant" && (
-            <AssistantPage store={brandedStore} data={data} />
+            <AssistantPage store={brandedStore} data={data} sessionAccessToken={session?.access_token || ""} />
           )}
 
           {page === "bi" && (
@@ -2788,7 +3046,7 @@ export default function Home() {
           )}
 
           {page === "master" && platformRole === "MASTER" && (
-            <MasterCommercialPage stores={stores} currentStore={brandedStore} onCreateCompany={(input) => bootstrapCompany(input.companyName, input.storeName, input.segment, input.groupId, input.groupName, input.document)} />
+            <MasterCommercialPage stores={stores} currentStore={brandedStore} sessionAccessToken={session?.access_token || ""} onCreateCompany={(input) => bootstrapCompany(input.companyName, input.storeName, input.segment, input.groupId, input.groupName, input.document)} onRefresh={() => loadAccessContext(session.user.id)} />
           )}
 
           {page === "checklist" && (
@@ -2826,7 +3084,7 @@ export default function Home() {
                 companyName={data.companyIdentity.displayName}
                 onChange={(updated) => setData({ ...data, orders: data.orders.map((item) => item.id === updated.id ? updated : item) })}
                 onBack={() => setActiveOrderId(null)}
-                onSaved={() => { setToast(`${activeOrder.code} salva`); if (saveToastTimer.current) window.clearTimeout(saveToastTimer.current); saveToastTimer.current = window.setTimeout(() => setToast(""), 2200); }}
+                onSaved={() => { setToast(`${activeOrder.code} salva`); if (saveToastTimer.current) window.clearTimeout(saveToastTimer.current); saveToastTimer.current = window.setTimeout(() => setToast(""), 3000); }}
               />
             ) : (
               <OrdersPage
@@ -2850,7 +3108,7 @@ export default function Home() {
                 deliveryMode={data.companySettings.quoteDeliveryMode}
                 onChange={(updated) => setData({ ...data, quotes: data.quotes.map((item) => item.id === updated.id ? updated : item) })}
                 onBack={() => setActiveQuoteId(null)}
-                onSaved={() => { setToast(`${activeQuote.code} salvo`); if (saveToastTimer.current) window.clearTimeout(saveToastTimer.current); saveToastTimer.current = window.setTimeout(() => setToast(""), 2200); }}
+                onSaved={() => { setToast(`${activeQuote.code} salvo`); if (saveToastTimer.current) window.clearTimeout(saveToastTimer.current); saveToastTimer.current = window.setTimeout(() => setToast(""), 3000); }}
               />
             ) : (
               <QuotesPage
@@ -2863,15 +3121,24 @@ export default function Home() {
               />
             )
           )}
+          </div>
         </div>
       </section>
+
+      {inactivityWarning > 0 && (
+        <InactivityWarningModal
+          seconds={inactivityWarning}
+          onContinue={continueActiveSession}
+          onLogout={() => void logout()}
+        />
+      )}
 
       {toast && (
         <div className="save-toast" role="status">
           <span>✓</span>
           <div>
             <strong>{toast}</strong>
-            <small>Configurações online; dados operacionais ainda permanecem neste dispositivo.</small>
+            <small>Este aviso fecha automaticamente em 3 segundos.</small>
           </div>
         </div>
       )}
@@ -2916,7 +3183,7 @@ export default function Home() {
             setProfileOpen(false);
             setToast("Perfil atualizado");
             if (saveToastTimer.current) window.clearTimeout(saveToastTimer.current);
-            saveToastTimer.current = window.setTimeout(() => setToast(""), 2200);
+            saveToastTimer.current = window.setTimeout(() => setToast(""), 3000);
           }}
         />
       )}
@@ -2949,13 +3216,25 @@ export default function Home() {
   );
 }
 
-function SystemLoading() {
+function InactivityWarningModal({ seconds, onContinue, onLogout }: { seconds: number; onContinue: () => void; onLogout: () => void }) {
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  return <div className="modal-backdrop inactivity-backdrop"><section className="inactivity-modal"><div className="inactivity-clock">{String(minutes).padStart(2, "0")}:{String(remainingSeconds).padStart(2, "0")}</div><small>SESSÃO SEGURA</small><h2>Você ainda está utilizando o Gerivo?</h2><p>Por segurança, a sessão será encerrada após 30 minutos sem atividade. Tudo que estava sendo feito já foi salvo neste dispositivo e sincronizado com a loja.</p><div><button type="button" className="outline" onClick={onLogout}>Sair agora</button><button type="button" className="primary" onClick={onContinue}>Continuar trabalhando</button></div></section></div>;
+}
+
+function SystemLoading({ stage = "Preparando seu ambiente..." }: { stage?: string }) {
   return (
     <main className="system-loading">
       <img src="/gerivo-logo.png" alt="Gerivo" />
-      <span>Preparando seu ambiente...</span>
+      <div className="system-loading-pulse"><span /><span /><span /></div>
+      <strong>{stage}</strong>
+      <small>Isso deve levar apenas alguns segundos.</small>
     </main>
   );
+}
+
+function EnvironmentRecovery({ error, onRetry, onLogout }: { error: string; onRetry: () => void; onLogout: () => void }) {
+  return <main className="environment-recovery"><section><img src="/gerivo-logo.png" alt="Gerivo" /><span>!</span><h1>Não foi possível preparar seu ambiente</h1><p>{error}</p><div><button type="button" className="primary" onClick={onRetry}>Tentar novamente</button><button type="button" className="outline" onClick={onLogout}>Sair</button></div><small>O Gerivo encerrou o carregamento para não deixar a tela presa indefinidamente.</small></section></main>;
 }
 
 function Login({
@@ -2974,10 +3253,26 @@ function Login({
   const [recovering, setRecovering] = useState(false);
   const [recoveryEmail, setRecoveryEmail] = useState("");
   const [clientAccess, setClientAccess] = useState(false);
+  const publicSupabase = useMemo(() => getSupabaseBrowserClient(), []);
+  const [publicPlans, setPublicPlans] = useState<PublicPlan[]>(DEFAULT_PUBLIC_PLANS);
 
   useEffect(() => {
     setClientAccess(window.location.pathname.startsWith("/cliente"));
-  }, []);
+    void publicSupabase.rpc("get_public_subscription_plans").then(({ data, error }: any) => {
+      if (error || !Array.isArray(data) || !data.length) return;
+      setPublicPlans(data.map((plan: any) => ({
+        ...plan,
+        monthly_price: Number(plan.monthly_price) || 0,
+        annual_price: Number(plan.annual_price) || 0,
+        company_limit: Number(plan.company_limit) || 1,
+        store_limit: Number(plan.store_limit) || 1,
+        user_limit: Number(plan.user_limit) || 1,
+        public_features: Array.isArray(plan.public_features) ? plan.public_features.map(String) : [],
+        recommended: Boolean(plan.recommended),
+        public_sort_order: Number(plan.public_sort_order) || 0,
+      })));
+    });
+  }, [publicSupabase]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -3077,16 +3372,13 @@ function Login({
       <section className="public-section public-plans-section" id="planos">
         <div className="public-section-heading"><small>PLANOS GERIVO</small><h2>Comece com o que sua empresa precisa</h2><p>Módulos e limites são definidos conforme a contratação.</p></div>
         <div className="public-plan-grid">
-          <article><small>ESSENCIAL</small><h3>Gerivo Essencial</h3><strong>R$ 119<em>/mês</em></strong><p>1 empresa · 1 unidade · 3 usuários</p><ul><li>Painel e clientes</li><li>Catálogo e orçamentos</li><li>Agenda básica</li></ul><a href="mailto:gerivo.sistemas@gmail.com?subject=Interesse%20no%20Gerivo%20Essencial">Tenho interesse</a></article>
-          <article className="recommended"><b>Mais indicado</b><small>GESTÃO</small><h3>Gerivo Gestão</h3><strong>R$ 219<em>/mês</em></strong><p>1 empresa · até 2 unidades · 8 usuários</p><ul><li>Tudo do Essencial</li><li>O.S., estoque e compras</li><li>Indicadores e satisfação</li></ul><a href="mailto:gerivo.sistemas@gmail.com?subject=Interesse%20no%20Gerivo%20Gest%C3%A3o">Tenho interesse</a></article>
-          <article><small>PROFISSIONAL</small><h3>Gerivo Profissional</h3><strong>R$ 349<em>/mês</em></strong><p>Até 2 empresas · 5 unidades · 20 usuários</p><ul><li>Indicadores gerenciais</li><li>Automações e auditoria</li><li>Assistente Gerivo inicial</li></ul><a href="mailto:gerivo.sistemas@gmail.com?subject=Interesse%20no%20Gerivo%20Profissional">Tenho interesse</a></article>
-          <article><small>ENTERPRISE</small><h3>Gerivo Enterprise</h3><strong>R$ 599<em>/mês</em></strong><p>Estrutura e limites personalizados</p><ul><li>Múltiplas empresas</li><li>Implantação acompanhada</li><li>Integrações e suporte prioritário</li></ul><a href="mailto:gerivo.sistemas@gmail.com?subject=Interesse%20no%20Gerivo%20Enterprise">Solicitar proposta</a></article>
+          {publicPlans.map((plan) => <article key={plan.id} className={plan.recommended ? "recommended" : ""}>{plan.recommended && <b>Mais indicado</b>}<small>{plan.code}</small><h3>{plan.name}</h3><strong>{money(plan.monthly_price)}<em>/mês</em></strong><p>{plan.public_description || `${plan.company_limit} empresa(s) · ${plan.store_limit} unidade(s) · ${plan.user_limit} usuário(s)`}</p><ul>{plan.public_features.map((feature) => <li key={feature}>{feature}</li>)}</ul><a href={`mailto:gerivo.sistemas@gmail.com?subject=${encodeURIComponent(`Interesse no ${plan.name}`)}`}>{plan.public_cta_label || "Tenho interesse"}</a></article>)}
         </div>
       </section>
 
       <section className="public-contact public-contact-form" id="contato"><div><small>CONTATE-NOS</small><h2>Vamos entender a sua operação</h2><p>Preencha os dados e envie a solicitação para a equipe Gerivo.</p></div><form action="mailto:gerivo.sistemas@gmail.com" method="post" encType="text/plain"><input name="nome" placeholder="Nome" required /><input name="telefone" placeholder="Telefone" required /><input name="email" type="email" placeholder="E-mail" required /><input name="assunto" placeholder="Assunto" required /><textarea name="mensagem" rows={4} placeholder="Mensagem" required /><button className="primary">Enviar contato</button></form></section>
       <a className="public-floating-contact" href="#contato">Fale com a gente</a>
-      <footer className="public-footer"><img src="/gerivo-logo-light.png" alt="Gerivo" /><span>Gestão que gera resultados.</span><span>Gerivo v1.7.6</span></footer>
+      <footer className="public-footer"><img src="/gerivo-logo-light.png" alt="Gerivo" /><span>Gestão que gera resultados.</span><span>Gerivo v1.7.8</span></footer>
     </main>
   );
 }
@@ -3296,18 +3588,20 @@ function ManagementHub({
   const activeItems = data.catalog.filter((item) => item.active).length;
   const lowStock = data.catalog.filter((item) => item.kind !== "SERVICO" && item.active && item.stock <= item.minimumStock).length;
 
-  const cards = [
-    { key: "identity", label: "Identidade visual", icon: "store" as IconName, value: data.companyIdentity.logo ? "Marca própria" : "Gerivo padrão", action: onOpenIdentity },
-    { key: "catalog", label: "Catálogo", icon: "layers" as IconName, value: `${activeItems} itens ativos`, action: onOpenCatalog },
-    { key: "pricing", label: "Formação de preço", icon: "chart" as IconName, value: `${data.companySettings.generalMargin}% margem geral`, action: onOpenPricing },
-    { key: "inventory", label: "Estoque", icon: "box" as IconName, value: lowStock ? `${lowStock} alertas` : "Estoque regular", action: onOpenInventory },
-    { key: "checklist", label: "Modelos de checklist", icon: "clipboard" as IconName, value: data.checklistSettings.name, action: onOpenChecklist },
-    { key: "knowledge", label: "Conhecimento da IA", icon: "sparkle" as IconName, value: `${data.knowledgeBase.length} procedimentos`, action: onOpenKnowledge },
-    { key: "messages", label: "Central de mensagens", icon: "file" as IconName, value: "Modelos comerciais", action: onOpenMessages },
-    { key: "bi", label: "Gerivo BI", icon: "chart" as IconName, value: "Indicadores 3, 6 e 12 meses", action: onOpenBi },
-    { key: "users", label: "Usuários e acessos", icon: "users" as IconName, value: "Gerenciar acessos", action: () => setUsersOpen(true) },
+  type ManagementCard = { key: string; label: string; icon: IconName; value: string; action: () => void; module?: CompanyModule };
+  const cards: ManagementCard[] = [
+    { key: "identity", label: "Identidade visual", icon: "store", value: data.companyIdentity.logo ? "Marca própria" : "Gerivo padrão", action: onOpenIdentity },
+    { key: "catalog", label: "Catálogo", icon: "layers", value: `${activeItems} itens ativos`, action: onOpenCatalog, module: "CATALOG" },
+    { key: "pricing", label: "Formação de preço", icon: "chart", value: `${data.companySettings.generalMargin}% margem geral`, action: onOpenPricing, module: "CATALOG" },
+    { key: "inventory", label: "Estoque", icon: "box", value: lowStock ? `${lowStock} alertas` : "Estoque regular", action: onOpenInventory, module: "INVENTORY" },
+    { key: "checklist", label: "Modelos de checklist", icon: "clipboard", value: data.checklistSettings.name, action: onOpenChecklist, module: "CHECKLIST" },
+    { key: "knowledge", label: "Conhecimento da IA", icon: "sparkle", value: `${data.knowledgeBase.length} procedimentos`, action: onOpenKnowledge, module: "ASSISTANT" },
+    { key: "messages", label: "Central de mensagens", icon: "file", value: "Modelos comerciais", action: onOpenMessages, module: "MESSAGES" },
+    { key: "bi", label: "Gerivo BI", icon: "chart", value: "Período mensal ou personalizado", action: onOpenBi, module: "BI" },
+    { key: "users", label: "Usuários e acessos", icon: "users", value: "Criar e editar usuários", action: () => setUsersOpen(true) },
   ];
-  if (isPlatformMaster) cards.splice(3, 0, { key: "modules", label: "Módulos contratados", icon: "modules" as IconName, value: "Controle MASTER", action: onOpenModules });
+  if (isPlatformMaster) cards.splice(3, 0, { key: "modules", label: "Módulos contratados", icon: "modules", value: "Controle exclusivo MASTER", action: onOpenModules });
+  const visibleCards = cards.filter((card) => !card.module || data.companySettings.modules[card.module]);
 
   return (
     <div className="management-page">
@@ -3315,7 +3609,7 @@ function ManagementHub({
         <div><small>ADMINISTRAÇÃO DA EMPRESA</small><h2>Gestão de {store.companyName}</h2></div>
       </section>
       <section className="management-grid management-grid-clean">
-        {cards.map((card) => (
+        {visibleCards.map((card) => (
           <button type="button" className="management-card clean" key={card.key} onClick={card.action}>
             <span className="management-icon">{card.key === "identity" && data.companyIdentity.logo ? <img src={data.companyIdentity.logo} alt="" /> : <PremiumIcon name={card.icon} size={24} />}</span>
             <div><strong>{card.label}</strong><small>{card.value}</small></div>
@@ -3342,64 +3636,204 @@ function suggestUsername(fullName: string, _storeCode: number) {
   return `${first}.${last}`.replace(/[^a-z0-9.]/g, "");
 }
 
+type ManagedCompanyUser = {
+  id: string;
+  fullName: string;
+  username: string;
+  email: string;
+  phone: string;
+  role: "MASTER" | "ADMIN" | "MANAGER" | "MEMBER";
+  companyActive: boolean;
+  storeActive: boolean;
+  platformRole: "USER" | "MASTER";
+  createdAt: string | null;
+};
+
+function userRoleLabel(role: string) {
+  if (role === "ADMIN") return "Administrador";
+  if (role === "MANAGER") return "Gestor";
+  if (role === "MASTER") return "MASTER";
+  return "Usuário";
+}
+
 function UserAccessModal({ store, accessToken, onClose }: { store: Store; accessToken: string; onClose: () => void }) {
+  const [mode, setMode] = useState<"LIST" | "CREATE" | "EDIT">("LIST");
+  const [users, setUsers] = useState<ManagedCompanyUser[]>([]);
+  const [requesterRole, setRequesterRole] = useState("MEMBER");
+  const [selectedUser, setSelectedUser] = useState<ManagedCompanyUser | null>(null);
+  const [search, setSearch] = useState("");
   const [fullName, setFullName] = useState("");
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
-  const [role, setRole] = useState("MEMBER");
+  const [role, setRole] = useState<"ADMIN" | "MANAGER" | "MEMBER">("MEMBER");
+  const [active, setActive] = useState(true);
+  const [storeAccess, setStoreAccess] = useState(true);
   const [availability, setAvailability] = useState<"idle" | "checking" | "available" | "unavailable">("idle");
   const [message, setMessage] = useState("");
+  const [messageError, setMessageError] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
+  const canAssignElevatedRoles = requesterRole === "MASTER" || requesterRole === "ADMIN";
+  const originalUsername = selectedUser?.username || "";
+  const filteredUsers = users.filter((user) => `${user.fullName} ${user.username} ${user.email} ${userRoleLabel(user.role)}`.toLowerCase().includes(search.trim().toLowerCase()));
+
+  function resetForm() {
+    setSelectedUser(null);
+    setFullName("");
+    setUsername("");
+    setEmail("");
+    setPhone("");
+    setPassword("");
+    setRole("MEMBER");
+    setActive(true);
+    setStoreAccess(true);
+    setAvailability("idle");
+    setMessage("");
+    setMessageError(false);
+  }
+
+  async function loadUsers(showLoading = true) {
+    if (showLoading) setLoading(true);
+    setMessage("");
+    try {
+      const response = await fetch("/api/users/list", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ companyId: store.companyId, storeId: store.id }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || "Falha ao carregar usuários.");
+      setUsers(Array.isArray(payload.users) ? payload.users : []);
+      setRequesterRole(String(payload.requesterRole || "MEMBER"));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Falha ao carregar usuários.");
+      setMessageError(true);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { void loadUsers(); }, [store.companyId, store.id]);
+
   useEffect(() => {
-    if (!fullName.trim() || username.trim()) return;
+    if (!message || messageError) return;
+    const timer = window.setTimeout(() => setMessage(""), 3000);
+    return () => window.clearTimeout(timer);
+  }, [message, messageError]);
+
+  useEffect(() => {
+    if (mode !== "CREATE" || !fullName.trim() || username.trim()) return;
     setUsername(suggestUsername(fullName, store.publicCode));
-  }, [fullName, store.publicCode, username]);
+  }, [fullName, store.publicCode, username, mode]);
 
   useEffect(() => {
     const value = username.trim();
     if (value.length < 4) { setAvailability("idle"); return; }
+    if (mode === "EDIT" && value === originalUsername) { setAvailability("available"); return; }
     setAvailability("checking");
     const timer = window.setTimeout(async () => {
       try {
         const response = await fetch("/api/users/username-availability", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: value }) });
-        const payload = await response.json();
+        const payload = await response.json().catch(() => ({}));
         setAvailability(payload.available ? "available" : "unavailable");
-        if (payload.username && payload.username !== value) setUsername(payload.username);
+        if (mode === "CREATE" && payload.username && payload.username !== value) setUsername(payload.username);
       } catch { setAvailability("unavailable"); }
     }, 450);
     return () => window.clearTimeout(timer);
-  }, [username]);
+  }, [username, mode, originalUsername]);
+
+  function openCreate() {
+    resetForm();
+    setMode("CREATE");
+  }
+
+  function openEdit(user: ManagedCompanyUser) {
+    setSelectedUser(user);
+    setFullName(user.fullName);
+    setUsername(user.username);
+    setEmail(user.email);
+    setPhone(user.phone);
+    setPassword("");
+    setRole(user.role === "MASTER" ? "ADMIN" : user.role);
+    setActive(user.companyActive);
+    setStoreAccess(user.storeActive);
+    setAvailability("available");
+    setMessage("");
+    setMessageError(false);
+    setMode("EDIT");
+  }
 
   async function createUser() {
-    setSubmitting(true); setMessage("");
+    setSubmitting(true); setMessage(""); setMessageError(false);
     try {
       const response = await fetch("/api/users/create", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
-        body: JSON.stringify({ companyId: store.companyId, storeIds: [store.id], fullName, username, email, password, role }),
+        body: JSON.stringify({ companyId: store.companyId, storeIds: [store.id], fullName, username, email, phone, password, role: canAssignElevatedRoles ? role : "MEMBER" }),
       });
-      const payload = await response.json();
+      const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.error || "Falha ao criar usuário.");
+      await loadUsers(false);
+      resetForm();
+      setMode("LIST");
       setMessage(`Usuário ${payload.username} criado com sucesso.`);
-      setFullName(""); setUsername(""); setEmail(""); setPassword(""); setAvailability("idle");
-    } catch (error) { setMessage(error instanceof Error ? error.message : "Falha ao criar usuário."); }
-    finally { setSubmitting(false); }
+      setMessageError(false);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Falha ao criar usuário.");
+      setMessageError(true);
+    } finally { setSubmitting(false); }
   }
 
+  async function updateUser() {
+    if (!selectedUser) return;
+    setSubmitting(true); setMessage(""); setMessageError(false);
+    try {
+      const response = await fetch("/api/users/update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ companyId: store.companyId, storeId: store.id, userId: selectedUser.id, fullName, username, email, phone, password, role: canAssignElevatedRoles ? role : "MEMBER", active, storeAccess }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || "Falha ao editar usuário.");
+      await loadUsers(false);
+      setMode("LIST");
+      setSelectedUser(null);
+      setMessage("Usuário atualizado com sucesso.");
+      setMessageError(false);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Falha ao editar usuário.");
+      setMessageError(true);
+    } finally { setSubmitting(false); }
+  }
+
+  const formValid = fullName.trim().length >= 2 && email.includes("@") && availability === "available" && (mode === "EDIT" || password.length >= 8);
+
   return (
-    <div className="modal-backdrop"><section className="compact-modal user-access-modal">
-      <header><div><small>USUÁRIOS E ACESSOS</small><h2>Novo usuário</h2></div><button onClick={onClose}>×</button></header>
-      <div className="user-access-form">
-        <Field label="Nome e sobrenome"><input value={fullName} onChange={(e) => { setFullName(e.target.value); setUsername(""); }} placeholder="Ex.: Maria Silva" /></Field>
-        <Field label="Usuário"><div className="availability-field"><input autoCapitalize="none" value={username} onChange={(e) => setUsername(e.target.value.toLowerCase())} placeholder="nome.sobrenome" /><span className={`availability ${availability}`}>{availability === "checking" ? "Verificando..." : availability === "available" ? "✓ Disponível" : availability === "unavailable" ? "Indisponível" : ""}</span></div></Field>
-        <Field label="E-mail de recuperação"><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="usuario@empresa.com" /></Field>
-        <Field label="Senha temporária"><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Mínimo 8 caracteres" /></Field>
-        <Field label="Perfil"><select value={role} onChange={(e) => setRole(e.target.value)}><option value="MEMBER">Usuário</option><option value="MANAGER">Gestor</option><option value="ADMIN">Administrador</option></select></Field>
-        {message && <div className={message.includes("sucesso") ? "auth-success" : "auth-error"}>{message}</div>}
-      </div>
-      <footer><button className="outline" onClick={onClose}>Fechar</button><button className="primary" disabled={submitting || availability !== "available" || !email || password.length < 8} onClick={createUser}>{submitting ? "Criando..." : "Criar usuário"}</button></footer>
+    <div className="modal-backdrop"><section className="compact-modal user-access-modal user-access-modal-v177">
+      <header><div><small>USUÁRIOS E ACESSOS</small><h2>{mode === "LIST" ? `Equipe de ${store.name}` : mode === "CREATE" ? "Novo usuário" : `Editar ${selectedUser?.fullName || "usuário"}`}</h2></div><button type="button" onClick={onClose}>×</button></header>
+      {mode === "LIST" ? <>
+        <div className="user-access-toolbar"><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar nome, usuário ou e-mail" /><button type="button" className="primary" onClick={openCreate}>+ Novo usuário</button></div>
+        <div className="managed-users-list">
+          {loading ? <div className="managed-users-loading"><span /><p>Carregando usuários...</p></div> : filteredUsers.length ? filteredUsers.map((user) => <article key={user.id} className={!user.companyActive ? "managed-user-row inactive" : "managed-user-row"}>
+            <div className="managed-user-avatar">{user.fullName.slice(0, 2).toUpperCase()}</div>
+            <div className="managed-user-main"><strong>{user.fullName}</strong><span>@{user.username || "sem.usuario"} · {user.email || "sem e-mail"}</span><small>{user.storeActive ? `Acesso à unidade ${store.name}` : "Sem acesso a esta unidade"}</small></div>
+            <div className="managed-user-badges"><span>{userRoleLabel(user.role)}</span><b className={user.companyActive ? "active" : "inactive"}>{user.companyActive ? "Ativo" : "Inativo"}</b></div>
+            <button type="button" className="outline small" disabled={user.platformRole === "MASTER" || (requesterRole === "MANAGER" && user.role !== "MEMBER")} onClick={() => openEdit(user)}>Editar</button>
+          </article>) : <div className="empty-inline">Nenhum usuário encontrado.</div>}
+        </div>
+      </> : <div className="user-access-form">
+        <div className="user-access-back"><button type="button" className="text-action" onClick={() => { setMode("LIST"); resetForm(); }}>← Voltar à equipe</button></div>
+        <Field label="Nome e sobrenome"><input value={fullName} onChange={(event) => { setFullName(event.target.value); if (mode === "CREATE") setUsername(""); }} placeholder="Ex.: Maria Silva" /></Field>
+        <Field label="Usuário"><div className="availability-field"><input autoCapitalize="none" value={username} onChange={(event) => setUsername(event.target.value.toLowerCase())} placeholder="nome.sobrenome" /><span className={`availability ${availability}`}>{availability === "checking" ? "Verificando..." : availability === "available" ? "✓ Disponível" : availability === "unavailable" ? "Indisponível" : ""}</span></div></Field>
+        <div className="split"><Field label="E-mail de recuperação"><input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="usuario@empresa.com" /></Field><Field label="Telefone"><input value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="(00) 00000-0000" /></Field></div>
+        <div className="split"><Field label={mode === "CREATE" ? "Senha temporária" : "Nova senha (opcional)"}><input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder={mode === "CREATE" ? "Mínimo 8 caracteres" : "Deixe vazio para manter"} /></Field><Field label="Perfil"><select value={role} disabled={!canAssignElevatedRoles} onChange={(event) => setRole(event.target.value as "ADMIN" | "MANAGER" | "MEMBER")}><option value="MEMBER">Usuário</option>{canAssignElevatedRoles && <option value="MANAGER">Gestor</option>}{canAssignElevatedRoles && <option value="ADMIN">Administrador</option>}</select></Field></div>
+        {mode === "EDIT" && <div className="user-access-switches"><label><input type="checkbox" checked={active} onChange={(event) => setActive(event.target.checked)} /><span><strong>Usuário ativo</strong><small>Permite entrar na empresa.</small></span></label><label><input type="checkbox" checked={storeAccess} disabled={!active} onChange={(event) => setStoreAccess(event.target.checked)} /><span><strong>Acesso à unidade atual</strong><small>{store.name}</small></span></label></div>}
+      </div>}
+      {message && <div className={messageError ? "user-access-notice error" : "user-access-notice"}>{message}</div>}
+      <footer>{mode === "LIST" ? <button className="outline" type="button" onClick={onClose}>Fechar</button> : <><button className="outline" type="button" disabled={submitting} onClick={() => { setMode("LIST"); resetForm(); }}>Cancelar</button><button className="primary" type="button" disabled={submitting || !formValid} onClick={() => void (mode === "CREATE" ? createUser() : updateUser())}>{submitting ? "Salvando..." : mode === "CREATE" ? "Criar usuário" : "Salvar alterações"}</button></>}</footer>
     </section></div>
   );
 }
@@ -3925,30 +4359,120 @@ function operationalHealth(data: StoreData) {
 }
 
 function BusinessIntelligencePage({ data }: { data: StoreData }) {
-  const [period, setPeriod] = useState<3 | 6 | 12>(6);
-  const now = new Date();
-  const start = new Date(now.getFullYear(), now.getMonth() - (period - 1), 1);
-  const closedOrders = data.orders.filter((item) => item.status === "FECHADA" && new Date(item.updatedAt) >= start);
-  const closedQuotes = data.quotes.filter((item) => item.status === "FECHADO" && new Date(item.updatedAt) >= start);
+  type BiPeriodMode = "MONTH" | "PREVIOUS_MONTH" | "THREE_MONTHS" | "SIX_MONTHS" | "YEAR" | "CUSTOM";
+  const today = new Date();
+  const currentMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
+  const [periodMode, setPeriodMode] = useState<BiPeriodMode>("MONTH");
+  const [selectedMonth, setSelectedMonth] = useState(currentMonth);
+  const [customStart, setCustomStart] = useState(`${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-01`);
+  const [customEnd, setCustomEnd] = useState(today.toISOString().slice(0, 10));
+  const [responsible, setResponsible] = useState("TODOS");
+  const [dateBasis, setDateBasis] = useState<"UPDATED" | "CREATED">("UPDATED");
+  const [statusFilter, setStatusFilter] = useState<"TODOS" | "ABERTOS" | "FECHADOS">("TODOS");
+  const [categoryFilter, setCategoryFilter] = useState("TODAS");
+  const [comparePrevious, setComparePrevious] = useState(true);
+
+  function endOfDay(value: Date) {
+    const result = new Date(value);
+    result.setHours(23, 59, 59, 999);
+    return result;
+  }
+
+  const range = useMemo(() => {
+    let startDate: Date;
+    let endDate: Date;
+    if (periodMode === "CUSTOM") {
+      startDate = new Date(`${customStart}T00:00:00`);
+      endDate = endOfDay(new Date(`${customEnd}T00:00:00`));
+    } else if (periodMode === "PREVIOUS_MONTH") {
+      startDate = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+      endDate = endOfDay(new Date(today.getFullYear(), today.getMonth(), 0));
+    } else if (periodMode === "THREE_MONTHS" || periodMode === "SIX_MONTHS") {
+      const months = periodMode === "THREE_MONTHS" ? 3 : 6;
+      startDate = new Date(today.getFullYear(), today.getMonth() - (months - 1), 1);
+      endDate = endOfDay(today);
+    } else if (periodMode === "YEAR") {
+      startDate = new Date(today.getFullYear(), 0, 1);
+      endDate = endOfDay(today);
+    } else {
+      const [year, month] = selectedMonth.split("-").map(Number);
+      startDate = new Date(year, month - 1, 1);
+      endDate = endOfDay(new Date(year, month, 0));
+    }
+    if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime()) || startDate > endDate) {
+      return { start: new Date(today.getFullYear(), today.getMonth(), 1), end: endOfDay(today) };
+    }
+    return { start: startDate, end: endDate };
+  }, [periodMode, selectedMonth, customStart, customEnd]);
+
+  const periodMs = Math.max(86400000, range.end.getTime() - range.start.getTime() + 1);
+  const previousRange = {
+    start: new Date(range.start.getTime() - periodMs),
+    end: new Date(range.start.getTime() - 1),
+  };
+  const inRange = (value: string, target = range) => {
+    const time = new Date(value).getTime();
+    return Number.isFinite(time) && time >= target.start.getTime() && time <= target.end.getTime();
+  };
+  const matchesResponsible = (value: string) => responsible === "TODOS" || value === responsible;
+  const recordDate = (item: { createdAt: string; updatedAt: string }) => dateBasis === "CREATED" ? item.createdAt : item.updatedAt;
+  const matchesCategory = (items: DocumentLine[]) => categoryFilter === "TODAS" || items.some((item) => item.category === categoryFilter);
+  const matchesStatus = (status: string, closedStatus: string) => statusFilter === "TODOS" || (statusFilter === "FECHADOS" ? status === closedStatus : status !== closedStatus);
+  const filteredOrders = data.orders.filter((item) => inRange(recordDate(item)) && matchesResponsible(item.responsible) && matchesCategory(item.items) && matchesStatus(item.status, "FECHADA"));
+  const closedOrders = filteredOrders.filter((item) => item.status === "FECHADA");
+  const filteredQuotes = data.quotes.filter((item) => inRange(recordDate(item)) && matchesResponsible(item.responsible) && matchesCategory(item.items) && matchesStatus(item.status, "FECHADO"));
+  const closedQuotes = filteredQuotes.filter((item) => item.status === "FECHADO");
+  const filteredAppointments = data.appointments.filter((item) => inRange(item.startsAt) && matchesResponsible(item.professional));
+  const previousClosedOrders = data.orders.filter((item) => item.status === "FECHADA" && inRange(recordDate(item), previousRange) && matchesResponsible(item.responsible) && matchesCategory(item.items));
   const revenue = closedOrders.reduce((total, item) => total + item.total, 0);
+  const previousRevenue = previousClosedOrders.reduce((total, item) => total + item.total, 0);
+  const revenueChange = previousRevenue ? (revenue - previousRevenue) / previousRevenue * 100 : revenue ? 100 : 0;
   const averageTicket = closedOrders.length ? revenue / closedOrders.length : 0;
-  const periodQuotes = data.quotes.filter((item) => new Date(item.updatedAt) >= start);
-  const conversion = periodQuotes.length ? closedQuotes.length / periodQuotes.length * 100 : 0;
-  const lowStock = data.catalog.filter((item) => item.active && item.kind !== "SERVICO" && item.stock <= item.minimumStock).length;
-  const rows = Array.from({ length: period }, (_, index) => {
-    const date = new Date(now.getFullYear(), now.getMonth() - (period - 1 - index), 1);
-    const key = monthKey(date);
+  const conversion = filteredQuotes.length ? closedQuotes.length / filteredQuotes.length * 100 : 0;
+  const financialConversion = filteredQuotes.reduce((total, item) => total + item.total, 0)
+    ? closedQuotes.reduce((total, item) => total + item.total, 0) / filteredQuotes.reduce((total, item) => total + item.total, 0) * 100
+    : 0;
+  const openQuoteValue = filteredQuotes.filter((item) => item.status !== "FECHADO").reduce((total, item) => total + item.total, 0);
+  const discounts = filteredQuotes.reduce((total, item) => total + item.discountAmount + itemsSubtotal(item.items) * item.discountPercent / 100, 0);
+  const activeAppointments = filteredAppointments.filter((item) => !["CONCLUIDO", "CANCELADO"].includes(item.status));
+  const canceledAppointments = filteredAppointments.filter((item) => item.status === "CANCELADO");
+  const lowStock = data.catalog.filter((item) => item.active && item.kind !== "SERVICO" && item.stock <= item.minimumStock);
+  const responsibles = Array.from(new Set([...data.orders.map((item) => item.responsible), ...data.quotes.map((item) => item.responsible), ...data.appointments.map((item) => item.professional)].filter(Boolean))).sort();
+  const categories = Array.from(new Set([...data.orders.flatMap((item) => item.items.map((line) => line.category)), ...data.quotes.flatMap((item) => item.items.map((line) => line.category))].filter(Boolean))).sort((a, b) => a.localeCompare(b, "pt-BR"));
+
+  const days = Math.max(1, Math.ceil(periodMs / 86400000));
+  const bucketCount = days <= 45 ? Math.min(days, 31) : Math.min(12, Math.max(3, Math.ceil(days / 30)));
+  const rows = Array.from({ length: bucketCount }, (_, index) => {
+    const bucketStart = new Date(range.start.getTime() + periodMs / bucketCount * index);
+    const bucketEnd = index === bucketCount - 1 ? range.end : new Date(range.start.getTime() + periodMs / bucketCount * (index + 1) - 1);
+    const orders = closedOrders.filter((item) => {
+      const time = new Date(recordDate(item)).getTime();
+      return time >= bucketStart.getTime() && time <= bucketEnd.getTime();
+    });
     return {
-      label: date.toLocaleDateString("pt-BR", { month: "short", year: "2-digit" }),
-      value: closedOrders.filter((item) => monthKey(item.updatedAt) === key).reduce((total, item) => total + item.total, 0),
-      orders: closedOrders.filter((item) => monthKey(item.updatedAt) === key).length,
+      label: days <= 45 ? bucketStart.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }) : bucketStart.toLocaleDateString("pt-BR", { month: "short", year: "2-digit" }),
+      value: orders.reduce((total, item) => total + item.total, 0),
+      orders: orders.length,
     };
   });
   const max = Math.max(1, ...rows.map((row) => row.value));
+  const rangeLabel = `${range.start.toLocaleDateString("pt-BR")} a ${range.end.toLocaleDateString("pt-BR")}`;
+  const health = operationalHealth({ ...data, orders: filteredOrders, quotes: filteredQuotes, appointments: filteredAppointments });
+
   return <div className="bi-page">
-    <section className="bi-heading"><div><small>GERIVO BI</small><h2>Indicadores da operação</h2><p>Leitura consolidada dos registros salvos nesta unidade.</p></div><div className="bi-periods">{([3, 6, 12] as const).map((value) => <button key={value} className={period === value ? "active" : ""} onClick={() => setPeriod(value)}>{value} meses</button>)}</div></section>
-    <section className="metrics bi-metrics"><Metric label="Faturamento realizado" value={money(revenue)} detail={`${closedOrders.length} O.S. fechadas`} /><Metric label="Ticket médio" value={money(averageTicket)} detail="Média por O.S. fechada" /><Metric label="Conversão de propostas" value={`${conversion.toFixed(1)}%`} detail={`${closedQuotes.length} de ${periodQuotes.length} orçamentos`} /><Metric label="Saúde operacional" value={`${operationalHealth(data)}/100`} detail={lowStock ? `${lowStock} alerta(s) de estoque` : "Sem alertas críticos de estoque"} /></section>
-    <section className="bi-grid"><article className="panel bi-chart-card"><header><div><small>EVOLUÇÃO</small><h3>Faturamento mensal</h3></div></header><div className="bi-bars">{rows.map((row) => <div key={row.label}><span>{row.label}</span><i><em style={{ width: `${Math.max(2, row.value / max * 100)}%` }} /></i><b>{money(row.value)}</b><small>{row.orders} O.S.</small></div>)}</div></article><article className="panel bi-attention-card"><header><div><small>ATENÇÃO</small><h3>O que acompanhar</h3></div></header><ul><li><strong>{data.quotes.filter((item) => item.status !== "FECHADO").length}</strong> orçamentos ainda abertos</li><li><strong>{data.attendances.filter((item) => item.status !== "CONCLUIDO").length}</strong> atendimentos em andamento</li><li><strong>{data.appointments.filter((item) => !["CONCLUIDO", "CANCELADO"].includes(item.status)).length}</strong> agendamentos ativos</li><li><strong>{lowStock}</strong> itens no estoque mínimo ou abaixo</li></ul></article></section>
+    <section className="bi-heading bi-heading-v177"><div><small>GERIVO BI AVANÇADO</small><h2>Indicadores da operação</h2><p>Período analisado: {rangeLabel}</p></div></section>
+    <section className="panel bi-filter-panel"><header><div><small>FILTROS</small><h3>Personalize a análise</h3></div><button type="button" className="outline small" onClick={() => { setPeriodMode("MONTH"); setSelectedMonth(currentMonth); setResponsible("TODOS"); setDateBasis("UPDATED"); setStatusFilter("TODOS"); setCategoryFilter("TODAS"); setComparePrevious(true); }}>Limpar filtros</button></header><div className="bi-filter-grid">
+      <Field label="Período"><select value={periodMode} onChange={(event) => setPeriodMode(event.target.value as BiPeriodMode)}><option value="MONTH">Mês selecionado</option><option value="PREVIOUS_MONTH">Mês anterior</option><option value="THREE_MONTHS">Últimos 3 meses</option><option value="SIX_MONTHS">Últimos 6 meses</option><option value="YEAR">Ano atual</option><option value="CUSTOM">Período personalizado</option></select></Field>
+      {periodMode === "MONTH" && <Field label="Mês"><input type="month" value={selectedMonth} onChange={(event) => setSelectedMonth(event.target.value)} /></Field>}
+      {periodMode === "CUSTOM" && <><Field label="Data inicial"><input type="date" value={customStart} onChange={(event) => setCustomStart(event.target.value)} /></Field><Field label="Data final"><input type="date" value={customEnd} onChange={(event) => setCustomEnd(event.target.value)} /></Field></>}
+      <Field label="Data-base"><select value={dateBasis} onChange={(event) => setDateBasis(event.target.value as "UPDATED" | "CREATED")}><option value="UPDATED">Última atualização / fechamento</option><option value="CREATED">Data de criação</option></select></Field>
+      <Field label="Atendente / responsável"><select value={responsible} onChange={(event) => setResponsible(event.target.value)}><option value="TODOS">Todos</option>{responsibles.map((item) => <option key={item} value={item}>{item}</option>)}</select></Field>
+      <Field label="Situação"><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as "TODOS" | "ABERTOS" | "FECHADOS")}><option value="TODOS">Todas</option><option value="ABERTOS">Em aberto</option><option value="FECHADOS">Fechadas / aprovadas</option></select></Field>
+      <Field label="Categoria"><select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}><option value="TODAS">Todas</option>{categories.map((item) => <option value={item} key={item}>{item}</option>)}</select></Field>
+      <label className="bi-compare-toggle"><input type="checkbox" checked={comparePrevious} onChange={(event) => setComparePrevious(event.target.checked)} /><span><strong>Comparar período anterior</strong><small>Usa um intervalo de mesma duração.</small></span></label>
+    </div></section>
+    <section className="metrics bi-metrics bi-metrics-v177"><Metric label="Faturamento realizado" value={money(revenue)} detail={comparePrevious ? `${revenueChange >= 0 ? "+" : ""}${revenueChange.toFixed(1)}% versus período anterior` : `${closedOrders.length} O.S. fechadas`} /><Metric label="Ticket médio" value={money(averageTicket)} detail={`${closedOrders.length} O.S. fechadas`} /><Metric label="Conversão por quantidade" value={`${conversion.toFixed(1)}%`} detail={`${closedQuotes.length} de ${filteredQuotes.length} orçamentos`} /><Metric label="Conversão financeira" value={`${financialConversion.toFixed(1)}%`} detail="Valor aprovado sobre valor orçado" /><Metric label="Oportunidades abertas" value={money(openQuoteValue)} detail={`${filteredQuotes.filter((item) => item.status !== "FECHADO").length} propostas`} /><Metric label="Descontos concedidos" value={money(discounts)} detail="Valor e percentual aplicados" /><Metric label="Agenda ativa" value={String(activeAppointments.length)} detail={`${canceledAppointments.length} cancelamento(s)`} /><Metric label="Saúde operacional" value={`${health}/100`} detail={lowStock.length ? `${lowStock.length} alerta(s) de estoque` : "Sem alertas críticos"} /></section>
+    <section className="bi-grid bi-grid-v177"><article className="panel bi-chart-card"><header><div><small>EVOLUÇÃO</small><h3>Faturamento no período</h3></div></header><div className="bi-bars">{rows.map((row) => <div key={row.label}><span>{row.label}</span><i><em style={{ width: `${Math.max(2, row.value / max * 100)}%` }} /></i><b>{money(row.value)}</b><small>{row.orders} O.S.</small></div>)}</div></article><article className="panel bi-attention-card"><header><div><small>JORNADA E ATENÇÃO</small><h3>O que acompanhar</h3></div></header><ul><li><strong>{filteredQuotes.length}</strong> propostas criadas ou atualizadas</li><li><strong>{closedQuotes.length}</strong> propostas fechadas</li><li><strong>{data.attendances.filter((item) => inRange(dateBasis === "CREATED" ? item.createdAt : item.updatedAt) && item.status !== "CONCLUIDO").length}</strong> atendimentos em andamento</li><li><strong>{activeAppointments.length}</strong> compromissos ativos</li><li><strong>{lowStock.length}</strong> itens no estoque mínimo ou abaixo</li></ul></article></section>
   </div>;
 }
 
@@ -3980,6 +4504,75 @@ function buildCentralMessage(input: { situation: string; tone: QuoteMessageTempl
   return `${openers[input.tone]}\n\n${body}${details}\n\n${closing}`;
 }
 
+type TireMessageOption = {
+  id: string;
+  description: string;
+  unitPrice: number;
+  quantity: number;
+};
+
+function buildTireOpportunityMessage(input: {
+  customer: string;
+  consultant: string;
+  company: string;
+  vehicle: string;
+  plate: string;
+  payment: string;
+  mode: "ALTERNATIVES" | "CUMULATIVE";
+  options: TireMessageOption[];
+}) {
+  const customer = firstName(input.customer || "cliente");
+  const consultant = input.consultant.trim() || "consultor responsável";
+  const vehicle = [input.vehicle.trim(), input.plate.trim().toUpperCase()].filter(Boolean).join(" ");
+  const validOptions = input.options.filter((item) => item.description.trim() && item.unitPrice > 0 && item.quantity > 0);
+  const options = validOptions.length
+    ? validOptions.flatMap((item) => [
+        `• *${item.description.trim()}*`,
+        `Valor unitário: *${money(item.unitPrice)}*`,
+        `Valor do jogo com ${item.quantity} pneus: *${money(item.unitPrice * item.quantity)}*`,
+        "",
+      ])
+    : ["• Adicione ao menos uma opção de pneu com descrição e valor.", ""];
+  const grandTotal = validOptions.reduce((total, item) => total + item.unitPrice * item.quantity, 0);
+  const totalLines = input.mode === "CUMULATIVE" && validOptions.length
+    ? ["", `💰 *Total:* ${money(grandTotal)}`]
+    : [];
+  const paymentLines = input.payment.trim() ? [`💳 *Pagamento:* ${input.payment.trim()}`] : [];
+  const closing = input.mode === "ALTERNATIVES"
+    ? "Qual das opções atende melhor ao que você procura? Posso verificar a disponibilidade e reservar um horário para a troca. 🚗"
+    : "Posso reservar um horário para realizar a troca? 🚗";
+  return [
+    `Olá, *${customer}*! Tudo bem? 👋`,
+    "",
+    `Aqui é o *${consultant}*, consultor de Pós-Vendas da *${input.company}*.`,
+    "",
+    `Conforme solicitado, segue uma condição para pneus${vehicle ? ` do seu *${vehicle}*` : ""}.`,
+    "",
+    "🛞 *Pneus recomendados:*",
+    "",
+    ...options,
+    "🎁 *Cortesia:*",
+    `Na troca de 2 ou mais pneus, você conta com *montagem, balanceamento e geometria em cortesia*, conforme condição vigente da ${input.company}.`,
+    "",
+    `Ao realizar a troca na *${input.company}*, você conta com:`,
+    "",
+    "✅ Pneus de procedência garantida",
+    "✅ Equipe técnica especializada",
+    "✅ Equipamentos adequados para montagem",
+    "✅ Mais segurança, aderência e desempenho",
+    "✅ Atendimento de concessionária",
+    "",
+    "💡 Pneus em boas condições são fundamentais para segurança, especialmente em frenagens, curvas e pista molhada. A troca preventiva ajuda a manter aderência e desempenho adequados.",
+    ...totalLines,
+    ...paymentLines,
+    "",
+    closing,
+    "",
+    `*${consultant}*`,
+    `${input.company} | Pós-Vendas`,
+  ].join("\n");
+}
+
 function MessageCenterPage({ store }: { store: Store }) {
   const [situation, setSituation] = useState("ORCAMENTO");
   const [tone, setTone] = useState<QuoteMessageTemplate>("PROFISSIONAL");
@@ -3988,9 +4581,68 @@ function MessageCenterPage({ store }: { store: Store }) {
   const [value, setValue] = useState("");
   const [details, setDetails] = useState("");
   const [variation, setVariation] = useState(0);
-  const message = buildCentralMessage({ situation, tone, customer, vehicle, value, details, company: store.companyName, variation });
-  async function copy() { try { await navigator.clipboard.writeText(message); } catch { window.alert(message); } }
-  return <div className="messages-page"><section className="management-heading"><div><small>CENTRAL DE MENSAGENS</small><h2>Comunicação pronta para o cliente</h2><p>Escolha a situação, o tom e os dados que devem entrar no texto.</p></div></section><section className="message-center-grid"><article className="panel message-builder"><div className="message-form-grid"><Field label="Situação"><select value={situation} onChange={(event) => setSituation(event.target.value)}><option value="ORCAMENTO">Envio de orçamento</option><option value="APROVACAO">Aguardando aprovação</option><option value="LEMBRETE">Lembrete</option><option value="AGENDAMENTO">Confirmação de agendamento</option><option value="POS_VENDA">Pós-venda</option><option value="RETORNO">Aguardando retorno</option></select></Field><Field label="Tom"><select value={tone} onChange={(event) => setTone(event.target.value as QuoteMessageTemplate)}>{(["PROFISSIONAL", "DIRETA", "CONSULTIVA", "PREVENTIVA", "AMIGAVEL", "FORMAL", "COMERCIAL", "CURTA"] as QuoteMessageTemplate[]).map((item) => <option value={item} key={item}>{quoteMessageTemplateLabel(item)}</option>)}</select></Field><Field label="Cliente"><input value={customer} onChange={(event) => setCustomer(event.target.value)} /></Field><Field label="Veículo / referência"><input value={vehicle} onChange={(event) => setVehicle(event.target.value)} /></Field><Field label="Valor"><input value={value} onChange={(event) => setValue(event.target.value)} placeholder="R$ 0,00" /></Field><Field label="Informações adicionais"><textarea rows={4} value={details} onChange={(event) => setDetails(event.target.value)} /></Field></div></article><article className="panel message-preview"><header><div><small>PRÉVIA</small><h3>Mensagem gerada</h3></div></header><textarea rows={15} value={message} readOnly /><div><button className="outline" onClick={() => setVariation((current) => current + 1)}>Gerar outra variação</button><button className="primary" onClick={copy}>Copiar mensagem</button></div></article></section></div>;
+  const [consultant, setConsultant] = useState("");
+  const [plate, setPlate] = useState("");
+  const [payment, setPayment] = useState("");
+  const [tireMode, setTireMode] = useState<"ALTERNATIVES" | "CUMULATIVE">("ALTERNATIVES");
+  const [tireOptions, setTireOptions] = useState<TireMessageOption[]>([
+    { id: uid(), description: "", unitPrice: 0, quantity: 4 },
+    { id: uid(), description: "", unitPrice: 0, quantity: 4 },
+  ]);
+  const [copied, setCopied] = useState(false);
+
+  const isTireOpportunity = situation === "PNEUS";
+  const message = isTireOpportunity
+    ? buildTireOpportunityMessage({ customer, consultant, company: store.companyName, vehicle, plate, payment, mode: tireMode, options: tireOptions })
+    : buildCentralMessage({ situation, tone, customer, vehicle, value, details, company: store.companyName, variation });
+
+  useEffect(() => {
+    if (!copied) return;
+    const timer = window.setTimeout(() => setCopied(false), 3000);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
+
+  function updateTireOption(id: string, patch: Partial<TireMessageOption>) {
+    setTireOptions((current) => current.map((item) => item.id === id ? { ...item, ...patch } : item));
+  }
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(message);
+      setCopied(true);
+    } catch {
+      window.alert(message);
+    }
+  }
+
+  return <div className="messages-page messages-page-v177">
+    <section className="management-heading"><div><small>CENTRAL DE MENSAGENS</small><h2>Comunicação pronta para o cliente</h2><p>Escolha a situação, o tom e os dados que devem entrar no texto.</p></div></section>
+    <section className="message-center-grid">
+      <article className="panel message-builder">
+        <div className="message-form-grid">
+          <Field label="Situação"><select value={situation} onChange={(event) => setSituation(event.target.value)}><option value="ORCAMENTO">Envio de orçamento</option><option value="PNEUS">Oportunidade de pneus</option><option value="APROVACAO">Aguardando aprovação</option><option value="LEMBRETE">Lembrete</option><option value="AGENDAMENTO">Confirmação de agendamento</option><option value="POS_VENDA">Pós-venda</option><option value="RETORNO">Aguardando retorno</option></select></Field>
+          {!isTireOpportunity && <Field label="Tom"><select value={tone} onChange={(event) => setTone(event.target.value as QuoteMessageTemplate)}>{(["PROFISSIONAL", "DIRETA", "CONSULTIVA", "PREVENTIVA", "AMIGAVEL", "FORMAL", "COMERCIAL", "CURTA"] as QuoteMessageTemplate[]).map((item) => <option value={item} key={item}>{quoteMessageTemplateLabel(item)}</option>)}</select></Field>}
+          <Field label="Cliente"><input value={customer} onChange={(event) => setCustomer(event.target.value)} /></Field>
+          {isTireOpportunity ? <>
+            <Field label="Consultor"><input value={consultant} onChange={(event) => setConsultant(event.target.value)} placeholder="Nome do consultor" /></Field>
+            <Field label="Veículo"><input value={vehicle} onChange={(event) => setVehicle(event.target.value)} placeholder="Nissan Frontier" /></Field>
+            <Field label="Placa"><input value={plate} onChange={(event) => setPlate(event.target.value.toUpperCase())} placeholder="ABC1D23" /></Field>
+            <Field label="Pagamento"><input value={payment} onChange={(event) => setPayment(event.target.value)} placeholder="10x sem juros" /></Field>
+            <Field label="Como tratar as opções"><select value={tireMode} onChange={(event) => setTireMode(event.target.value as "ALTERNATIVES" | "CUMULATIVE")}><option value="ALTERNATIVES">Alternativas — não somar</option><option value="CUMULATIVE">Itens cumulativos — somar total</option></select></Field>
+            <div className="tire-options-editor">
+              <header><div><small>OPÇÕES DE PNEUS</small><strong>{tireMode === "ALTERNATIVES" ? "O cliente escolherá uma opção" : "Todos os itens entram no total"}</strong></div><button type="button" className="outline small" onClick={() => setTireOptions((current) => [...current, { id: uid(), description: "", unitPrice: 0, quantity: 4 }])}>+ Adicionar opção</button></header>
+              {tireOptions.map((item, index) => <section key={item.id}><b>{index + 1}</b><input value={item.description} onChange={(event) => updateTireOption(item.id, { description: event.target.value })} placeholder="255/65 R17 110H SCORPION ATR" /><input type="number" min="0" step="0.01" value={item.unitPrice || ""} onChange={(event) => updateTireOption(item.id, { unitPrice: Math.max(0, Number(event.target.value) || 0) })} placeholder="Valor unitário" /><input type="number" min="1" max="20" value={item.quantity} onChange={(event) => updateTireOption(item.id, { quantity: Math.max(1, Number(event.target.value) || 1) })} title="Quantidade" /><button type="button" className="danger small" disabled={tireOptions.length <= 1} onClick={() => setTireOptions((current) => current.filter((option) => option.id !== item.id))}>×</button></section>)}
+            </div>
+          </> : <>
+            <Field label="Veículo / referência"><input value={vehicle} onChange={(event) => setVehicle(event.target.value)} /></Field>
+            <Field label="Valor"><input value={value} onChange={(event) => setValue(event.target.value)} placeholder="R$ 0,00" /></Field>
+            <Field label="Informações adicionais"><textarea rows={4} value={details} onChange={(event) => setDetails(event.target.value)} /></Field>
+          </>}
+        </div>
+      </article>
+      <article className="panel message-preview"><header><div><small>PRÉVIA</small><h3>Mensagem gerada</h3></div></header><textarea rows={22} value={message} readOnly /><div>{!isTireOpportunity && <button className="outline" onClick={() => setVariation((current) => current + 1)}>Gerar outra variação</button>}<button className="primary" onClick={copy}>{copied ? "Copiada ✓" : "Copiar mensagem"}</button></div></article>
+    </section>
+  </div>;
 }
 
 function parseKnowledgeFile(name: string, text: string): KnowledgeEntry[] {
@@ -4006,7 +4658,11 @@ function parseKnowledgeFile(name: string, text: string): KnowledgeEntry[] {
   return chunks.map((part, index) => {
     const lines = part.split(/\r?\n/);
     const title = lines[0].replace(/^#{1,3}\s*/, "").slice(0, 100) || `Procedimento ${index + 1}`;
-    return { id: uid(), title, content: lines.slice(1).join("\n").trim() || part, tags: [], source: name, createdAt: now, updatedAt: now };
+    const rawContent = lines.slice(1).join("\n").trim() || part;
+    const tagLine = rawContent.match(/(?:Palavras-chave|Tags)\s*:\s*([^\n]+)/i)?.[1] || "";
+    const tags = tagLine.split(/[,;·]/).map((item) => item.trim()).filter(Boolean);
+    const content = rawContent.replace(/^(?:Palavras-chave|Tags)\s*:\s*[^\n]+$/gim, "").trim();
+    return { id: uid(), title, content, tags, source: name, createdAt: now, updatedAt: now };
   });
 }
 
@@ -4021,56 +4677,368 @@ function KnowledgeBasePage({ entries, onChange }: { entries: KnowledgeEntry[]; o
   return <div className="knowledge-page"><section className="management-heading"><div><small>CONHECIMENTO DA IA</small><h2>Procedimentos e padrões da empresa</h2><p>O Assistente Gerivo utiliza estas informações junto aos dados operacionais.</p></div><label className="primary knowledge-import">Importar TXT, CSV ou Markdown<input type="file" accept=".txt,.csv,.md,text/plain,text/csv,text/markdown" onChange={importFile} /></label></section><section className="knowledge-grid"><article className="panel knowledge-form"><header><div><small>NOVO CONHECIMENTO</small><h3>Cadastrar procedimento</h3></div></header><div><Field label="Título"><input value={title} onChange={(event) => setTitle(event.target.value)} /></Field><Field label="Conteúdo"><textarea rows={9} value={content} onChange={(event) => setContent(event.target.value)} /></Field><Field label="Tags separadas por vírgula"><input value={tags} onChange={(event) => setTags(event.target.value)} /></Field><button className="primary" onClick={add}>Salvar conhecimento</button></div></article><article className="panel knowledge-list"><header><div><small>BASE LOCAL</small><h3>{entries.length} registro(s)</h3></div><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar procedimento" /></header><div>{filtered.length ? filtered.map((entry) => <article key={entry.id}><div><strong>{entry.title}</strong><small>{entry.source} · {formatDate(entry.updatedAt)}</small><p>{entry.content}</p>{entry.tags.length > 0 && <span>{entry.tags.join(" · ")}</span>}</div><button className="danger small" onClick={() => onChange(entries.filter((item) => item.id !== entry.id))}>Excluir</button></article>) : <div className="empty-inline">Nenhum procedimento encontrado.</div>}</div></article></section></div>;
 }
 
-function localAssistantAnswer(question: string, data: StoreData) {
-  const normalized = question.toLowerCase();
-  const knowledge = data.knowledgeBase.find((entry) => `${entry.title} ${entry.content} ${entry.tags.join(" ")}`.toLowerCase().split(/\s+/).some((term) => term.length > 4 && normalized.includes(term)));
-  if (knowledge) return { text: `${knowledge.title}: ${knowledge.content}`, source: "Conhecimento da empresa" };
-  if (normalized.includes("faturamento") || normalized.includes("vendeu mais")) {
-    const now = new Date();
-    const rows = Array.from({ length: 12 }, (_, index) => { const date = new Date(now.getFullYear(), now.getMonth() - (11 - index), 1); const value = data.orders.filter((item) => item.status === "FECHADA" && monthKey(item.updatedAt) === monthKey(date)).reduce((total, item) => total + item.total, 0); return { label: date.toLocaleDateString("pt-BR", { month: "short", year: "2-digit" }), value }; });
-    const total = rows.reduce((sum, row) => sum + row.value, 0); const best = rows.reduce((current, row) => row.value > current.value ? row : current, rows[0]);
-    return { text: total ? `Nos últimos 12 meses, o faturamento registrado foi ${money(total)}. O melhor mês foi ${best.label}, com ${money(best.value)}.` : "Ainda não existem O.S. fechadas suficientes para calcular o faturamento.", rows, source: "Motor local" };
-  }
-  if (normalized.includes("ticket") || normalized.includes("convers")) { const closed = data.orders.filter((item) => item.status === "FECHADA"); const revenue = closed.reduce((total, item) => total + item.total, 0); const conversion = data.quotes.length ? data.quotes.filter((item) => item.status === "FECHADO").length / data.quotes.length * 100 : 0; return { text: `O ticket médio das O.S. fechadas é ${money(closed.length ? revenue / closed.length : 0)}. A conversão dos orçamentos registrados está em ${conversion.toFixed(1)}%.`, source: "Motor local" }; }
-  if (normalized.includes("estoque") || normalized.includes("comprar")) { const low = data.catalog.filter((item) => item.kind !== "SERVICO" && item.active && item.stock <= item.minimumStock); return { text: low.length ? `${low.length} itens exigem reposição: ${low.slice(0, 8).map((item) => item.name).join(", ")}.` : "O estoque não possui itens abaixo do mínimo.", source: "Motor local" }; }
-  if (normalized.includes("orçamento")) { const open = data.quotes.filter((item) => item.status !== "FECHADO"); return { text: `Existem ${open.length} orçamentos abertos, somando ${money(open.reduce((total, item) => total + item.total, 0))}.`, source: "Motor local" }; }
-  if (normalized.includes("agenda") || normalized.includes("agend")) return { text: `Há ${data.appointments.filter((item) => !["CANCELADO", "CONCLUIDO"].includes(item.status)).length} agendamentos ativos nesta loja.`, source: "Motor local" };
-  return { text: "Posso analisar faturamento, ticket médio, conversão, orçamentos, estoque, agenda e os procedimentos cadastrados em Conhecimento da IA.", source: "Motor local" };
+type AssistantResult = {
+  title: string;
+  text: string;
+  insights?: string[];
+  recommendations?: string[];
+  rows?: Array<{ label: string; value: number }>;
+  sources?: string[];
+  actions?: string[];
+  source?: string;
+};
+
+function normalizeAssistantText(value: string) {
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
 }
 
-function AssistantPage({ store, data }: { store: Store; data: StoreData }) {
+const ASSISTANT_STOP_WORDS = new Set(["para", "como", "qual", "quais", "uma", "uns", "das", "dos", "com", "sem", "sobre", "isso", "essa", "esse", "pela", "pelo", "mais", "menos", "aqui", "nossa", "nosso", "empresa", "gerivo"]);
+const ASSISTANT_SYNONYMS: Record<string, string[]> = {
+  pneu: ["pneus", "pneumatico", "pneumaticos", "rodagem"],
+  orcamento: ["orcamentos", "proposta", "propostas", "cotacao", "cotacoes"],
+  veiculo: ["veiculos", "carro", "carros", "automovel"],
+  cliente: ["clientes", "proprietario", "consumidor"],
+  retorno: ["followup", "acompanhamento", "contato"],
+  geometria: ["alinhamento"],
+  faturamento: ["receita", "vendas", "vendeu"],
+  estoque: ["reposicao", "comprar", "saldo"],
+  agenda: ["agendamento", "agendamentos", "horario", "horarios"],
+};
+
+function assistantTokens(value: string) {
+  const normalized = normalizeAssistantText(value);
+  const raw = normalized.split(" ").filter((term) => term.length > 2 && !ASSISTANT_STOP_WORDS.has(term));
+  const expanded = new Set(raw);
+  raw.forEach((term) => {
+    Object.entries(ASSISTANT_SYNONYMS).forEach(([canonical, variants]) => {
+      if (term === canonical || variants.includes(term)) {
+        expanded.add(canonical);
+        variants.forEach((variant) => expanded.add(variant));
+      }
+    });
+  });
+  return Array.from(expanded);
+}
+
+function knowledgeAnswerText(entry: KnowledgeEntry) {
+  const response = entry.content.match(/(?:Resposta-base|Resposta base)\s*:\s*([^\n]+)/i)?.[1]?.trim();
+  if (response) return response;
+  const rule = entry.content.match(/(?:Regra oficial|Procedimento)\s*:\s*([^\n]+)/i)?.[1]?.trim();
+  if (rule) return rule;
+  return entry.content
+    .replace(/^(Consulta associada|Regra oficial|Resposta-base|Resposta base|Palavras-chave)\s*:\s*/gim, "")
+    .split(/\n{2,}/)[0]
+    .trim()
+    .slice(0, 900);
+}
+
+function rankedKnowledge(question: string, entries: KnowledgeEntry[]) {
+  const tokens = assistantTokens(question);
+  return entries.map((entry) => {
+    const title = normalizeAssistantText(entry.title);
+    const tags = normalizeAssistantText(entry.tags.join(" "));
+    const content = normalizeAssistantText(entry.content);
+    let score = 0;
+    tokens.forEach((token) => {
+      if (title === token || title.includes(token)) score += 10;
+      if (tags.includes(token)) score += 6;
+      if (content.includes(token)) score += 2;
+    });
+    const normalizedQuestion = normalizeAssistantText(question);
+    if (title && normalizedQuestion.includes(title)) score += 12;
+    return { entry, score };
+  }).filter((item) => item.score > 0).sort((a, b) => b.score - a.score);
+}
+
+function localAssistantAnswer(question: string, data: StoreData): AssistantResult {
+  const normalized = normalizeAssistantText(question);
+  const closedOrders = data.orders.filter((item) => item.status === "FECHADA");
+  const openQuotes = data.quotes.filter((item) => item.status !== "FECHADO");
+  const closedQuotes = data.quotes.filter((item) => item.status === "FECHADO");
+  const lowStock = data.catalog.filter((item) => item.kind !== "SERVICO" && item.active && item.stock <= item.minimumStock);
+  const activeAppointments = data.appointments.filter((item) => !["CANCELADO", "CONCLUIDO"].includes(item.status));
+
+  if (!normalized || normalized.length < 3) {
+    return { title: "Como posso ajudar?", text: "Informe o indicador, procedimento ou oportunidade que deseja analisar.", actions: ["Faturamento do mês", "Oportunidades sem retorno", "Estoque crítico", "Agenda de hoje"], source: "Motor local v2" };
+  }
+
+  if (normalized === "pneu" || normalized === "pneus" || (normalized.includes("pneu") && normalized.split(" ").length <= 3)) {
+    const tireQuotes = data.quotes.filter((quote) => quote.items.some((item) => normalizeAssistantText(`${item.name} ${item.category}`).includes("pneu")));
+    const tireOpen = tireQuotes.filter((quote) => quote.status !== "FECHADO");
+    const tireStock = data.catalog.filter((item) => item.kind !== "SERVICO" && normalizeAssistantText(`${item.name} ${item.category}`).includes("pneu"));
+    return {
+      title: "Pneus — escolha o que deseja analisar",
+      text: `Encontrei ${tireQuotes.length} proposta(s) relacionadas a pneus, sendo ${tireOpen.length} ainda aberta(s), e ${tireStock.length} item(ns) no catálogo ou estoque.`,
+      insights: [
+        tireOpen.length ? `${tireOpen.length} oportunidade(s) aguardam acompanhamento ou aprovação.` : "Não há oportunidades abertas identificadas.",
+        tireStock.filter((item) => item.stock <= item.minimumStock).length ? "Existem pneus no estoque mínimo ou abaixo." : "Não há alerta crítico de estoque para pneus.",
+      ],
+      recommendations: ["Escolha uma consulta abaixo para aprofundar a análise."],
+      actions: ["Cortesias de pneus", "Criar mensagem de oportunidade", "Ver propostas de pneus", "Analisar vendas de pneus", "Consultar estoque de pneus"],
+      sources: ["Orçamentos", "Catálogo e estoque", "Conhecimento da empresa"],
+      source: "Motor local v2",
+    };
+  }
+
+  if (normalized.includes("atencao") || normalized.includes("saude") || normalized.includes("operacao")) {
+    const health = operationalHealth(data);
+    const staleQuotes = openQuotes.filter((item) => Date.now() - new Date(item.updatedAt).getTime() > 5 * 86400000);
+    return {
+      title: `Saúde operacional ${health}/100`,
+      text: "A pontuação considera atendimentos incompletos, estoque crítico, conversão de propostas e O.S. concluídas.",
+      insights: [
+        `${openQuotes.length} orçamento(s) aberto(s), somando ${money(openQuotes.reduce((sum, item) => sum + item.total, 0))}.`,
+        `${staleQuotes.length} proposta(s) estão sem atualização há mais de cinco dias.`,
+        `${lowStock.length} item(ns) estão no estoque mínimo ou abaixo.`,
+        `${activeAppointments.length} compromisso(s) permanecem ativos na agenda.`,
+      ],
+      recommendations: [
+        staleQuotes.length ? "Priorize o retorno das propostas mais antigas e de maior valor." : "Mantenha a rotina de acompanhamento das propostas.",
+        lowStock.length ? "Revise as necessidades de compra antes de novos agendamentos." : "O estoque não exige ação crítica imediata.",
+      ],
+      actions: ["Ver propostas sem retorno", "Consultar estoque crítico", "Comparar conversão", "Agenda de hoje"],
+      sources: ["Orçamentos", "Ordens de serviço", "Estoque", "Agenda"],
+      source: "Motor local v2",
+    };
+  }
+
+  if (normalized.includes("faturamento") || normalized.includes("receita") || normalized.includes("vendeu mais")) {
+    const now = new Date();
+    const rows = Array.from({ length: 12 }, (_, index) => {
+      const date = new Date(now.getFullYear(), now.getMonth() - (11 - index), 1);
+      const value = closedOrders.filter((item) => monthKey(item.updatedAt) === monthKey(date)).reduce((total, item) => total + item.total, 0);
+      return { label: date.toLocaleDateString("pt-BR", { month: "short", year: "2-digit" }), value };
+    });
+    const total = rows.reduce((sum, row) => sum + row.value, 0);
+    const best = rows.reduce((current, row) => row.value > current.value ? row : current, rows[0]);
+    return {
+      title: "Faturamento dos últimos 12 meses",
+      text: total ? `O faturamento registrado foi ${money(total)}. O melhor mês foi ${best.label}, com ${money(best.value)}.` : "Ainda não existem O.S. fechadas suficientes para calcular o faturamento.",
+      insights: [`${closedOrders.length} O.S. fechadas foram consideradas.`],
+      recommendations: total ? ["Use o Gerivo BI para selecionar um mês ou período personalizado e comparar os resultados."] : ["Feche as O.S. concluídas para alimentar o indicador."],
+      rows,
+      sources: ["Ordens de serviço fechadas"],
+      source: "Motor local v2",
+    };
+  }
+
+  if (normalized.includes("ticket") || normalized.includes("convers")) {
+    const revenue = closedOrders.reduce((total, item) => total + item.total, 0);
+    const conversion = data.quotes.length ? closedQuotes.length / data.quotes.length * 100 : 0;
+    const financialBase = data.quotes.reduce((total, item) => total + item.total, 0);
+    const financialConversion = financialBase ? closedQuotes.reduce((total, item) => total + item.total, 0) / financialBase * 100 : 0;
+    return {
+      title: "Ticket médio e conversão",
+      text: `O ticket médio das O.S. fechadas é ${money(closedOrders.length ? revenue / closedOrders.length : 0)}. A conversão por quantidade está em ${conversion.toFixed(1)}% e a conversão financeira em ${financialConversion.toFixed(1)}%.`,
+      insights: [`${closedQuotes.length} de ${data.quotes.length} orçamento(s) estão fechados.`],
+      recommendations: conversion < 30 && data.quotes.length ? ["Revise propostas sem retorno e motivos de perda."] : ["Acompanhe a conversão por atendente e por período no BI."],
+      sources: ["Ordens de serviço", "Orçamentos"],
+      source: "Motor local v2",
+    };
+  }
+
+  if (normalized.includes("estoque") || normalized.includes("comprar") || normalized.includes("reposicao")) {
+    return {
+      title: "Estoque crítico",
+      text: lowStock.length ? `${lowStock.length} item(ns) exigem reposição: ${lowStock.slice(0, 8).map((item) => `${item.name} (saldo ${item.stock})`).join(", ")}.` : "O estoque não possui itens abaixo do mínimo.",
+      insights: lowStock.slice(0, 5).map((item) => `${item.name}: saldo ${item.stock}, mínimo ${item.minimumStock}.`),
+      recommendations: lowStock.length ? ["Confirme demanda, fornecedor e prazo de entrega antes de registrar a compra."] : ["Mantenha os estoques mínimos atualizados."],
+      actions: ["Abrir estoque", "Ver fornecedores", "Analisar itens de baixa saída"],
+      sources: ["Catálogo e estoque"],
+      source: "Motor local v2",
+    };
+  }
+
+  if (normalized.includes("orcamento") || normalized.includes("proposta") || normalized.includes("retorno") || normalized.includes("oportunidade")) {
+    const stale = openQuotes.filter((item) => Date.now() - new Date(item.updatedAt).getTime() > 5 * 86400000);
+    return {
+      title: "Oportunidades em aberto",
+      text: `Existem ${openQuotes.length} orçamento(s) aberto(s), somando ${money(openQuotes.reduce((total, item) => total + item.total, 0))}.`,
+      insights: [`${stale.length} proposta(s) estão sem atualização há mais de cinco dias.`, `${openQuotes.filter((item) => item.status === "AGUARDANDO_RETORNO_CLIENTE").length} aguardam retorno do cliente.`],
+      recommendations: openQuotes.length ? ["Priorize propostas de maior valor, maior tempo sem contato e itens ligados à segurança."] : ["Não há oportunidades abertas para acompanhamento."],
+      actions: ["Gerar mensagem de retorno", "Abrir orçamentos", "Ver conversão"],
+      sources: ["Orçamentos"],
+      source: "Motor local v2",
+    };
+  }
+
+  if (normalized.includes("agenda") || normalized.includes("agend") || normalized.includes("horario")) {
+    return {
+      title: "Agenda da unidade",
+      text: `Há ${activeAppointments.length} compromisso(s) ativo(s).`,
+      insights: activeAppointments.slice(0, 5).map((item) => `${new Date(item.startsAt).toLocaleString("pt-BR")}: ${item.customer} — ${item.title}.`),
+      recommendations: ["Confirme os próximos horários e acompanhe cancelamentos e ausências."],
+      actions: ["Abrir agenda", "Confirmar atendimentos"],
+      sources: ["Agenda"],
+      source: "Motor local v2",
+    };
+  }
+
+  const ranked = rankedKnowledge(question, data.knowledgeBase).slice(0, 3);
+  if (ranked.length) {
+    const primary = ranked[0].entry;
+    return {
+      title: primary.title,
+      text: knowledgeAnswerText(primary),
+      insights: ranked.slice(1).map((item) => `${item.entry.title}: ${knowledgeAnswerText(item.entry)}`),
+      recommendations: ["Confirme dados variáveis como preço, prazo, desconto, estoque e condição de pagamento antes de comunicar ao cliente."],
+      sources: ranked.map((item) => item.entry.title),
+      source: "Conhecimento da empresa",
+    };
+  }
+
+  return {
+    title: "Consulta não identificada",
+    text: "Não encontrei dados ou um procedimento confirmado para responder com segurança. Reformule a pergunta ou cadastre o assunto em Conhecimento da IA.",
+    recommendations: ["Não complete informações ausentes por suposição. Encaminhe o ponto ao responsável da empresa."],
+    actions: ["Cadastrar conhecimento", "Faturamento do mês", "Oportunidades sem retorno", "Estoque crítico"],
+    source: "Motor local v2",
+  };
+}
+
+function AssistantPage({ store, data, sessionAccessToken }: { store: Store; data: StoreData; sessionAccessToken: string }) {
   const [question, setQuestion] = useState("Quais pontos da operação precisam de atenção?");
-  const [answer, setAnswer] = useState<{ text: string; rows?: Array<{ label: string; value: number }>; source?: string } | null>(null);
+  const [history, setHistory] = useState<Array<{ id: string; question: string; answer: AssistantResult }>>([]);
   const [loading, setLoading] = useState(false);
-  const [engine, setEngine] = useState("Motor local");
+  const [engine, setEngine] = useState("Motor local v2");
   const health = operationalHealth(data);
-  const alerts = [data.quotes.filter((item) => item.status !== "FECHADO").length ? `${data.quotes.filter((item) => item.status !== "FECHADO").length} orçamentos em aberto` : "Orçamentos sob controle", data.catalog.filter((item) => item.kind !== "SERVICO" && item.active && item.stock <= item.minimumStock).length ? "Estoque com necessidade de reposição" : "Estoque sem alertas críticos", data.appointments.filter((item) => !["CANCELADO", "CONCLUIDO"].includes(item.status)).length ? "Agenda possui compromissos ativos" : "Agenda sem pendências" ];
+  const healthParts = [
+    { label: "Orçamentos", value: Math.max(0, 25 - Math.min(25, data.quotes.filter((item) => item.status !== "FECHADO").length * 2)) },
+    { label: "Estoque", value: Math.max(0, 25 - Math.min(25, data.catalog.filter((item) => item.kind !== "SERVICO" && item.active && item.stock <= item.minimumStock).length * 4)) },
+    { label: "Atendimentos", value: Math.max(0, 25 - Math.min(25, data.attendances.filter((item) => item.status !== "CONCLUIDO").length * 2)) },
+    { label: "Execução", value: data.orders.some((item) => item.status === "FECHADA") ? 25 : 15 },
+  ];
+
   async function analyze(customQuestion?: string) {
-    const currentQuestion = customQuestion || question;
+    const currentQuestion = (customQuestion || question).trim();
+    if (!currentQuestion || loading) return;
     if (customQuestion) setQuestion(customQuestion);
     setLoading(true);
     const local = localAssistantAnswer(currentQuestion, data);
+    let finalAnswer = local;
+    let finalEngine = "Motor local v2";
     try {
-      const response = await fetch("/api/ai", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question: currentQuestion, company: store.companyName, summary: { health, openQuotes: data.quotes.filter((item) => item.status !== "FECHADO").length, closedOrders: data.orders.filter((item) => item.status === "FECHADA").length, lowStock: data.catalog.filter((item) => item.kind !== "SERVICO" && item.active && item.stock <= item.minimumStock).map((item) => item.name), appointments: data.appointments.filter((item) => !["CANCELADO", "CONCLUIDO"].includes(item.status)).length }, knowledge: data.knowledgeBase.slice(0, 20).map((entry) => ({ title: entry.title, content: entry.content })) }) });
+      const response = await fetch("/api/ai", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${sessionAccessToken}` }, body: JSON.stringify({ question: currentQuestion, companyId: store.companyId, storeId: store.id, summary: { health, openQuotes: data.quotes.filter((item) => item.status !== "FECHADO").length, closedOrders: data.orders.filter((item) => item.status === "FECHADA").length, lowStock: data.catalog.filter((item) => item.kind !== "SERVICO" && item.active && item.stock <= item.minimumStock).map((item) => item.name), appointments: data.appointments.filter((item) => !["CANCELADO", "CONCLUIDO"].includes(item.status)).length, localAnalysis: local }, knowledge: rankedKnowledge(currentQuestion, data.knowledgeBase).slice(0, 5).map((item) => ({ title: item.entry.title, content: item.entry.content })) }) });
       const payload = await response.json().catch(() => ({}));
-      if (response.ok && payload.answer) { setAnswer({ text: payload.answer, source: "IA conectada" }); setEngine("IA conectada"); }
-      else { setAnswer(local); setEngine("Motor local"); }
-    } catch { setAnswer(local); setEngine("Motor local"); }
-    finally { setLoading(false); }
+      if (response.ok && payload.answer) {
+        finalAnswer = { ...local, title: local.title, text: String(payload.answer), source: "IA conectada", sources: local.sources };
+        finalEngine = "IA conectada";
+      }
+    } catch { /* O motor local continua disponível. */ }
+    setEngine(finalEngine);
+    setHistory((current) => [...current, { id: uid(), question: currentQuestion, answer: finalAnswer }]);
+    setLoading(false);
   }
-  const max = Math.max(1, ...(answer?.rows?.map((row) => row.value) || [1]));
-  return <div className="assistant-page"><section className="assistant-hero assistant-hero-v176"><span><PremiumIcon name="sparkle" size={28} /></span><div><small>ASSISTENTE GERIVO</small><h2>Saúde operacional {health}/100</h2><p>{store.companyName}</p></div><b className={engine === "IA conectada" ? "engine online" : "engine"}>{engine}</b></section><section className="assistant-overview">{alerts.map((alert, index) => <article key={alert}><span>{index + 1}</span><p>{alert}</p></article>)}</section><section className="panel assistant-chat"><div className="assistant-quick-questions">{["Calcule o faturamento dos últimos 12 meses.", "Compare ticket médio e conversão.", "Quais orçamentos precisam de atenção?", "O que devo comprar para o estoque?"].map((item) => <button key={item} onClick={() => void analyze(item)}>{item}</button>)}</div><textarea value={question} onChange={(event) => setQuestion(event.target.value)} /><button className="primary" disabled={loading} onClick={() => void analyze()}>{loading ? "Analisando..." : "Analisar dados"}</button>{answer && <div className="assistant-answer"><strong>{answer.source || "Análise Gerivo"}</strong><p>{answer.text}</p>{answer.rows && <div className="assistant-chart">{answer.rows.map((row) => <div key={row.label}><span>{row.label}</span><i><em style={{ width: `${Math.max(2, row.value / max * 100)}%` }} /></i><b>{money(row.value)}</b></div>)}</div>}<small>A análise respeita a empresa, a loja e os dados disponíveis.</small></div>}</section></div>;
+
+  const latest = history[history.length - 1];
+  const max = Math.max(1, ...(latest?.answer.rows?.map((row) => row.value) || [1]));
+  const quickQuestions = ["Faturamento dos últimos 12 meses", "Oportunidades sem retorno", "Estoque crítico", "Como estão nossas oportunidades de pneus?", "Agenda da unidade", "Ticket médio e conversão"];
+  return <div className="assistant-page assistant-page-v177">
+    <section className="assistant-hero assistant-hero-v177"><span><PremiumIcon name="sparkle" size={28} /></span><div><small>ASSISTENTE GERIVO LOCAL V2</small><h2>Saúde operacional {health}/100</h2><p>{store.companyName} · respostas baseadas nos dados e procedimentos disponíveis</p></div><b className={engine === "IA conectada" ? "engine online" : "engine"}>{engine}</b></section>
+    <section className="assistant-health-breakdown">{healthParts.map((item) => <article key={item.label}><span>{item.label}</span><strong>{item.value}/25</strong><i><em style={{ width: `${item.value / 25 * 100}%` }} /></i></article>)}</section>
+    <section className="panel assistant-chat assistant-chat-v177"><div className="assistant-quick-questions">{quickQuestions.map((item) => <button key={item} onClick={() => void analyze(item)}>{item}</button>)}</div>
+      <div className="assistant-history">{history.length ? history.map((entry) => <article key={entry.id} className="assistant-conversation"><div className="assistant-user-message"><strong>Você</strong><p>{entry.question}</p></div><div className="assistant-answer assistant-answer-v177"><header><div><small>{entry.answer.source || "Análise Gerivo"}</small><h3>{entry.answer.title}</h3></div></header><p>{entry.answer.text}</p>{entry.answer.insights?.length ? <section><strong>Dados e pontos encontrados</strong><ul>{entry.answer.insights.map((item) => <li key={item}>{item}</li>)}</ul></section> : null}{entry.answer.recommendations?.length ? <section className="assistant-recommendations"><strong>Recomendação</strong><ul>{entry.answer.recommendations.map((item) => <li key={item}>{item}</li>)}</ul></section> : null}{entry.answer.rows && <div className="assistant-chart">{entry.answer.rows.map((row) => <div key={row.label}><span>{row.label}</span><i><em style={{ width: `${Math.max(2, row.value / max * 100)}%` }} /></i><b>{money(row.value)}</b></div>)}</div>}{entry.answer.actions?.length ? <div className="assistant-answer-actions">{entry.answer.actions.map((action) => <button type="button" key={action} onClick={() => { setQuestion(action); void analyze(action); }}>{action}</button>)}</div> : null}{entry.answer.sources?.length ? <footer>Fontes: {entry.answer.sources.join(" · ")}</footer> : null}</div></article>) : <div className="assistant-empty-state"><PremiumIcon name="sparkle" size={28} /><strong>Pergunte sobre indicadores, oportunidades ou procedimentos</strong><p>O motor local consulta os dados da unidade, classifica a intenção e usa os conhecimentos mais relevantes.</p></div>}</div>
+      <div className="assistant-composer"><textarea value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="Ex.: Quais propostas de pneus estão sem retorno?" /><button className="primary" disabled={loading || !question.trim()} onClick={() => void analyze()}>{loading ? "Analisando..." : "Perguntar ao Gerivo"}</button></div>
+    </section>
+  </div>;
 }
 
-type MasterCompanyInput = { groupMode: "NEW" | "EXISTING"; groupId: string; groupName: string; companyName: string; document: string; storeName: string; segment: string };
+type MasterCompanyInput = {
+  groupMode: "NEW" | "EXISTING";
+  groupId: string;
+  groupName: string;
+  companyName: string;
+  document: string;
+  storeName: string;
+  segment: string;
+};
 
-function MasterCommercialPage({ stores, currentStore, onCreateCompany }: { stores: Store[]; currentStore: Store; onCreateCompany: (input: MasterCompanyInput) => Promise<void> }) {
+type CompanyContractDraft = {
+  planMode: "STANDARD" | "CUSTOM";
+  planId: string;
+  customPlanName: string;
+  billingCycle: "MONTHLY" | "QUARTERLY" | "SEMIANNUAL" | "ANNUAL" | "CUSTOM";
+  contractStart: string;
+  contractEnd: string;
+  contractedValue: number;
+  billingDueDay: number;
+  autoRenew: boolean;
+  gracePeriodDays: number;
+  companyLimit: number;
+  storeLimit: number;
+  userLimit: number;
+  storageGb: number;
+  aiQueriesMonthly: number;
+  modules: Record<CompanyModule, boolean>;
+  status: string;
+  commercialNotes: string;
+  justification: string;
+};
+
+const MASTER_MODULES = Object.keys(MODULE_INFO) as CompanyModule[];
+
+function dateInputValue(value?: string | null) {
+  if (!value) return "";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value).slice(0, 10) : date.toISOString().slice(0, 10);
+}
+
+function addContractMonths(value: string, months: number) {
+  const date = new Date(`${value}T12:00:00`);
+  if (Number.isNaN(date.getTime())) return value;
+  date.setMonth(date.getMonth() + months);
+  date.setDate(date.getDate() - 1);
+  return date.toISOString().slice(0, 10);
+}
+
+function defaultContractDraft(plan?: any): CompanyContractDraft {
+  const start = new Date().toISOString().slice(0, 10);
+  const modules = Object.fromEntries(MASTER_MODULES.map((key) => [key, Boolean(plan?.modules?.[key])])) as Record<CompanyModule, boolean>;
+  return {
+    planMode: "STANDARD",
+    planId: plan?.id || "",
+    customPlanName: "Plano personalizado",
+    billingCycle: "MONTHLY",
+    contractStart: start,
+    contractEnd: addContractMonths(start, 1),
+    contractedValue: Number(plan?.monthly_price) || 0,
+    billingDueDay: 10,
+    autoRenew: false,
+    gracePeriodDays: 7,
+    companyLimit: Number(plan?.company_limit) || 1,
+    storeLimit: Number(plan?.store_limit) || 1,
+    userLimit: Number(plan?.user_limit) || 1,
+    storageGb: Number(plan?.storage_gb) || 5,
+    aiQueriesMonthly: Number(plan?.ai_queries_monthly) || 0,
+    modules,
+    status: "ACTIVE",
+    commercialNotes: "",
+    justification: "Cadastro ou atualização comercial pelo MASTER",
+  };
+}
+
+function MasterCommercialPage({
+  stores,
+  currentStore,
+  sessionAccessToken,
+  onCreateCompany,
+  onRefresh,
+}: {
+  stores: Store[];
+  currentStore: Store;
+  sessionAccessToken: string;
+  onCreateCompany: (input: MasterCompanyInput) => Promise<any>;
+  onRefresh: () => Promise<void>;
+}) {
   const supabase = useMemo(() => getSupabaseBrowserClient(), []);
   const [plans, setPlans] = useState<any[]>([]);
   const [subscriptions, setSubscriptions] = useState<any[]>([]);
   const [groups, setGroups] = useState<any[]>([]);
-  const [message, setMessage] = useState("");
+  const [histories, setHistories] = useState<any[]>([]);
+  const [notice, setNotice] = useState<{ text: string; error?: boolean } | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [selectedCompany, setSelectedCompany] = useState<any>(null);
   const [groupMode, setGroupMode] = useState<"NEW" | "EXISTING">("NEW");
   const [groupId, setGroupId] = useState("");
   const [groupName, setGroupName] = useState("");
@@ -4078,53 +5046,271 @@ function MasterCommercialPage({ stores, currentStore, onCreateCompany }: { store
   const [document, setDocument] = useState("");
   const [storeName, setStoreName] = useState("");
   const [segment, setSegment] = useState("OUTRO");
-  const [creating, setCreating] = useState(false);
-  const [createError, setCreateError] = useState("");
+  const [companyStatus, setCompanyStatus] = useState("ACTIVE");
+  const [contract, setContract] = useState<CompanyContractDraft>(() => defaultContractDraft());
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState("");
   const [search, setSearch] = useState("");
+  const [activeTab, setActiveTab] = useState<"DATA" | "CONTRACT" | "MODULES" | "HISTORY">("DATA");
+  const [plansOpen, setPlansOpen] = useState(false);
+  const [planDrafts, setPlanDrafts] = useState<any[]>([]);
+  const [savingPlanId, setSavingPlanId] = useState("");
+
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(null), 3000);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
 
   async function load() {
-    const [plansResult, subscriptionsResult, groupsResult] = await Promise.all([
+    const [plansResult, subscriptionsResult, groupsResult, historiesResult] = await Promise.all([
       supabase.from("subscription_plans").select("*").eq("active", true).order("sort_order"),
       supabase.from("company_subscriptions").select("*, companies(name, group_id), subscription_plans(name, code)").order("created_at", { ascending: false }),
-      supabase.from("business_groups").select("id, name, status, active, companies(id, name, document, status, stores(id, name, public_code))").order("name"),
+      supabase.from("business_groups").select("id, name, status, active, companies(id, name, document, segment, status, active, stores(id, name, public_code, active))").order("name"),
+      supabase.from("company_subscription_history").select("*").order("changed_at", { ascending: false }).limit(200),
     ]);
-    setPlans(plansResult.data || []);
+    const nextPlans = plansResult.data || [];
+    setPlans(nextPlans);
     setSubscriptions(subscriptionsResult.data || []);
     if (!groupsResult.error) setGroups(groupsResult.data || []);
     else {
-      const fallback = Array.from(new Map(stores.map((store) => [store.companyId, { id: store.companyId, name: store.companyName, companies: [{ id: store.companyId, name: store.companyName, document: "", status: "ACTIVE", stores: [{ id: store.id, name: store.name, public_code: store.publicCode }] }] }])).values());
+      const fallback = Array.from(new Map(stores.map((store) => [store.companyId, { id: store.companyId, name: store.companyName, companies: [{ id: store.companyId, name: store.companyName, document: "", segment: store.segment, status: "ACTIVE", active: true, stores: [{ id: store.id, name: store.name, public_code: store.publicCode, active: true }] }] }])).values());
       setGroups(fallback);
     }
+    if (!historiesResult.error) setHistories(historiesResult.data || []);
+    if (!contract.planId && nextPlans[0]) setContract(defaultContractDraft(nextPlans[0]));
   }
+
   useEffect(() => { void load(); }, []);
 
-  async function activate(companyId: string, planId: string, months: number) {
-    const { error } = await supabase.rpc("master_activate_subscription", { p_company_id: companyId, p_plan_id: planId, p_duration_months: months });
-    setMessage(error ? error.message : "Assinatura ativada para todo o grupo empresarial.");
-    if (!error) await load();
+  function resetCreate() {
+    const plan = plans[0];
+    setGroupMode("NEW"); setGroupId(""); setGroupName(""); setCompanyName(""); setDocument(""); setStoreName(""); setSegment("OUTRO"); setCompanyStatus("ACTIVE");
+    setContract(defaultContractDraft(plan)); setFormError(""); setActiveTab("DATA");
   }
-  function resetCreate() { setGroupMode("NEW"); setGroupId(""); setGroupName(""); setCompanyName(""); setDocument(""); setStoreName(""); setSegment("OUTRO"); setCreateError(""); }
-  function closeCreateCompany() { if (creating) return; setCreateOpen(false); resetCreate(); }
+
+  function applyCycle(cycle: CompanyContractDraft["billingCycle"], base = contract) {
+    const months = cycle === "MONTHLY" ? 1 : cycle === "QUARTERLY" ? 3 : cycle === "SEMIANNUAL" ? 6 : cycle === "ANNUAL" ? 12 : 0;
+    const plan = plans.find((item) => item.id === base.planId);
+    setContract({
+      ...base,
+      billingCycle: cycle,
+      contractEnd: months ? addContractMonths(base.contractStart, months) : base.contractEnd,
+      contractedValue: base.planMode === "STANDARD" && plan
+        ? cycle === "ANNUAL" && Number(plan.annual_price) > 0 ? Number(plan.annual_price) : Number(plan.monthly_price) * Math.max(1, months)
+        : base.contractedValue,
+    });
+  }
+
+  function selectPlan(planId: string) {
+    const plan = plans.find((item) => item.id === planId);
+    if (!plan) return setContract({ ...contract, planId });
+    const cycleMonths = contract.billingCycle === "QUARTERLY" ? 3 : contract.billingCycle === "SEMIANNUAL" ? 6 : contract.billingCycle === "ANNUAL" ? 12 : 1;
+    setContract({
+      ...contract,
+      planId,
+      contractedValue: contract.billingCycle === "ANNUAL" && Number(plan.annual_price) > 0 ? Number(plan.annual_price) : Number(plan.monthly_price) * cycleMonths,
+      companyLimit: Number(plan.company_limit) || 1,
+      storeLimit: Number(plan.store_limit) || 1,
+      userLimit: Number(plan.user_limit) || 1,
+      storageGb: Number(plan.storage_gb) || 5,
+      aiQueriesMonthly: Number(plan.ai_queries_monthly) || 0,
+      modules: Object.fromEntries(MASTER_MODULES.map((key) => [key, Boolean(plan.modules?.[key])])) as Record<CompanyModule, boolean>,
+    });
+  }
+
+  function populateContract(subscription: any) {
+    const plan = plans.find((item) => item.id === subscription?.plan_id) || plans[0];
+    const base = defaultContractDraft(plan);
+    return {
+      ...base,
+      planMode: subscription?.plan_mode === "CUSTOM" || (!subscription?.plan_id && subscription) ? "CUSTOM" as const : "STANDARD" as const,
+      planId: subscription?.plan_id || plan?.id || "",
+      customPlanName: subscription?.custom_plan_name || "Plano personalizado",
+      billingCycle: (subscription?.billing_cycle || "MONTHLY") as CompanyContractDraft["billingCycle"],
+      contractStart: dateInputValue(subscription?.contract_start || subscription?.activated_at) || base.contractStart,
+      contractEnd: dateInputValue(subscription?.contract_end || subscription?.expires_at) || base.contractEnd,
+      contractedValue: Number(subscription?.contracted_value) || 0,
+      billingDueDay: Number(subscription?.billing_due_day) || 10,
+      autoRenew: Boolean(subscription?.auto_renew),
+      gracePeriodDays: Number(subscription?.grace_period_days) || 7,
+      companyLimit: Number(subscription?.company_limit) || base.companyLimit,
+      storeLimit: Number(subscription?.store_limit) || base.storeLimit,
+      userLimit: Number(subscription?.user_limit) || base.userLimit,
+      storageGb: Number(subscription?.storage_gb) || base.storageGb,
+      aiQueriesMonthly: Number(subscription?.ai_queries_monthly) || 0,
+      modules: Object.fromEntries(MASTER_MODULES.map((key) => [key, Boolean(subscription?.modules?.[key] ?? base.modules[key])])) as Record<CompanyModule, boolean>,
+      status: subscription?.status || "ACTIVE",
+      commercialNotes: subscription?.commercial_notes || subscription?.notes || "",
+      justification: "Alteração aprovada pelo MASTER",
+    };
+  }
+
+  function openEdit(company: any) {
+    const store = company.stores?.[0];
+    const subscription = subscriptions.find((item) => item.company_id === company.id);
+    setSelectedCompany({ ...company, store });
+    setCompanyName(company.name || ""); setDocument(company.document || ""); setStoreName(store?.name || company.name || ""); setSegment(company.segment || "OUTRO"); setCompanyStatus(company.status || "ACTIVE");
+    setContract(populateContract(subscription)); setFormError(""); setActiveTab("DATA"); setEditOpen(true);
+  }
+
+  async function apiPost(url: string, body: unknown) {
+    const response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${sessionAccessToken}` }, body: JSON.stringify(body) });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || "Não foi possível concluir a operação.");
+    return payload;
+  }
+
+  async function saveContract(companyId: string, draft: CompanyContractDraft, status = draft.status) {
+    return apiPost("/api/master/subscriptions/upsert", { companyId, ...draft, status });
+  }
+
   async function createCompany() {
-    if (!companyName.trim() || !storeName.trim() || creating) return;
-    if (groupMode === "NEW" && !groupName.trim()) return setCreateError("Informe o nome do novo grupo empresarial.");
-    if (groupMode === "EXISTING" && !groupId) return setCreateError("Selecione o grupo empresarial.");
-    setCreating(true); setMessage(""); setCreateError("");
+    if (!companyName.trim() || !storeName.trim() || saving) return;
+    if (groupMode === "NEW" && !groupName.trim()) return setFormError("Informe o nome do novo grupo empresarial.");
+    if (groupMode === "EXISTING" && !groupId) return setFormError("Selecione o grupo empresarial.");
+    if (!contract.contractStart || !contract.contractEnd) return setFormError("Informe o período da contratação.");
+    if (contract.planMode === "STANDARD" && !contract.planId) return setFormError("Selecione um plano Gerivo.");
+    setSaving(true); setFormError("");
     try {
-      await onCreateCompany({ groupMode, groupId, groupName: groupName.trim(), companyName: companyName.trim(), document: document.trim(), storeName: storeName.trim(), segment });
-      setCreateOpen(false); resetCreate(); setMessage("Empresa criada. Defina o plano e ative a assinatura do grupo."); await load();
-    } catch (error) { setCreateError(error instanceof Error && error.message ? error.message : "Não foi possível criar a empresa."); }
-    finally { setCreating(false); }
+      const created = await onCreateCompany({ groupMode, groupId, groupName: groupName.trim(), companyName: companyName.trim(), document: document.trim(), storeName: storeName.trim(), segment });
+      await saveContract(created.company_id, contract, companyStatus);
+      setCreateOpen(false); resetCreate(); await load(); await onRefresh();
+      setNotice({ text: "Empresa e contratação criadas com sucesso." });
+    } catch (error) { setFormError(error instanceof Error ? error.message : "Não foi possível criar a empresa."); }
+    finally { setSaving(false); }
   }
+
+  async function saveCompany() {
+    if (!selectedCompany || saving) return;
+    setSaving(true); setFormError("");
+    try {
+      await apiPost("/api/master/companies/update", { companyId: selectedCompany.id, storeId: selectedCompany.store?.id, name: companyName.trim(), document: document.trim(), storeName: storeName.trim(), segment, status: companyStatus });
+      await saveContract(selectedCompany.id, contract, companyStatus);
+      setEditOpen(false); setSelectedCompany(null); await load(); await onRefresh();
+      setNotice({ text: "Empresa, plano e contratação atualizados." });
+    } catch (error) { setFormError(error instanceof Error ? error.message : "Não foi possível editar a empresa."); }
+    finally { setSaving(false); }
+  }
+
+  async function changeStatus(company: any, status: string) {
+    if (saving) return;
+    const label = status === "SUSPENDED" ? "suspender" : status === "ACTIVE" ? "reativar" : "cancelar e arquivar";
+    if (!window.confirm(`Confirma ${label} a empresa ${company.name}?`)) return;
+    setSaving(true);
+    try {
+      const store = company.stores?.[0];
+      const subscription = subscriptions.find((item) => item.company_id === company.id);
+      await apiPost("/api/master/companies/update", { companyId: company.id, storeId: store?.id, name: company.name, document: company.document || "", storeName: store?.name || company.name, segment: company.segment || "OUTRO", status });
+      if (subscription) await saveContract(company.id, { ...populateContract(subscription), status, justification: `Situação alterada para ${status} pelo MASTER` }, status);
+      await load(); await onRefresh(); setNotice({ text: `Empresa ${status === "ACTIVE" ? "reativada" : status === "SUSPENDED" ? "suspensa" : "arquivada"}.` });
+    } catch (error) { setNotice({ text: error instanceof Error ? error.message : "Falha ao alterar situação.", error: true }); }
+    finally { setSaving(false); }
+  }
+
+  function openPlansEditor() {
+    setPlanDrafts(plans.map((plan) => ({
+      ...plan,
+      monthly_price: Number(plan.monthly_price) || 0,
+      annual_price: Number(plan.annual_price) || 0,
+      company_limit: Number(plan.company_limit) || 1,
+      store_limit: Number(plan.store_limit) || 1,
+      user_limit: Number(plan.user_limit) || 1,
+      storage_gb: Number(plan.storage_gb) || 5,
+      ai_queries_monthly: Number(plan.ai_queries_monthly) || 0,
+      public_description: plan.public_description || "",
+      public_features_text: Array.isArray(plan.public_features) ? plan.public_features.join("\n") : Array.isArray(plan.features) ? plan.features.join("\n") : "",
+      public_cta_label: plan.public_cta_label || "Tenho interesse",
+      recommended: Boolean(plan.recommended),
+      public_visible: plan.public_visible !== false,
+      public_sort_order: Number(plan.public_sort_order ?? plan.sort_order) || 0,
+    })));
+    setPlansOpen(true);
+  }
+
+  function patchPlanDraft(id: string, patch: Record<string, unknown>) {
+    setPlanDrafts((current) => current.map((plan) => plan.id === id ? { ...plan, ...patch } : plan));
+  }
+
+  async function savePlanDraft(plan: any) {
+    if (savingPlanId) return;
+    setSavingPlanId(plan.id);
+    try {
+      await apiPost("/api/master/plans/update", {
+        planId: plan.id,
+        name: plan.name,
+        monthlyPrice: plan.monthly_price,
+        annualPrice: plan.annual_price,
+        companyLimit: plan.company_limit,
+        storeLimit: plan.store_limit,
+        userLimit: plan.user_limit,
+        storageGb: plan.storage_gb,
+        aiQueriesMonthly: plan.ai_queries_monthly,
+        publicDescription: plan.public_description,
+        publicFeatures: String(plan.public_features_text || "").split(/\n|;/).map((item) => item.trim()).filter(Boolean),
+        publicCtaLabel: plan.public_cta_label,
+        recommended: plan.recommended,
+        publicVisible: plan.public_visible,
+        publicSortOrder: plan.public_sort_order,
+      });
+      await load();
+      setNotice({ text: `${plan.name} atualizado. O site de vendas já utilizará os novos valores.` });
+    } catch (error) {
+      setNotice({ text: error instanceof Error ? error.message : "Não foi possível atualizar o plano.", error: true });
+    } finally {
+      setSavingPlanId("");
+    }
+  }
+
+  const normalizedSearch = normalizeAssistantText(search);
+  const filteredGroups = groups.filter((group) => normalizeAssistantText(JSON.stringify(group)).includes(normalizedSearch));
   const currentSubscription = subscriptions.find((item) => item.company_id === currentStore.companyId);
-  const normalizedSearch = search.trim().toLowerCase();
-  const filteredGroups = groups.filter((group) => JSON.stringify(group).toLowerCase().includes(normalizedSearch));
-  return <div className="master-page">
-    <section className="master-heading"><div><small>GERIVO MASTER</small><h2>Grupos, empresas, unidades e usuários</h2><p>Estrutura: Grupo empresarial → Empresa/CNPJ → Unidade → Usuário.</p></div><button type="button" className="primary" onClick={() => { resetCreate(); setCreateOpen(true); }}>+ Nova empresa</button></section>
-    <section className="plan-mini-grid">{plans.map((plan) => { const enterprise = plan.code === "ENTERPRISE"; return <article key={plan.id}><small>{plan.code}</small><h3>{plan.name}</h3><strong>{enterprise ? "A partir de R$ 599/mês" : `${money(plan.monthly_price)}/mês`}</strong><span>{enterprise ? "Empresas, unidades e usuários personalizados" : `${plan.company_limit} empresa(s) · ${plan.store_limit} unidade(s) · ${plan.user_limit} usuários`}</span><button className="primary small" onClick={() => activate(currentStore.companyId, plan.id, 12)}>Ativar 12 meses</button></article>; })}</section>
-    <section className="panel subscription-current"><header><div><small>GRUPO DA EMPRESA SELECIONADA</small><h3>{currentStore.companyName}</h3></div></header>{currentSubscription ? <div className="subscription-detail"><strong>{currentSubscription.subscription_plans?.name || "Plano"}</strong><span>Status: {currentSubscription.status}</span><span>Ativação: {currentSubscription.activated_at ? formatDate(currentSubscription.activated_at) : "não ativada"}</span><span>Vencimento: {currentSubscription.expires_at ? formatDate(currentSubscription.expires_at) : "—"}</span></div> : <div className="empty-inline">Grupo ainda sem assinatura ativa.</div>}{message && <div className={message.toLowerCase().includes("não") ? "auth-error" : "auth-success"}>{message}</div>}</section>
-    <section className="panel master-groups-panel"><header><div><small>ESTRUTURA EMPRESARIAL</small><h3>{groups.length} grupo(s)</h3></div><input className="master-company-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar grupo, CNPJ, empresa ou unidade" /></header><div className="master-group-list">{filteredGroups.map((group) => <article key={group.id}><header><div><strong>{group.name}</strong><small>{group.companies?.length || 0} empresa(s)</small></div><span>{group.status || "ATIVO"}</span></header><div>{(group.companies || []).map((company: any) => <section key={company.id}><div><b>{company.name}</b><small>{company.document || "CNPJ não informado"}</small></div><ul>{(company.stores || []).map((store: any) => <li key={store.id}>{store.name}<span>ID {store.public_code}</span></li>)}</ul></section>)}</div></article>)}</div></section>
-    {createOpen && <div className="modal-backdrop"><section className="compact-modal master-company-modal master-company-modal-v176"><header><div><small>NOVA EMPRESA</small><h2>Cadastrar estrutura do cliente</h2></div><button type="button" disabled={creating} onClick={closeCreateCompany}>×</button></header><div className="master-company-form" aria-busy={creating}><Field label="Vínculo empresarial"><select value={groupMode} onChange={(event) => setGroupMode(event.target.value as "NEW" | "EXISTING")}><option value="NEW">Novo grupo</option><option value="EXISTING">Grupo existente</option></select></Field>{groupMode === "NEW" ? <Field label="Nome do grupo empresarial"><input value={groupName} onChange={(event) => setGroupName(event.target.value)} placeholder="Proprietário ou grupo econômico" /></Field> : <Field label="Grupo empresarial"><select value={groupId} onChange={(event) => setGroupId(event.target.value)}><option value="">Selecione</option>{groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</select></Field>}<Field label="Empresa / razão exibida"><input autoFocus value={companyName} onChange={(event) => { setCompanyName(event.target.value); if (!storeName) setStoreName(event.target.value); }} /></Field><Field label="CNPJ"><input value={document} onChange={(event) => setDocument(event.target.value)} placeholder="00.000.000/0000-00" /></Field><Field label="Unidade principal"><input value={storeName} onChange={(event) => setStoreName(event.target.value)} placeholder="Matriz, Centro, Loja 1..." /></Field><Field label="Segmento"><select value={segment} onChange={(event) => setSegment(event.target.value)}><option value="OFICINA">Oficina e centro automotivo</option><option value="CONCESSIONARIA">Concessionária</option><option value="VAREJO">Comércio varejista</option><option value="CONFEITARIA">Confeitaria</option><option value="SALAO_BELEZA">Salão de beleza</option><option value="ESTETICA_AUTOMOTIVA">Lavagem e estética</option><option value="DELIVERY">Delivery de comida</option><option value="SERVICOS">Prestação de serviços</option><option value="OUTRO">Outro</option></select></Field>{createError && <div className="auth-error master-company-error" role="alert">{createError}</div>}</div><footer><button type="button" className="outline" disabled={creating} onClick={closeCreateCompany}>Cancelar</button><button type="button" className="primary" disabled={creating || !companyName.trim() || !storeName.trim()} onClick={createCompany}>{creating ? "Criando empresa..." : "Criar empresa"}</button></footer></section></div>}
+  const selectedHistory = selectedCompany ? histories.filter((item) => item.company_id === selectedCompany.id) : [];
+
+  function ContractForm() {
+    return <div className="master-contract-form">
+      <div className="contract-mode-switch"><button type="button" className={contract.planMode === "STANDARD" ? "active" : ""} onClick={() => { const plan = plans.find((item) => item.id === contract.planId) || plans[0]; setContract({ ...populateContract({ ...contract, plan_id: plan?.id, plan_mode: "STANDARD" }), contractStart: contract.contractStart, contractEnd: contract.contractEnd, billingCycle: contract.billingCycle }); }}>Plano Gerivo</button><button type="button" className={contract.planMode === "CUSTOM" ? "active" : ""} onClick={() => setContract({ ...contract, planMode: "CUSTOM" })}>Plano personalizado</button></div>
+      <div className="master-company-form">
+        {contract.planMode === "STANDARD" ? <Field label="Plano"><select value={contract.planId} onChange={(event) => selectPlan(event.target.value)}><option value="">Selecione</option>{plans.map((plan) => <option key={plan.id} value={plan.id}>{plan.name} · {money(plan.monthly_price)}/mês</option>)}</select></Field> : <Field label="Nome do plano personalizado"><input value={contract.customPlanName} onChange={(event) => setContract({ ...contract, customPlanName: event.target.value })} /></Field>}
+        <Field label="Período da contratação"><select value={contract.billingCycle} onChange={(event) => applyCycle(event.target.value as CompanyContractDraft["billingCycle"])}><option value="MONTHLY">Mensal</option><option value="QUARTERLY">Trimestral</option><option value="SEMIANNUAL">Semestral</option><option value="ANNUAL">Anual</option><option value="CUSTOM">Personalizado</option></select></Field>
+        <Field label="Data inicial"><input type="date" value={contract.contractStart} onChange={(event) => { const next = { ...contract, contractStart: event.target.value }; setContract(next); if (contract.billingCycle !== "CUSTOM") window.setTimeout(() => applyCycle(contract.billingCycle, next), 0); }} /></Field>
+        <Field label="Data final"><input type="date" value={contract.contractEnd} onChange={(event) => setContract({ ...contract, contractEnd: event.target.value, billingCycle: "CUSTOM" })} /></Field>
+        <Field label="Valor contratado"><input type="number" min="0" step="0.01" value={contract.contractedValue} onChange={(event) => setContract({ ...contract, contractedValue: Math.max(0, Number(event.target.value) || 0) })} /></Field>
+        <Field label="Dia do vencimento"><input type="number" min="1" max="31" value={contract.billingDueDay} onChange={(event) => setContract({ ...contract, billingDueDay: Math.min(31, Math.max(1, Number(event.target.value) || 1)) })} /></Field>
+        <Field label="Tolerância após vencimento"><div className="input-suffix"><input type="number" min="0" max="365" value={contract.gracePeriodDays} onChange={(event) => setContract({ ...contract, gracePeriodDays: Math.max(0, Number(event.target.value) || 0) })} /><span>dias</span></div></Field>
+        <Field label="Situação da contratação"><select value={companyStatus} onChange={(event) => { setCompanyStatus(event.target.value); setContract({ ...contract, status: event.target.value }); }}><option value="AWAITING_ACTIVATION">Aguardando ativação</option><option value="DEMO">Período de teste</option><option value="ACTIVE">Ativa</option><option value="GRACE">Em tolerância</option><option value="READ_ONLY">Somente consulta</option><option value="SUSPENDED">Suspensa</option><option value="CANCELED">Cancelada / arquivada</option><option value="EXPIRED">Vencida</option></select></Field>
+        <label className="master-auto-renew"><input type="checkbox" checked={contract.autoRenew} onChange={(event) => setContract({ ...contract, autoRenew: event.target.checked })} /><span><strong>Renovação automática</strong><small>Mantém a contratação ativa no encerramento do período.</small></span></label>
+        <Field label="Observações comerciais"><textarea rows={3} value={contract.commercialNotes} onChange={(event) => setContract({ ...contract, commercialNotes: event.target.value })} /></Field>
+        <Field label="Justificativa da alteração"><input value={contract.justification} onChange={(event) => setContract({ ...contract, justification: event.target.value })} /></Field>
+      </div>
+    </div>;
+  }
+
+  function ModulesForm() {
+    const editable = contract.planMode === "CUSTOM";
+    return <div className="master-modules-contract"><div className="master-limits-grid"><Field label="Empresas / CNPJs"><input disabled={!editable} type="number" min="1" value={contract.companyLimit} onChange={(event) => setContract({ ...contract, companyLimit: Math.max(1, Number(event.target.value) || 1) })} /></Field><Field label="Unidades"><input disabled={!editable} type="number" min="1" value={contract.storeLimit} onChange={(event) => setContract({ ...contract, storeLimit: Math.max(1, Number(event.target.value) || 1) })} /></Field><Field label="Usuários"><input disabled={!editable} type="number" min="1" value={contract.userLimit} onChange={(event) => setContract({ ...contract, userLimit: Math.max(1, Number(event.target.value) || 1) })} /></Field><Field label="Armazenamento"><div className="input-suffix"><input disabled={!editable} type="number" min="1" value={contract.storageGb} onChange={(event) => setContract({ ...contract, storageGb: Math.max(1, Number(event.target.value) || 1) })} /><span>GB</span></div></Field><Field label="Consultas de IA / mês"><input disabled={!editable} type="number" min="0" value={contract.aiQueriesMonthly} onChange={(event) => setContract({ ...contract, aiQueriesMonthly: Math.max(0, Number(event.target.value) || 0) })} /></Field></div><div className="module-grid master-module-grid">{MASTER_MODULES.map((module) => <button type="button" disabled={!editable} key={module} className={contract.modules[module] ? "module-card active" : "module-card"} onClick={() => setContract({ ...contract, modules: { ...contract.modules, [module]: !contract.modules[module] } })}><PremiumIcon name={module === "APPOINTMENTS" ? "calendar" : module === "INVENTORY" ? "box" : module === "ASSISTANT" ? "sparkle" : module === "BI" ? "chart" : module === "MESSAGES" ? "file" : module === "QUOTES" ? "file" : module === "ORDERS" ? "wrench" : "modules"} size={20} /><span><strong>{MODULE_INFO[module].label}</strong><small>{MODULE_INFO[module].description}</small></span><b>{contract.modules[module] ? "Ativo" : "Bloqueado"}</b></button>)}</div>{!editable && <p className="master-plan-help">Os limites e módulos seguem o plano Gerivo escolhido. Selecione Plano personalizado para editá-los.</p>}</div>;
+  }
+
+  function ModalBody({ creating }: { creating: boolean }) {
+    return <><nav className="master-edit-tabs"><button type="button" className={activeTab === "DATA" ? "active" : ""} onClick={() => setActiveTab("DATA")}>Dados</button><button type="button" className={activeTab === "CONTRACT" ? "active" : ""} onClick={() => setActiveTab("CONTRACT")}>Plano e contratação</button><button type="button" className={activeTab === "MODULES" ? "active" : ""} onClick={() => setActiveTab("MODULES")}>Módulos e limites</button>{!creating && <button type="button" className={activeTab === "HISTORY" ? "active" : ""} onClick={() => setActiveTab("HISTORY")}>Histórico</button>}</nav>
+      <div className="master-company-modal-content">
+        {activeTab === "DATA" && <div className="master-company-form">{creating && <Field label="Vínculo empresarial"><select value={groupMode} onChange={(event) => setGroupMode(event.target.value as "NEW" | "EXISTING")}><option value="NEW">Novo grupo</option><option value="EXISTING">Grupo existente</option></select></Field>}{creating && (groupMode === "NEW" ? <Field label="Nome do grupo empresarial"><input value={groupName} onChange={(event) => setGroupName(event.target.value)} placeholder="Proprietário ou grupo econômico" /></Field> : <Field label="Grupo empresarial"><select value={groupId} onChange={(event) => setGroupId(event.target.value)}><option value="">Selecione</option>{groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</select></Field>)}<Field label="Empresa / razão exibida"><input autoFocus value={companyName} onChange={(event) => { setCompanyName(event.target.value); if (!storeName) setStoreName(event.target.value); }} /></Field><Field label="CNPJ"><input value={document} onChange={(event) => setDocument(event.target.value)} placeholder="00.000.000/0000-00" /></Field><Field label="Unidade principal"><input value={storeName} onChange={(event) => setStoreName(event.target.value)} placeholder="Matriz, Centro, Loja 1..." /></Field><Field label="Segmento"><select value={segment} onChange={(event) => setSegment(event.target.value)}><option value="OFICINA">Oficina e centro automotivo</option><option value="CONCESSIONARIA">Concessionária</option><option value="VAREJO">Comércio varejista</option><option value="CONFEITARIA">Confeitaria</option><option value="SALAO_BELEZA">Salão de beleza</option><option value="ESTETICA_AUTOMOTIVA">Lavagem e estética</option><option value="DELIVERY">Delivery de comida</option><option value="SERVICOS">Prestação de serviços</option><option value="OUTRO">Outro</option></select></Field></div>}
+        {activeTab === "CONTRACT" && <ContractForm />}
+        {activeTab === "MODULES" && <ModulesForm />}
+        {activeTab === "HISTORY" && <div className="master-history-list">{selectedHistory.length ? selectedHistory.map((item) => <article key={item.id}><strong>{item.action === "CONTRACT_CHANGED" ? "Contratação alterada" : "Contratação criada"}</strong><span>{new Date(item.changed_at).toLocaleString("pt-BR")}</span><p>{item.justification || "Sem justificativa informada."}</p></article>) : <div className="empty-inline">Nenhuma alteração contratual registrada.</div>}</div>}
+        {formError && <div className="auth-error master-company-error" role="alert">{formError}</div>}
+      </div></>;
+  }
+
+  return <div className="master-page master-page-v177">
+    <section className="master-heading"><div><small>GERIVO MASTER</small><h2>Empresas, planos e contratações</h2><p>Crie, edite, ative, suspenda e personalize cada operação sem perder o histórico.</p></div><div className="master-heading-actions"><button type="button" className="outline" onClick={openPlansEditor}>Editar planos e valores</button><button type="button" className="primary" onClick={() => { resetCreate(); setCreateOpen(true); }}>+ Nova empresa</button></div></section>
+    <section className="master-summary-grid"><Metric label="Empresas cadastradas" value={String(groups.reduce((sum, group) => sum + (group.companies?.length || 0), 0))} detail={`${groups.length} grupo(s) empresarial(is)`} /><Metric label="Contratos ativos" value={String(subscriptions.filter((item) => item.status === "ACTIVE").length)} detail="Assinaturas vigentes" /><Metric label="Próximos do vencimento" value={String(subscriptions.filter((item) => item.expires_at && new Date(item.expires_at).getTime() - Date.now() <= 10 * 86400000 && new Date(item.expires_at).getTime() >= Date.now()).length)} detail="Vencimento em até 10 dias" /><Metric label="Planos personalizados" value={String(subscriptions.filter((item) => item.plan_mode === "CUSTOM").length)} detail="Contratações sob medida" /></section>
+    <section className="panel subscription-current"><header><div><small>EMPRESA SELECIONADA</small><h3>{currentStore.companyName}</h3></div></header>{currentSubscription ? <div className="subscription-detail subscription-detail-v177"><strong>{currentSubscription.plan_mode === "CUSTOM" ? currentSubscription.custom_plan_name || "Personalizado" : currentSubscription.subscription_plans?.name || "Plano"}</strong><span>Status: {currentSubscription.status}</span><span>Período: {formatDate(currentSubscription.contract_start || currentSubscription.activated_at)} a {formatDate(currentSubscription.contract_end || currentSubscription.expires_at)}</span><span>Valor: {money(currentSubscription.contracted_value)}</span></div> : <div className="empty-inline">Empresa ainda sem contratação ativa.</div>}</section>
+    <section className="panel master-groups-panel"><header><div><small>ESTRUTURA EMPRESARIAL</small><h3>{groups.length} grupo(s)</h3></div><input className="master-company-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar grupo, CNPJ, empresa ou unidade" /></header><div className="master-group-list master-group-list-v177">{filteredGroups.map((group) => <article key={group.id}><header><div><strong>{group.name}</strong><small>{group.companies?.length || 0} empresa(s)</small></div><span>{group.status || "ATIVO"}</span></header><div>{(group.companies || []).map((company: any) => { const subscription = subscriptions.find((item) => item.company_id === company.id); return <section key={company.id} className="master-company-row-v177"><div className="master-company-identity"><b>{company.name}</b><small>{company.document || "CNPJ não informado"} · {company.segment || "OUTRO"}</small><span className={`company-status status-${String(company.status || "ACTIVE").toLowerCase()}`}>{company.status || "ACTIVE"}</span></div><div className="master-company-contract"><strong>{subscription?.plan_mode === "CUSTOM" ? subscription?.custom_plan_name || "Personalizado" : subscription?.subscription_plans?.name || "Sem plano"}</strong><small>{subscription?.contract_end || subscription?.expires_at ? `até ${formatDate(subscription.contract_end || subscription.expires_at)}` : "sem período definido"}</small></div><ul>{(company.stores || []).map((store: any) => <li key={store.id}>{store.name}<span>ID {store.public_code}</span></li>)}</ul><div className="master-company-actions"><button type="button" className="outline small" onClick={() => openEdit(company)}>Editar</button>{company.status === "SUSPENDED" || company.status === "CANCELED" ? <button type="button" className="primary small" onClick={() => void changeStatus(company, "ACTIVE")}>Reativar</button> : <button type="button" className="outline small" onClick={() => void changeStatus(company, "SUSPENDED")}>Suspender</button>}<button type="button" className="danger small" onClick={() => void changeStatus(company, "CANCELED")}>Arquivar</button></div></section>; })}</div></article>)}</div></section>
+    {notice && <div className={notice.error ? "master-pop-toast error" : "master-pop-toast"}><span>{notice.error ? "!" : "✓"}</span><strong>{notice.text}</strong></div>}
+    {plansOpen && <div className="modal-backdrop"><section className="compact-modal master-plans-modal"><header><div><small>PLANOS GERIVO</small><h2>Valores e conteúdo do site de vendas</h2><p>As alterações publicadas aqui aparecem automaticamente na página comercial.</p></div><button type="button" onClick={() => setPlansOpen(false)}>×</button></header><div className="master-plan-editor-grid">{planDrafts.map((plan) => <article key={plan.id} className={plan.recommended ? "master-plan-editor recommended" : "master-plan-editor"}><header><div><small>{plan.code}</small><input value={plan.name} onChange={(event) => patchPlanDraft(plan.id, { name: event.target.value })} /></div><label><input type="checkbox" checked={plan.public_visible} onChange={(event) => patchPlanDraft(plan.id, { public_visible: event.target.checked })} /> Exibir no site</label></header><div className="master-plan-price-row"><Field label="Mensal"><input type="number" min="0" step="0.01" value={plan.monthly_price} onChange={(event) => patchPlanDraft(plan.id, { monthly_price: Number(event.target.value) })} /></Field><Field label="Anual"><input type="number" min="0" step="0.01" value={plan.annual_price} onChange={(event) => patchPlanDraft(plan.id, { annual_price: Number(event.target.value) })} /></Field></div><div className="master-plan-limits"><Field label="Empresas"><input type="number" min="1" value={plan.company_limit} onChange={(event) => patchPlanDraft(plan.id, { company_limit: Number(event.target.value) })} /></Field><Field label="Unidades"><input type="number" min="1" value={plan.store_limit} onChange={(event) => patchPlanDraft(plan.id, { store_limit: Number(event.target.value) })} /></Field><Field label="Usuários"><input type="number" min="1" value={plan.user_limit} onChange={(event) => patchPlanDraft(plan.id, { user_limit: Number(event.target.value) })} /></Field><Field label="IA/mês"><input type="number" min="0" value={plan.ai_queries_monthly} onChange={(event) => patchPlanDraft(plan.id, { ai_queries_monthly: Number(event.target.value) })} /></Field></div><Field label="Descrição pública"><input value={plan.public_description} onChange={(event) => patchPlanDraft(plan.id, { public_description: event.target.value })} /></Field><Field label="Benefícios — um por linha"><textarea rows={4} value={plan.public_features_text} onChange={(event) => patchPlanDraft(plan.id, { public_features_text: event.target.value })} /></Field><div className="master-plan-publish"><label><input type="checkbox" checked={plan.recommended} onChange={(event) => patchPlanDraft(plan.id, { recommended: event.target.checked })} /> Mais indicado</label><Field label="Texto do botão"><input value={plan.public_cta_label} onChange={(event) => patchPlanDraft(plan.id, { public_cta_label: event.target.value })} /></Field><Field label="Ordem"><input type="number" value={plan.public_sort_order} onChange={(event) => patchPlanDraft(plan.id, { public_sort_order: Number(event.target.value) })} /></Field></div><button type="button" className="primary" disabled={Boolean(savingPlanId)} onClick={() => void savePlanDraft(plan)}>{savingPlanId === plan.id ? "Salvando..." : "Salvar este plano"}</button></article>)}</div><footer><button type="button" className="outline" onClick={() => setPlansOpen(false)}>Fechar</button></footer></section></div>}
+    {createOpen && <div className="modal-backdrop"><section className="compact-modal master-company-modal master-company-modal-v177"><header><div><small>NOVA EMPRESA</small><h2>Cadastrar cliente e contratação</h2></div><button type="button" disabled={saving} onClick={() => { if (!saving) setCreateOpen(false); }}>×</button></header><ModalBody creating /><footer><button type="button" className="outline" disabled={saving} onClick={() => setCreateOpen(false)}>Cancelar</button><button type="button" className="primary" disabled={saving || !companyName.trim() || !storeName.trim()} onClick={() => void createCompany()}>{saving ? "Criando e ativando..." : "Criar empresa"}</button></footer></section></div>}
+    {editOpen && selectedCompany && <div className="modal-backdrop"><section className="compact-modal master-company-modal master-company-modal-v177"><header><div><small>EDITAR EMPRESA</small><h2>{selectedCompany.name}</h2></div><button type="button" disabled={saving} onClick={() => { if (!saving) setEditOpen(false); }}>×</button></header><ModalBody creating={false} /><footer><button type="button" className="outline" disabled={saving} onClick={() => setEditOpen(false)}>Cancelar</button><button type="button" className="primary" disabled={saving || !companyName.trim()} onClick={() => void saveCompany()}>{saving ? "Salvando alterações..." : "Salvar alterações"}</button></footer></section></div>}
   </div>;
 }
 
@@ -4153,6 +5339,7 @@ function Checklist({
 }) {
   const [photoMessage, setPhotoMessage] = useState("");
   const [openNotes, setOpenNotes] = useState<string[]>([]);
+  const stagePhotoInputRef = useRef<HTMLInputElement>(null);
   const stage = attendance.stages.find((item) => item.id === stageId) ?? attendance.stages[0];
   const stageIndex = attendance.stages.findIndex((item) => item.id === stage.id);
   const grouped = useMemo(() => stage.items.reduce<Record<string, CheckItem[]>>((acc, item) => { (acc[item.category] ??= []).push(item); return acc; }, {}), [stage]);
@@ -4322,7 +5509,7 @@ function Checklist({
       <article className="panel stage-panel workshop-stage">
         <header className="stage-head workshop-stage-head">
           <div><small>ETAPA EM EXECUÇÃO</small><h2>{stage.label}</h2><p>{stage.description}</p>{stage.completedAt && <span className="completion-info">Concluído por {stage.completedBy} em {formatDate(stage.completedAt)}</span>}</div>
-          <div className="stage-header-actions">{!isLocked && <button className="outline" type="button" onClick={goToNextPending}>Próximo pendente</button>}{isLocked && <button className="reopen-button" onClick={reopenStage}>Reabrir etapa</button>}<label className={isLocked ? "photo-button disabled" : "photo-button"}>📷 Fotos gerais<input disabled={isLocked} type="file" accept="image/*" capture="environment" multiple onChange={addStagePhotos} /></label></div>
+          <div className="stage-header-actions">{!isLocked && <button className="outline" type="button" onClick={goToNextPending}>Próximo pendente</button>}{isLocked && <button className="reopen-button" onClick={reopenStage}>Reabrir etapa</button>}<button type="button" className={isLocked ? "photo-button disabled" : "photo-button"} disabled={isLocked} onClick={(event) => { event.stopPropagation(); stagePhotoInputRef.current?.click(); }}>📷 Fotos gerais</button><input ref={stagePhotoInputRef} className="checklist-file-input" disabled={isLocked} type="file" accept="image/*" multiple onChange={addStagePhotos} /></div>
         </header>
 
         {photoMessage && <div className="message">{photoMessage}</div>}
@@ -4374,7 +5561,7 @@ function Checklist({
           {isLocked ? (
             <><div><strong>{stage.label} concluído</strong><span>A etapa está protegida no histórico.</span></div><button className="outline" onClick={onExit}>Voltar para atendimentos</button></>
           ) : (
-            <><div><strong>Finalizar {stage.label}</strong><span>Ao concluir, o atendimento volta para a tela principal.</span></div><button className="primary" onClick={completeStage}>{stage.id === "checkin" ? "Concluir Check-in" : `Concluir ${stage.label}`}</button></>
+            <><div><strong>Finalizar {stage.label}</strong><span>As respostas são salvas automaticamente antes da conclusão.</span></div><button className="primary" onClick={completeStage}>{stage.id === "checkin" ? "Concluir Check-in" : `Concluir ${stage.label}`}</button></>
           )}
         </footer>
       </article>
@@ -4499,6 +5686,7 @@ function ChecklistItemRow({
   onAddPhotos: (event: ChangeEvent<HTMLInputElement>) => void;
 }) {
   const options = optionsForMode(item.mode);
+  const photoInputRef = useRef<HTMLInputElement>(null);
   const showNote = noteOpen || Boolean(item.note) || item.key === "wash-request" || item.key === "belongings" || item.key.startsWith("road-test") || ["REGULAR", "RUIM", "AVARIADO", "AVARIA", "INCOMPLETO", "MAL_ODOR", "NAO", "OUTRO"].includes(item.value);
   return (
     <div id={`check-${item.key}`} className={`check-item workshop-item value-${item.value.toLowerCase()}`}>
@@ -4508,7 +5696,7 @@ function ChecklistItemRow({
           <div className={`status-options options-${options.length}`}>
             {options.map((option) => <button disabled={locked} type="button" key={option.value} className={item.value === option.value ? `status-button active value-${option.value.toLowerCase()}` : `status-button value-${option.value.toLowerCase()}`} onClick={() => onUpdate({ value: option.value })}><b>{option.symbol}</b><span>{option.label}</span></button>)}
           </div>
-          <label className={locked ? "photo-plus disabled" : "photo-plus"} title="Adicionar fotos"><span>+</span><input disabled={locked} type="file" accept="image/*" capture="environment" multiple onChange={onAddPhotos} /></label>
+          <button type="button" className={locked ? "photo-plus disabled" : "photo-plus"} title="Adicionar fotos" disabled={locked} onClick={(event) => { event.stopPropagation(); photoInputRef.current?.click(); }}><span>+</span></button><input ref={photoInputRef} className="checklist-file-input" disabled={locked} type="file" accept="image/*" multiple onChange={onAddPhotos} />
         </div>
       </div>
       <div className="item-meta"><span>{itemValueLabel(item.value)}</span>{!showNote && !locked && <button type="button" onClick={onOpenNote}>+ Observação</button>}</div>
@@ -4620,11 +5808,11 @@ function CompanySettingsModal({
 
   function setProfile(profile: CompanyProfile) {
     if (profile === "FULL") {
-      setCompanyDraft({ ...companyDraft, profile, modules: { APPOINTMENTS: true, CATALOG: true, INVENTORY: true, CHECKLIST: true, ORDERS: true, QUOTES: true, ASSISTANT: true } });
+      setCompanyDraft({ ...companyDraft, profile, modules: { APPOINTMENTS: true, CATALOG: true, INVENTORY: true, CHECKLIST: true, ORDERS: true, QUOTES: true, ASSISTANT: true, BI: true, MESSAGES: true } });
       return;
     }
     if (profile === "QUOTE_ONLY") {
-      setCompanyDraft({ ...companyDraft, profile, modules: { APPOINTMENTS: false, CATALOG: true, INVENTORY: false, CHECKLIST: false, ORDERS: false, QUOTES: true, ASSISTANT: false } });
+      setCompanyDraft({ ...companyDraft, profile, modules: { APPOINTMENTS: false, CATALOG: true, INVENTORY: false, CHECKLIST: false, ORDERS: false, QUOTES: true, ASSISTANT: false, BI: false, MESSAGES: true } });
       return;
     }
     setCompanyDraft({ ...companyDraft, profile });
@@ -4949,7 +6137,8 @@ function DocumentItemsEditor({
         id: uid(),
         catalogItemId: catalogItem.id,
         name: catalogItem.name,
-        description: catalogItem.category,
+        category: catalogItem.category || "Geral",
+        description: "",
         kind: catalogItem.kind,
         quantity: 1,
         unitPrice: catalogItem.price,
@@ -4959,7 +6148,7 @@ function DocumentItemsEditor({
   }
 
   function addCustomItem() {
-    onChange([...items, { id: uid(), catalogItemId: null, name: "", description: "", kind: "SERVICO", quantity: 1, unitPrice: 0 }]);
+    onChange([...items, { id: uid(), catalogItemId: null, name: "", category: "", description: "", kind: "SERVICO", quantity: 1, unitPrice: 0 }]);
   }
 
   function updateItem(id: string, patch: Partial<DocumentLine>) {
@@ -4970,8 +6159,8 @@ function DocumentItemsEditor({
     <section className="document-items-panel">
       <header><div><small>ITENS DO DOCUMENTO</small><h3>Serviços, peças e produtos</h3></div><div className="document-item-add"><select value={selectedCatalogId} onChange={(event) => setSelectedCatalogId(event.target.value)}><option value="">Selecionar do catálogo</option>{activeCatalog.map((item) => <option key={item.id} value={item.id}>{item.name} · {money(item.price)}</option>)}</select><button className="outline" type="button" disabled={!selectedCatalogId} onClick={addCatalogItem}>Adicionar</button><button className="primary" type="button" onClick={addCustomItem}>+ Item livre</button></div></header>
       <div className="document-items-table">
-        <div className="document-items-head"><span>Tipo</span><span>Descrição</span><span>Qtd.</span><span>Valor unit.</span><span>Total</span><span /></div>
-        {items.length === 0 ? <div className="document-items-empty">Nenhum item adicionado. Use o catálogo ou crie um item livre.</div> : items.map((item) => <div key={item.id} className="document-item-row"><select value={item.kind} onChange={(event) => updateItem(item.id, { kind: event.target.value as CatalogKind })}><option value="SERVICO">Serviço</option><option value="PECA">Peça</option><option value="PRODUTO">Produto</option><option value="KIT">Kit</option><option value="MATERIAL">Material</option></select><div className="document-item-description"><input value={item.name} onChange={(event) => updateItem(item.id, { name: event.target.value })} placeholder="Descrição do item" /><input value={item.description} onChange={(event) => updateItem(item.id, { description: event.target.value })} placeholder="Detalhe, categoria ou observação" /></div><input type="number" min="0" step="1" value={item.quantity} onChange={(event) => updateItem(item.id, { quantity: Math.max(0, Number(event.target.value) || 0) })} /><input type="number" min="0" step="0.01" value={item.unitPrice} onChange={(event) => updateItem(item.id, { unitPrice: Math.max(0, Number(event.target.value) || 0) })} /><strong>{money(lineTotal(item))}</strong><button className="document-remove-item" type="button" onClick={() => onChange(items.filter((current) => current.id !== item.id))}><PremiumIcon name="trash" size={16} /></button></div>)}
+        <div className="document-items-head"><span>Tipo</span><span>Descrição, categoria e detalhe</span><span>Qtd.</span><span>Valor unit.</span><span>Total</span><span /></div>
+        {items.length === 0 ? <div className="document-items-empty">Nenhum item adicionado. Use o catálogo ou crie um item livre.</div> : items.map((item) => <div key={item.id} className="document-item-row"><select value={item.kind} onChange={(event) => updateItem(item.id, { kind: event.target.value as CatalogKind })}><option value="SERVICO">Serviço</option><option value="PECA">Peça</option><option value="PRODUTO">Produto</option><option value="KIT">Kit</option><option value="MATERIAL">Material</option></select><div className="document-item-description"><input value={item.name} onChange={(event) => updateItem(item.id, { name: event.target.value })} placeholder="Descrição do item" /><div className="document-item-meta"><input value={item.category} onChange={(event) => updateItem(item.id, { category: event.target.value })} placeholder="Categoria para agrupamento" /><input value={item.description} onChange={(event) => updateItem(item.id, { description: event.target.value })} placeholder="Detalhe ou observação" /></div></div><input type="number" min="0" step="1" value={item.quantity} onChange={(event) => updateItem(item.id, { quantity: Math.max(0, Number(event.target.value) || 0) })} /><input type="number" min="0" step="0.01" value={item.unitPrice} onChange={(event) => updateItem(item.id, { unitPrice: Math.max(0, Number(event.target.value) || 0) })} /><strong>{money(lineTotal(item))}</strong><button className="document-remove-item" type="button" onClick={() => onChange(items.filter((current) => current.id !== item.id))}><PremiumIcon name="trash" size={16} /></button></div>)}
       </div>
     </section>
   );
@@ -5028,19 +6217,51 @@ function firstName(name: string) {
   return name.trim().split(/\s+/)[0] || "cliente";
 }
 
+function normalizedLineCategory(item: DocumentLine) {
+  return item.category.trim().replace(/\s+/g, " ");
+}
+
 function quoteDisplayItems(quote: Quote) {
   const valid = quote.items.filter((item) => item.name.trim());
   if (!quote.combinePartsLabor || valid.length <= 1) return valid;
-  const services = valid.filter((item) => item.kind === "SERVICO");
-  const materials = valid.filter((item) => item.kind !== "SERVICO");
-  if (!materials.length) return valid;
-  const base = services[0] ?? materials[0];
-  const total = valid.reduce((sum, item) => sum + lineTotal(item), 0);
-  const names = valid.map((item) => item.name.trim()).filter(Boolean);
-  const description = services.length
-    ? [base.description.trim(), `Inclui: ${names.join(" · ")}`].filter(Boolean).join(" — ")
-    : [base.description.trim(), names.slice(1).length ? `Composição: ${names.join(" · ")}` : ""].filter(Boolean).join(" — ");
-  return [{ ...base, id: `${base.id}-combined`, quantity: 1, unitPrice: total, description, kind: services.length ? "SERVICO" as CatalogKind : base.kind }];
+
+  const grouped = new Map<string, DocumentLine[]>();
+  valid.forEach((item, index) => {
+    const category = normalizedLineCategory(item);
+    // Sem categoria explícita, o item permanece isolado para impedir uniões indevidas.
+    const key = category ? category.toLocaleLowerCase("pt-BR") : `__isolated_${index}`;
+    const current = grouped.get(key) || [];
+    current.push(item);
+    grouped.set(key, current);
+  });
+
+  return Array.from(grouped.values()).flatMap((group) => {
+    const services = group.filter((item) => item.kind === "SERVICO");
+    const materials = group.filter((item) => item.kind !== "SERVICO");
+    // Só existe união peça + mão de obra quando a categoria possui pelo menos um serviço e um material.
+    if (!services.length || !materials.length) return group;
+
+    const base = services[0];
+    const category = normalizedLineCategory(base) || normalizedLineCategory(group[0]);
+    const total = group.reduce((sum, item) => sum + lineTotal(item), 0);
+    const included = group
+      .filter((item) => item.id !== base.id)
+      .map((item) => item.name.trim())
+      .filter(Boolean);
+    const details = [base.description.trim(), included.length ? `Inclui: ${included.join(" · ")}` : ""]
+      .filter(Boolean)
+      .join(" — ");
+
+    return [{
+      ...base,
+      id: `${base.id}-combined-${category || "categoria"}`,
+      category,
+      quantity: 1,
+      unitPrice: total,
+      description: details,
+      kind: "SERVICO" as CatalogKind,
+    }];
+  });
 }
 
 function buildQuoteMessage(quote: Quote, companyName: string, consultiveEnhancement = false) {
@@ -5185,7 +6406,7 @@ function QuoteEditor({
   return <section className="document-editor-page">
     <header className="document-editor-header"><div><small>ORÇAMENTO · {companyName}</small><h2>{quote.code}</h2><p>{quote.customer} · {quote.vehicle} · {quote.plate}</p></div><div><button className="outline" onClick={onBack}>← Voltar à lista</button><button className="outline" onClick={downloadQuote}>Baixar orçamento</button><button className="outline" onClick={printQuote}>Imprimir / PDF</button><button className="primary" onClick={onSaved}>Salvar orçamento</button></div></header>
     <section className="document-editor-grid quote-editor-grid">
-      <article className="document-editor-card"><h3>Condições comerciais</h3><div className="document-form-grid"><Field label="Status"><select value={quote.status} onChange={(event) => update({ status: event.target.value as QuoteStatus })}><option value="ABERTO">Aberto</option><option value="FECHADO">Fechado</option><option value="AGUARDANDO_APROVACAO">Aguardando aprovação</option><option value="AGUARDANDO_COTACAO">Aguardando cotação</option><option value="AGUARDANDO_DIGITACAO">Aguardando digitação</option><option value="INCOMPLETO">Incompleto</option><option value="AGUARDANDO_RETORNO_CLIENTE">Aguardando retorno do cliente</option><option value="AGUARDANDO_DESCONTO">Aguardando desconto</option></select></Field><Field label="Validade"><div className="validity-field"><div className="input-suffix"><input type="number" min="0" value={quote.validityDays} onChange={(event) => update({ validityDays: Math.max(0, Number(event.target.value) || 0) })} /><span>dias</span></div><small>Use 0 para não exibir validade.</small></div></Field><Field label="Forma de pagamento"><select value={quote.paymentMethod} onChange={(event) => update({ paymentMethod: event.target.value as PaymentMethod })}><option value="PIX">Pix</option><option value="DEBITO">Débito</option><option value="CREDITO">Crédito</option><option value="DINHEIRO">Dinheiro</option><option value="OUTRO">Outro</option></select></Field>{quote.paymentMethod === "CREDITO" && <Field label="Parcelamento em até"><select value={quote.installments} onChange={(event) => update({ installments: Number(event.target.value) })}>{Array.from({ length: 12 }, (_, index) => index + 1).map((value) => <option key={value} value={value}>{value}x</option>)}</select></Field>}<Field label="Desconto R$"><input type="number" min="0" step="0.01" value={quote.discountAmount} onChange={(event) => update({ discountAmount: Math.max(0, Number(event.target.value) || 0) })} /></Field><Field label="Desconto %"><input type="number" min="0" max="100" step="0.01" value={quote.discountPercent} onChange={(event) => update({ discountPercent: Math.max(0, Math.min(100, Number(event.target.value) || 0)) })} /></Field></div><label className="quote-combine-toggle"><input type="checkbox" checked={quote.combinePartsLabor} onChange={(event) => update({ combinePartsLabor: event.target.checked })} /><span><strong>Unir peça + mão de obra</strong><small>Oculta peças e materiais no documento e soma seus valores ao serviço.</small></span></label></article>
+      <article className="document-editor-card"><h3>Condições comerciais</h3><div className="document-form-grid"><Field label="Status"><select value={quote.status} onChange={(event) => update({ status: event.target.value as QuoteStatus })}><option value="ABERTO">Aberto</option><option value="FECHADO">Fechado</option><option value="AGUARDANDO_APROVACAO">Aguardando aprovação</option><option value="AGUARDANDO_COTACAO">Aguardando cotação</option><option value="AGUARDANDO_DIGITACAO">Aguardando digitação</option><option value="INCOMPLETO">Incompleto</option><option value="AGUARDANDO_RETORNO_CLIENTE">Aguardando retorno do cliente</option><option value="AGUARDANDO_DESCONTO">Aguardando desconto</option></select></Field><Field label="Validade"><div className="validity-field"><div className="input-suffix"><input type="number" min="0" value={quote.validityDays} onChange={(event) => update({ validityDays: Math.max(0, Number(event.target.value) || 0) })} /><span>dias</span></div><small>Use 0 para não exibir validade.</small></div></Field><Field label="Forma de pagamento"><select value={quote.paymentMethod} onChange={(event) => update({ paymentMethod: event.target.value as PaymentMethod })}><option value="PIX">Pix</option><option value="DEBITO">Débito</option><option value="CREDITO">Crédito</option><option value="DINHEIRO">Dinheiro</option><option value="OUTRO">Outro</option></select></Field>{quote.paymentMethod === "CREDITO" && <Field label="Parcelamento em até"><select value={quote.installments} onChange={(event) => update({ installments: Number(event.target.value) })}>{Array.from({ length: 12 }, (_, index) => index + 1).map((value) => <option key={value} value={value}>{value}x</option>)}</select></Field>}<Field label="Desconto R$"><input type="number" min="0" step="0.01" value={quote.discountAmount} onChange={(event) => update({ discountAmount: Math.max(0, Number(event.target.value) || 0) })} /></Field><Field label="Desconto %"><input type="number" min="0" max="100" step="0.01" value={quote.discountPercent} onChange={(event) => update({ discountPercent: Math.max(0, Math.min(100, Number(event.target.value) || 0)) })} /></Field></div><label className="quote-combine-toggle"><input type="checkbox" checked={quote.combinePartsLabor} onChange={(event) => update({ combinePartsLabor: event.target.checked })} /><span><strong>Unir peça + mão de obra</strong><small>Une somente os itens que possuem a mesma categoria. Itens sem categoria permanecem separados.</small></span></label></article>
       <article className="document-editor-card quote-message-card"><div className="message-card-heading"><div><h3>Mensagem ao cliente</h3><span>Modelo profissional com emojis e edição livre.</span></div><select value={quote.messageTemplate} onChange={(event) => changeTemplate(event.target.value as QuoteMessageTemplate)}>{(["PROFISSIONAL", "DIRETA", "CONSULTIVA", "PREVENTIVA", "AMIGAVEL", "FORMAL", "COMERCIAL", "CURTA"] as QuoteMessageTemplate[]).map((template) => <option key={template} value={template}>{quoteMessageTemplateLabel(template)}</option>)}</select></div><textarea rows={14} value={message} onChange={(event) => setMessageOverride(event.target.value)} /><div className="quote-message-actions"><span>Padrão da empresa: {quoteDeliveryLabel(deliveryMode)}</span><button className="outline" type="button" onClick={() => setMessageOverride(null)}>Restaurar automático</button>{deliveryMode !== "LINK" && <button className="outline" type="button" onClick={copyMessage}>Copiar mensagem</button>}<button className="primary" type="button" onClick={shareWhatsApp}>Abrir WhatsApp</button></div></article>
     </section>
     <section className="quote-ai-assistant"><div className="quote-ai-heading"><div className="quote-ai-icon">✦</div><div><small>ASSISTENTE CONSULTIVO GERIVO</small><h3>Análise inteligente da proposta</h3><p>Revisa clareza, condições comerciais e prontidão para envio.</p></div><div><button className="outline" type="button" onClick={() => setAssistantOpen((current) => !current)}>{assistantOpen ? "Ocultar análise" : "Analisar orçamento"}</button><button className="primary" type="button" onClick={applyConsultiveImprovement}>Melhorar mensagem</button></div></div>{assistantOpen && <div className="quote-ai-suggestions">{suggestions.map((suggestion, index) => <div key={`${index}-${suggestion}`}><span>{index + 1}</span><p>{suggestion}</p></div>)}</div>}</section>

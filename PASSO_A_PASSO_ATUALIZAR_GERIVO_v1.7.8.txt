@@ -1,0 +1,58 @@
+PASSO A PASSO — GERIVO v1.7.8
+
+CENÁRIO: sistema atualmente na v1.7.6 e v1.7.7 não instalada.
+
+1. BACKUP
+- Copie a pasta atual do Gerivo.
+- Preserve o arquivo .env.local.
+
+2. BANCO DE DADOS — UMA ÚNICA EXECUÇÃO
+- Abra o Supabase.
+- Entre em SQL Editor.
+- Abra o arquivo SQL_ATUALIZAR_v1.7.6_PARA_v1.7.8.sql.
+- Copie todo o conteúdo.
+- Execute uma única vez.
+- Confirme que não houve erro.
+
+3. PROJETO
+Substitua no projeto:
+- src
+- public
+- supabase
+- package.json
+- package-lock.json
+- next.config.ts
+- tsconfig.json
+- eslint.config.mjs
+- postcss.config.mjs
+
+Preserve:
+- .env.local
+- dados e configurações da Vercel
+
+4. DEPENDÊNCIAS E TESTE LOCAL
+npm install
+npm run build
+npm run dev
+
+5. PRIMEIRA SINCRONIZAÇÃO
+- Entre primeiro com o usuário/computador que possui os dados mais completos.
+- Abra a unidade correta.
+- Aguarde o indicador “Loja sincronizada”.
+- Só depois entre com os outros usuários da mesma unidade.
+
+6. VERCEL
+- Envie o projeto ao repositório ou faça o deploy.
+- Confirme as variáveis:
+  NEXT_PUBLIC_SUPABASE_URL
+  NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
+  SUPABASE_SECRET_KEY
+- Faça um novo deployment.
+
+7. TESTES OBRIGATÓRIOS
+- Criar orçamento no usuário A e abrir no usuário B da mesma loja.
+- Alterar o orçamento no usuário B e confirmar atualização no usuário A.
+- Fazer checklist no celular tocando nas respostas sem abrir a câmera.
+- Tocar em Adicionar foto e confirmar câmera/galeria.
+- Editar preço de um plano no MASTER e recarregar o site de vendas.
+- Testar aviso de inatividade reduzindo temporariamente os tempos no código, se necessário.

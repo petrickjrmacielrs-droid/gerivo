@@ -20,6 +20,7 @@ export async function POST(request: Request) {
     const fullName = String(body.fullName || "").trim();
     const email = String(body.email || "").trim().toLowerCase();
     const password = String(body.password || "");
+    const phone = String(body.phone || "").trim();
     const role = ["ADMIN", "MANAGER", "MEMBER"].includes(body.role) ? body.role : "MEMBER";
     if (!companyId || !username || !fullName || !email || password.length < 8) {
       return NextResponse.json({ error: "Preencha nome, usuário, e-mail e senha temporária com 8 caracteres." }, { status: 400 });
@@ -30,8 +31,18 @@ export async function POST(request: Request) {
       admin.from("company_members").select("role, active").eq("company_id", companyId).eq("user_id", authData.user.id).maybeSingle(),
     ]);
     const platformMaster = requesterProfile?.platform_role === "MASTER" && requesterProfile?.active;
-    const companyAdmin = requesterMember?.active && ["MASTER", "ADMIN"].includes(requesterMember.role);
-    if (!platformMaster && !companyAdmin) return NextResponse.json({ error: "Sem permissão para criar usuários." }, { status: 403 });
+    const requesterRole = requesterMember?.active ? String(requesterMember.role || "MEMBER") : "MEMBER";
+    const companyAdmin = ["MASTER", "ADMIN"].includes(requesterRole);
+    const companyManager = requesterRole === "MANAGER";
+    if (!platformMaster && !companyAdmin && !companyManager) return NextResponse.json({ error: "Sem permissão para criar usuários." }, { status: 403 });
+    if (companyManager && role !== "MEMBER") return NextResponse.json({ error: "Gestores podem criar somente usuários do perfil Usuário." }, { status: 403 });
+    if (companyManager) {
+      const { data: allowedStores } = await admin.from("store_members").select("store_id").eq("user_id", authData.user.id).eq("company_id", companyId).eq("active", true);
+      const allowed = new Set((allowedStores || []).map((item: any) => String(item.store_id)));
+      if (!storeIds.length || storeIds.some((id: string) => !allowed.has(id))) {
+        return NextResponse.json({ error: "O gestor só pode criar usuários nas unidades em que possui acesso." }, { status: 403 });
+      }
+    }
 
     const [{ count: usernameCount }, { count: activeUsers }, { data: subscription }] = await Promise.all([
       admin.from("profiles").select("id", { count: "exact", head: true }).eq("username_normalized", username),
@@ -61,6 +72,7 @@ export async function POST(request: Request) {
       username_normalized: username,
       email,
       recovery_email: email,
+      phone: phone || null,
       must_change_password: true,
       active: true,
     }).eq("id", userId);
@@ -68,7 +80,7 @@ export async function POST(request: Request) {
     if (storeIds.length) {
       const stores = await admin.from("stores").select("id, company_id").in("id", storeIds).eq("company_id", companyId);
       if (stores.data?.length) {
-        await admin.from("store_members").upsert(stores.data.map((store) => ({ store_id: store.id, company_id: companyId, user_id: userId, role, active: true })));
+        await admin.from("store_members").upsert(stores.data.map((store: any) => ({ store_id: store.id, company_id: companyId, user_id: userId, role, active: true })));
       }
     }
     return NextResponse.json({ id: userId, username });
