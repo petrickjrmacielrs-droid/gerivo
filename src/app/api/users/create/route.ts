@@ -22,8 +22,8 @@ export async function POST(request: Request) {
     const password = String(body.password || "");
     const phone = String(body.phone || "").trim();
     const role = ["ADMIN", "MANAGER", "MEMBER"].includes(body.role) ? body.role : "MEMBER";
-    if (!companyId || !username || !fullName || !email || password.length < 8) {
-      return NextResponse.json({ error: "Preencha nome, usuário, e-mail e senha temporária com 8 caracteres." }, { status: 400 });
+    if (!companyId || !username || !fullName || !email || password.length < 8 || storeIds.length === 0) {
+      return NextResponse.json({ error: "Preencha nome, usuário, e-mail, senha temporária e ao menos uma unidade." }, { status: 400 });
     }
 
     const [{ data: requesterProfile }, { data: requesterMember }] = await Promise.all([
@@ -42,6 +42,13 @@ export async function POST(request: Request) {
       if (!storeIds.length || storeIds.some((id: string) => !allowed.has(id))) {
         return NextResponse.json({ error: "O gestor só pode criar usuários nas unidades em que possui acesso." }, { status: 403 });
       }
+    }
+
+    const { data: validStores, error: validStoresError } = await admin.from("stores").select("id").eq("company_id", companyId).in("id", storeIds);
+    if (validStoresError) throw validStoresError;
+    const validStoreIds = new Set((validStores || []).map((item: any) => String(item.id)));
+    if (storeIds.some((id: string) => !validStoreIds.has(id))) {
+      return NextResponse.json({ error: "Uma das unidades selecionadas não pertence à empresa." }, { status: 400 });
     }
 
     const [{ count: usernameCount }, { count: activeUsers }, { data: subscription }] = await Promise.all([
@@ -77,12 +84,8 @@ export async function POST(request: Request) {
       active: true,
     }).eq("id", userId);
     await admin.from("company_members").upsert({ company_id: companyId, user_id: userId, role, active: true });
-    if (storeIds.length) {
-      const stores = await admin.from("stores").select("id, company_id").in("id", storeIds).eq("company_id", companyId);
-      if (stores.data?.length) {
-        await admin.from("store_members").upsert(stores.data.map((store: any) => ({ store_id: store.id, company_id: companyId, user_id: userId, role, active: true })));
-      }
-    }
+    await admin.from("store_members").upsert(Array.from(validStoreIds).map((storeId) => ({ store_id: storeId, company_id: companyId, user_id: userId, role, active: true })));
+    await admin.from("audit_logs").insert({ company_id: companyId, user_id: authData.user.id, action: "USER_CREATED", entity: "profile", entity_id: userId, new_value: { fullName, username, email, phone, role, storeIds } });
     return NextResponse.json({ id: userId, username });
   } catch (error) {
     console.error("Gerivo create user:", error);

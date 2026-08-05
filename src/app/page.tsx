@@ -119,6 +119,8 @@ type ServiceOrderStatus = "ABERTA" | "FECHADA" | "PENDENTE" | "INCOMPLETA";
 type QuoteStatus =
   | "ABERTO"
   | "FECHADO"
+  | "APROVADO"
+  | "NAO_APROVADO"
   | "AGUARDANDO_APROVACAO"
   | "AGUARDANDO_COTACAO"
   | "AGUARDANDO_DIGITACAO"
@@ -138,6 +140,16 @@ type QuoteMessageTemplate =
   | "FORMAL"
   | "COMERCIAL"
   | "CURTA";
+type QuoteMessageSituation = "ENVIO" | "SEM_RETORNO" | "APROVADO" | "NAO_APROVADO" | "PNEUS" | "AGENDAMENTO";
+type QuoteMessageLog = {
+  id: string;
+  situation: QuoteMessageSituation;
+  template: QuoteMessageTemplate;
+  text: string;
+  action: "GERADA" | "COPIADA" | "WHATSAPP" | "REGISTRADA";
+  createdAt: string;
+  createdBy: string;
+};
 type AppointmentStatus = "AGENDADO" | "CONFIRMADO" | "EM_ATENDIMENTO" | "CONCLUIDO" | "CANCELADO";
 type AppointmentSettings = {
   startTime: string;
@@ -387,6 +399,10 @@ type Quote = {
   discountPercent: number;
   messageTemplate: QuoteMessageTemplate;
   combinePartsLabor: boolean;
+  rejectionReason: string;
+  rejectionNotes: string;
+  statusChangedAt: string;
+  messageHistory: QuoteMessageLog[];
   items: DocumentLine[];
 };
 type StoreData = {
@@ -1234,6 +1250,10 @@ function createQuote(quotes: Quote[], identity: LinkedIdentity, storeId: string,
     discountPercent: 0,
     messageTemplate,
     combinePartsLabor: false,
+    rejectionReason: "",
+    rejectionNotes: "",
+    statusChangedAt: now,
+    messageHistory: [],
     items: [],
   };
 }
@@ -1260,6 +1280,18 @@ function normalizeStageStatus(attendanceStatus: AttendanceStatus, stageId: Stage
   if (stageId === "quality") return qualityDone ? "CONCLUIDO" : attendanceStatus === "QUALITY" ? "EM_ANDAMENTO" : "NAO_INICIADO";
   if (checkoutDone) return "CONCLUIDO";
   return attendanceStatus === "CHECKOUT" ? "EM_ANDAMENTO" : "NAO_INICIADO";
+}
+
+function dedupeDocumentsByCode<T extends { code: string; updatedAt?: string; createdAt?: string }>(items: T[]): T[] {
+  const byCode = new Map<string, T>();
+  for (const item of items) {
+    const code = item.code?.trim().toUpperCase() || `SEM-CODIGO-${byCode.size}`;
+    const current = byCode.get(code);
+    const itemDate = item.updatedAt || item.createdAt || "";
+    const currentDate = current?.updatedAt || current?.createdAt || "";
+    if (!current || itemDate >= currentDate) byCode.set(code, item);
+  }
+  return Array.from(byCode.values());
 }
 
 function normalizeStoreData(parsed: Partial<StoreData>, storeId: string): StoreData {
@@ -1462,6 +1494,18 @@ function normalizeStoreData(parsed: Partial<StoreData>, storeId: string): StoreD
       discountPercent,
       messageTemplate: quote.messageTemplate ?? companySettings.quoteMessageTemplate ?? "PROFISSIONAL",
       combinePartsLabor: Boolean(quote.combinePartsLabor),
+      rejectionReason: quote.rejectionReason ?? "",
+      rejectionNotes: quote.rejectionNotes ?? "",
+      statusChangedAt: quote.statusChangedAt ?? quote.updatedAt ?? quote.createdAt ?? new Date().toISOString(),
+      messageHistory: Array.isArray(quote.messageHistory) ? quote.messageHistory.map((entry: any) => ({
+        id: entry.id || uid(),
+        situation: entry.situation || "ENVIO",
+        template: entry.template || "PROFISSIONAL",
+        text: entry.text || "",
+        action: entry.action || "REGISTRADA",
+        createdAt: entry.createdAt || new Date().toISOString(),
+        createdBy: entry.createdBy || "Usuário",
+      })) : [],
       items,
       total,
       updatedAt: quote.updatedAt ?? quote.createdAt ?? new Date().toISOString(),
@@ -1498,7 +1542,23 @@ function normalizeStoreData(parsed: Partial<StoreData>, storeId: string): StoreD
     updatedAt: entry.updatedAt || entry.createdAt || new Date().toISOString(),
   }));
 
-  return { customers: linkedCustomers, vehicles: linkedVehicles, catalog, suppliers, appointments, appointmentSettings, appointmentBlocks, serviceTypes, checklistSettings: settings, companySettings, companyIdentity, attendances: linkedAttendances, orders, quotes, knowledgeBase };
+  return {
+    customers: linkedCustomers,
+    vehicles: linkedVehicles,
+    catalog,
+    suppliers,
+    appointments,
+    appointmentSettings,
+    appointmentBlocks,
+    serviceTypes,
+    checklistSettings: settings,
+    companySettings,
+    companyIdentity,
+    attendances: linkedAttendances,
+    orders: dedupeDocumentsByCode(orders),
+    quotes: dedupeDocumentsByCode(quotes),
+    knowledgeBase,
+  };
 }
 
 function isolateStoreData(storeId: string, data: StoreData): StoreData {
@@ -1628,6 +1688,35 @@ function money(value: number) {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value);
 }
 
+function parseBRLCurrency(value: string) {
+  const digits = value.replace(/\D/g, "");
+  return digits ? Number(digits) / 100 : 0;
+}
+
+function formatBRLCurrencyInput(value: number) {
+  return money(Math.max(0, Number(value) || 0));
+}
+
+function documentDigits(value: string) {
+  return String(value || "").replace(/\D/g, "").slice(0, 14);
+}
+
+function formatCnpjInput(value: string) {
+  const digits = documentDigits(value);
+  if (!digits) return "";
+  return digits
+    .replace(/^(\d{2})(\d)/, "$1.$2")
+    .replace(/^(\d{2})\.(\d{3})(\d)/, "$1.$2.$3")
+    .replace(/\.(\d{3})(\d)/, ".$1/$2")
+    .replace(/(\d{4})(\d)/, "$1-$2");
+}
+
+function CurrencyInput({ value, onChange, ariaLabel }: { value: number; onChange: (value: number) => void; ariaLabel?: string }) {
+  const [draft, setDraft] = useState(() => formatBRLCurrencyInput(value));
+  useEffect(() => setDraft(formatBRLCurrencyInput(value)), [value]);
+  return <input aria-label={ariaLabel} className="currency-input" inputMode="numeric" value={draft} onFocus={(event) => event.currentTarget.select()} onChange={(event) => { const next = parseBRLCurrency(event.target.value); setDraft(formatBRLCurrencyInput(next)); onChange(next); }} />;
+}
+
 function formatDate(value: string) {
   return new Date(value).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
 }
@@ -1650,7 +1739,9 @@ function serviceOrderStatusLabel(status: ServiceOrderStatus) {
 function quoteStatusLabel(status: QuoteStatus) {
   return ({
     ABERTO: "Aberto",
-    FECHADO: "Fechado",
+    FECHADO: "Aprovado (legado)",
+    APROVADO: "Aprovado",
+    NAO_APROVADO: "Não aprovado",
     AGUARDANDO_APROVACAO: "Aguardando aprovação",
     AGUARDANDO_COTACAO: "Aguardando cotação",
     AGUARDANDO_DIGITACAO: "Aguardando digitação",
@@ -1658,6 +1749,14 @@ function quoteStatusLabel(status: QuoteStatus) {
     AGUARDANDO_RETORNO_CLIENTE: "Aguardando retorno do cliente",
     AGUARDANDO_DESCONTO: "Aguardando desconto",
   } as const)[status];
+}
+
+function quoteIsApproved(status: QuoteStatus) {
+  return status === "APROVADO" || status === "FECHADO";
+}
+
+function quoteIsTerminal(status: QuoteStatus) {
+  return quoteIsApproved(status) || status === "NAO_APROVADO";
 }
 
 function checklistListStatus(attendance: Attendance): Exclude<ChecklistListStatus, "TODOS"> {
@@ -1984,6 +2083,7 @@ export default function Home() {
   const [authLoading, setAuthLoading] = useState(true);
   const [authStage, setAuthStage] = useState("Confirmando sua sessão...");
   const [authError, setAuthError] = useState("");
+  const [passwordRecoveryMode, setPasswordRecoveryMode] = useState(false);
   const [stores, setStores] = useState<Store[]>([]);
   const [needsOnboarding, setNeedsOnboarding] = useState(false);
   const [page, setPage] = useState<Page>("dashboard");
@@ -2040,10 +2140,11 @@ export default function Home() {
 
     initializeAuth();
 
-    const { data: listener } = supabase.auth.onAuthStateChange((_event: string, nextSession: any) => {
+    const { data: listener } = supabase.auth.onAuthStateChange((event: string, nextSession: any) => {
       if (!mounted) return;
       setSession(nextSession);
       setAuthError("");
+      if (event === "PASSWORD_RECOVERY") setPasswordRecoveryMode(true);
       if (nextSession?.user) {
         const nextUserId = nextSession.user.id;
         if (authenticatedUserIdRef.current !== nextUserId) {
@@ -2642,7 +2743,14 @@ export default function Home() {
       return;
     }
     if (loadedStoreIdRef.current !== EMPTY_STORE_ID) saveStore(loadedStoreIdRef.current, latestDataRef.current);
+    void flushCurrentData();
+    // A barra lateral sempre leva ao índice do módulo. O conteúdo em edição
+    // permanece no rascunho da unidade e pode ser reaberto pela listagem.
+    setActiveAttendanceId(null);
+    setActiveOrderId(null);
+    setActiveQuoteId(null);
     setPage(target);
+    window.requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "smooth" }));
   }
 
   function openStartFlow(target: StartTarget) {
@@ -2743,7 +2851,7 @@ export default function Home() {
     if (stageId === "checkup") {
       const requiresDocument = data.companySettings.modules.ORDERS || data.companySettings.modules.QUOTES;
       const hasLinkedOrder = data.orders.some((item) => item.attendanceId === attendance.id && item.status !== "FECHADA");
-      const hasLinkedQuote = data.quotes.some((item) => item.attendanceId === attendance.id && item.status !== "FECHADO");
+      const hasLinkedQuote = data.quotes.some((item) => item.attendanceId === attendance.id && !quoteIsTerminal(item.status));
       if (requiresDocument && !hasLinkedOrder && !hasLinkedQuote) {
         window.alert("Antes de iniciar o Check-up, escolha se o atendimento seguirá por O.S. ou orçamento.");
         return;
@@ -2786,7 +2894,7 @@ export default function Home() {
       }
       setActiveQuoteId(null);
     } else {
-      const existing = data.quotes.find((item) => item.attendanceId === attendance.id && item.status !== "FECHADO");
+      const existing = data.quotes.find((item) => item.attendanceId === attendance.id && !quoteIsTerminal(item.status));
       if (existing) {
         setActiveQuoteId(existing.id);
       } else {
@@ -2822,6 +2930,13 @@ export default function Home() {
 
   if (authLoading) return <SystemLoading stage={authStage} />;
   if (!session) return <Login onSubmit={login} onRecover={recoverPassword} error={authError} />;
+  if (passwordRecoveryMode) return <PasswordResetPage onSubmit={async (password) => {
+    const { error } = await supabase.auth.updateUser({ password });
+    if (error) throw error;
+    setPasswordRecoveryMode(false);
+    setToast("Senha atualizada com sucesso");
+    if (session?.user?.id) await loadAccessContext(session.user.id);
+  }} onLogout={logout} />;
   if (needsOnboarding) return platformRole === "MASTER" ? <CompanyOnboarding onSubmit={bootstrapCompany} onLogout={logout} error={authError} /> : <NoAccess onLogout={logout} />;
   if (!ready || !stores.length) return <EnvironmentRecovery error={authError || "Não foi possível terminar de carregar seu ambiente."} onRetry={() => session?.user && loadAccessContext(session.user.id)} onLogout={logout} />;
 
@@ -2959,6 +3074,7 @@ export default function Home() {
           {page === "dashboard" && (
             <Dashboard
               store={brandedStore}
+              stores={stores}
               data={data}
               onCreate={() => openStartFlow("CHECKLIST")}
               onOpen={openAttendance}
@@ -2994,10 +3110,6 @@ export default function Home() {
             <BusinessIntelligencePage data={data} />
           )}
 
-          {page === "messages" && (
-            <MessageCenterPage store={brandedStore} />
-          )}
-
           {page === "knowledge" && (
             <KnowledgeBasePage
               entries={data.knowledgeBase}
@@ -3008,6 +3120,7 @@ export default function Home() {
           {page === "management" && (
             <ManagementHub
               store={brandedStore}
+              stores={stores}
               data={data}
               isPlatformMaster={platformRole === "MASTER"}
               sessionAccessToken={session?.access_token || ""}
@@ -3082,6 +3195,7 @@ export default function Home() {
                 order={activeOrder}
                 catalog={data.catalog}
                 companyName={data.companyIdentity.displayName}
+                catalogEnabled={data.companySettings.modules.CATALOG}
                 onChange={(updated) => setData({ ...data, orders: data.orders.map((item) => item.id === updated.id ? updated : item) })}
                 onBack={() => setActiveOrderId(null)}
                 onSaved={() => { setToast(`${activeOrder.code} salva`); if (saveToastTimer.current) window.clearTimeout(saveToastTimer.current); saveToastTimer.current = window.setTimeout(() => setToast(""), 3000); }}
@@ -3102,6 +3216,7 @@ export default function Home() {
               <QuoteEditor
                 quote={activeQuote}
                 catalog={data.catalog}
+                catalogEnabled={data.companySettings.modules.CATALOG}
                 companyName={data.companyIdentity.displayName}
                 companyIdentity={data.companyIdentity}
                 customer={data.customers.find((item) => item.id === activeQuote.customerId) ?? null}
@@ -3115,6 +3230,8 @@ export default function Home() {
                 quotes={data.quotes}
                 attendances={data.attendances}
                 deliveryMode={data.companySettings.quoteDeliveryMode}
+                companyName={data.companyIdentity.displayName}
+                currentUserName={userProfile.preferredName}
                 onChange={(quotes) => setData({ ...data, quotes })}
                 onCreate={createStandaloneQuote}
                 onOpen={setActiveQuoteId}
@@ -3150,7 +3267,7 @@ export default function Home() {
           vehicles={data.vehicles}
           attendances={data.attendances}
           currentStoreId={storeId}
-          defaultResponsible=""
+          defaultResponsible={userProfile.preferredName || "Usuário"}
           onClose={() => setStartFlow({ ...startFlow, open: false })}
           onComplete={completeStartFlow}
         />
@@ -3220,6 +3337,26 @@ function InactivityWarningModal({ seconds, onContinue, onLogout }: { seconds: nu
   const minutes = Math.floor(seconds / 60);
   const remainingSeconds = seconds % 60;
   return <div className="modal-backdrop inactivity-backdrop"><section className="inactivity-modal"><div className="inactivity-clock">{String(minutes).padStart(2, "0")}:{String(remainingSeconds).padStart(2, "0")}</div><small>SESSÃO SEGURA</small><h2>Você ainda está utilizando o Gerivo?</h2><p>Por segurança, a sessão será encerrada após 30 minutos sem atividade. Tudo que estava sendo feito já foi salvo neste dispositivo e sincronizado com a loja.</p><div><button type="button" className="outline" onClick={onLogout}>Sair agora</button><button type="button" className="primary" onClick={onContinue}>Continuar trabalhando</button></div></section></div>;
+}
+
+function PasswordResetPage({ onSubmit, onLogout }: { onSubmit: (password: string) => Promise<void>; onLogout: () => Promise<void> }) {
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [message, setMessage] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setMessage("");
+    if (password.length < 8) return setMessage("A senha deve ter no mínimo 8 caracteres.");
+    if (password !== confirm) return setMessage("As senhas não conferem.");
+    setSaving(true);
+    try { await onSubmit(password); }
+    catch (error) { setMessage(error instanceof Error ? error.message : "Não foi possível alterar a senha."); }
+    finally { setSaving(false); }
+  }
+
+  return <main className="password-reset-page"><form onSubmit={submit}><img src="/gerivo-logo.png" alt="Gerivo" /><small>REDEFINIÇÃO SEGURA</small><h1>Crie uma nova senha</h1><p>Defina a senha que será usada nos próximos acessos ao Gerivo.</p><Field label="Nova senha"><input type="password" autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} /></Field><Field label="Confirmar nova senha"><input type="password" autoComplete="new-password" value={confirm} onChange={(event) => setConfirm(event.target.value)} /></Field>{message && <div className="auth-error">{message}</div>}<button className="primary" disabled={saving}>{saving ? "Atualizando..." : "Atualizar senha"}</button><button type="button" className="login-link" onClick={() => void onLogout()}>Cancelar e sair</button></form></main>;
 }
 
 function SystemLoading({ stage = "Preparando seu ambiente..." }: { stage?: string }) {
@@ -3378,7 +3515,7 @@ function Login({
 
       <section className="public-contact public-contact-form" id="contato"><div><small>CONTATE-NOS</small><h2>Vamos entender a sua operação</h2><p>Preencha os dados e envie a solicitação para a equipe Gerivo.</p></div><form action="mailto:gerivo.sistemas@gmail.com" method="post" encType="text/plain"><input name="nome" placeholder="Nome" required /><input name="telefone" placeholder="Telefone" required /><input name="email" type="email" placeholder="E-mail" required /><input name="assunto" placeholder="Assunto" required /><textarea name="mensagem" rows={4} placeholder="Mensagem" required /><button className="primary">Enviar contato</button></form></section>
       <a className="public-floating-contact" href="#contato">Fale com a gente</a>
-      <footer className="public-footer"><img src="/gerivo-logo-light.png" alt="Gerivo" /><span>Gestão que gera resultados.</span><span>Gerivo v1.7.8</span></footer>
+      <footer className="public-footer"><img src="/gerivo-logo-light.png" alt="Gerivo" /><span>Gestão que gera resultados.</span><span>Gerivo v1.7.9</span></footer>
     </main>
   );
 }
@@ -3473,6 +3610,7 @@ function Dashboard({
   companySettings,
 }: {
   store: Store;
+  stores: Store[];
   data: StoreData;
   onCreate: () => void;
   onOpen: (attendance: Attendance, stageId?: StageId) => void;
@@ -3488,10 +3626,10 @@ function Dashboard({
   const sameMonth = (value: string) => { const date = new Date(value); return date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear(); };
   const openAttendances = data.attendances.filter((item) => item.status !== "CONCLUIDO");
   const monthOrders = data.orders.filter((item) => item.status === "FECHADA" && sameMonth(item.updatedAt));
-  const monthQuotes = data.quotes.filter((item) => item.status === "FECHADO" && sameMonth(item.updatedAt));
+  const monthQuotes = data.quotes.filter((item) => quoteIsApproved(item.status) && sameMonth(item.updatedAt));
   const monthRevenue = companySettings.modules.ORDERS ? monthOrders.reduce((total, item) => total + item.total, 0) : monthQuotes.reduce((total, item) => total + item.total, 0);
   const openOrders = data.orders.filter((item) => item.status !== "FECHADA");
-  const openQuotes = data.quotes.filter((item) => item.status !== "FECHADO");
+  const openQuotes = data.quotes.filter((item) => !quoteIsTerminal(item.status));
   const todayAppointments = data.appointments.filter((item) => new Date(item.startsAt).toDateString() === now.toDateString() && !["CANCELADO", "CONCLUIDO"].includes(item.status));
 
   const cards: Array<{ label: string; value: string; detail: string; icon: IconName; action?: () => void }> = [
@@ -3541,8 +3679,8 @@ function DashboardDocumentPanel({
         <div className="dashboard-document-empty">{empty}</div>
       ) : (
         <div className="dashboard-document-list">
-          {records.map((record) => (
-            <div key={record.code} className="dashboard-document-row">
+          {records.map((record, index) => (
+            <div key={`${record.code}-${record.primary}-${record.secondary}-${index}`} className="dashboard-document-row">
               <strong>{record.code}</strong>
               <div><b>{record.primary}</b><small>{record.secondary}</small></div>
               <span className={`document-status status-${record.statusClass}`}>{record.status}</span>
@@ -3557,6 +3695,7 @@ function DashboardDocumentPanel({
 
 function ManagementHub({
   store,
+  stores,
   data,
   isPlatformMaster,
   sessionAccessToken,
@@ -3571,6 +3710,7 @@ function ManagementHub({
   onOpenBi,
 }: {
   store: Store;
+  stores: Store[];
   data: StoreData;
   isPlatformMaster: boolean;
   sessionAccessToken: string;
@@ -3596,7 +3736,6 @@ function ManagementHub({
     { key: "inventory", label: "Estoque", icon: "box", value: lowStock ? `${lowStock} alertas` : "Estoque regular", action: onOpenInventory, module: "INVENTORY" },
     { key: "checklist", label: "Modelos de checklist", icon: "clipboard", value: data.checklistSettings.name, action: onOpenChecklist, module: "CHECKLIST" },
     { key: "knowledge", label: "Conhecimento da IA", icon: "sparkle", value: `${data.knowledgeBase.length} procedimentos`, action: onOpenKnowledge, module: "ASSISTANT" },
-    { key: "messages", label: "Central de mensagens", icon: "file", value: "Modelos comerciais", action: onOpenMessages, module: "MESSAGES" },
     { key: "bi", label: "Gerivo BI", icon: "chart", value: "Período mensal ou personalizado", action: onOpenBi, module: "BI" },
     { key: "users", label: "Usuários e acessos", icon: "users", value: "Criar e editar usuários", action: () => setUsersOpen(true) },
   ];
@@ -3620,6 +3759,7 @@ function ManagementHub({
       {usersOpen && (
         <UserAccessModal
           store={store}
+          companyStores={stores.filter((item) => item.companyId === store.companyId)}
           accessToken={sessionAccessToken}
           onClose={() => setUsersOpen(false)}
         />
@@ -3646,6 +3786,7 @@ type ManagedCompanyUser = {
   companyActive: boolean;
   storeActive: boolean;
   platformRole: "USER" | "MASTER";
+  storeIds: string[];
   createdAt: string | null;
 };
 
@@ -3656,11 +3797,14 @@ function userRoleLabel(role: string) {
   return "Usuário";
 }
 
-function UserAccessModal({ store, accessToken, onClose }: { store: Store; accessToken: string; onClose: () => void }) {
+function UserAccessModal({ store, companyStores, accessToken, onClose }: { store: Store; companyStores: Store[]; accessToken: string; onClose: () => void }) {
   const [mode, setMode] = useState<"LIST" | "CREATE" | "EDIT">("LIST");
   const [users, setUsers] = useState<ManagedCompanyUser[]>([]);
+  const [availableStores, setAvailableStores] = useState<Store[]>(companyStores);
   const [requesterRole, setRequesterRole] = useState("MEMBER");
+  const [requesterStoreIds, setRequesterStoreIds] = useState<string[]>([]);
   const [selectedUser, setSelectedUser] = useState<ManagedCompanyUser | null>(null);
+  const [selectedStoreIds, setSelectedStoreIds] = useState<string[]>([store.id]);
   const [search, setSearch] = useState("");
   const [fullName, setFullName] = useState("");
   const [username, setUsername] = useState("");
@@ -3669,16 +3813,22 @@ function UserAccessModal({ store, accessToken, onClose }: { store: Store; access
   const [password, setPassword] = useState("");
   const [role, setRole] = useState<"ADMIN" | "MANAGER" | "MEMBER">("MEMBER");
   const [active, setActive] = useState(true);
-  const [storeAccess, setStoreAccess] = useState(true);
   const [availability, setAvailability] = useState<"idle" | "checking" | "available" | "unavailable">("idle");
   const [message, setMessage] = useState("");
   const [messageError, setMessageError] = useState(false);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-
   const canAssignElevatedRoles = requesterRole === "MASTER" || requesterRole === "ADMIN";
+  const canSetTemporaryPassword = canAssignElevatedRoles;
   const originalUsername = selectedUser?.username || "";
-  const filteredUsers = users.filter((user) => `${user.fullName} ${user.username} ${user.email} ${userRoleLabel(user.role)}`.toLowerCase().includes(search.trim().toLowerCase()));
+  const filteredUsers = users.filter((user) =>
+    `${user.fullName} ${user.username} ${user.email} ${userRoleLabel(user.role)}`
+      .toLowerCase()
+      .includes(search.trim().toLowerCase()),
+  );
+  const manageableStores = requesterRole === "MANAGER"
+    ? availableStores.filter((item) => requesterStoreIds.includes(item.id))
+    : availableStores;
 
   function resetForm() {
     setSelectedUser(null);
@@ -3689,7 +3839,7 @@ function UserAccessModal({ store, accessToken, onClose }: { store: Store; access
     setPassword("");
     setRole("MEMBER");
     setActive(true);
-    setStoreAccess(true);
+    setSelectedStoreIds([store.id]);
     setAvailability("idle");
     setMessage("");
     setMessageError(false);
@@ -3708,6 +3858,15 @@ function UserAccessModal({ store, accessToken, onClose }: { store: Store; access
       if (!response.ok) throw new Error(payload.error || "Falha ao carregar usuários.");
       setUsers(Array.isArray(payload.users) ? payload.users : []);
       setRequesterRole(String(payload.requesterRole || "MEMBER"));
+      setRequesterStoreIds(Array.isArray(payload.requesterStoreIds) ? payload.requesterStoreIds : [store.id]);
+      if (Array.isArray(payload.stores)) {
+        setAvailableStores(payload.stores.map((item: any) => ({
+          ...store,
+          id: String(item.id),
+          name: String(item.name),
+          companyId: store.companyId,
+        })));
+      }
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Falha ao carregar usuários.");
       setMessageError(true);
@@ -3717,18 +3876,15 @@ function UserAccessModal({ store, accessToken, onClose }: { store: Store; access
   }
 
   useEffect(() => { void loadUsers(); }, [store.companyId, store.id]);
-
   useEffect(() => {
     if (!message || messageError) return;
     const timer = window.setTimeout(() => setMessage(""), 3000);
     return () => window.clearTimeout(timer);
   }, [message, messageError]);
-
   useEffect(() => {
     if (mode !== "CREATE" || !fullName.trim() || username.trim()) return;
     setUsername(suggestUsername(fullName, store.publicCode));
   }, [fullName, store.publicCode, username, mode]);
-
   useEffect(() => {
     const value = username.trim();
     if (value.length < 4) { setAvailability("idle"); return; }
@@ -3736,17 +3892,33 @@ function UserAccessModal({ store, accessToken, onClose }: { store: Store; access
     setAvailability("checking");
     const timer = window.setTimeout(async () => {
       try {
-        const response = await fetch("/api/users/username-availability", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: value }) });
+        const response = await fetch("/api/users/username-availability", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username: value }),
+        });
         const payload = await response.json().catch(() => ({}));
         setAvailability(payload.available ? "available" : "unavailable");
         if (mode === "CREATE" && payload.username && payload.username !== value) setUsername(payload.username);
-      } catch { setAvailability("unavailable"); }
+      } catch {
+        setAvailability("unavailable");
+      }
     }, 450);
     return () => window.clearTimeout(timer);
   }, [username, mode, originalUsername]);
+  useEffect(() => {
+    const close = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [onClose]);
 
   function openCreate() {
     resetForm();
+    setSelectedStoreIds(
+      manageableStores.some((item) => item.id === store.id)
+        ? [store.id]
+        : manageableStores.slice(0, 1).map((item) => item.id),
+    );
     setMode("CREATE");
   }
 
@@ -3759,20 +3931,37 @@ function UserAccessModal({ store, accessToken, onClose }: { store: Store; access
     setPassword("");
     setRole(user.role === "MASTER" ? "ADMIN" : user.role);
     setActive(user.companyActive);
-    setStoreAccess(user.storeActive);
+    setSelectedStoreIds(user.storeIds.filter((id) => manageableStores.some((item) => item.id === id)));
     setAvailability("available");
     setMessage("");
     setMessageError(false);
     setMode("EDIT");
   }
 
+  function toggleStore(id: string) {
+    setSelectedStoreIds((current) => current.includes(id)
+      ? current.filter((item) => item !== id)
+      : [...current, id]);
+  }
+
   async function createUser() {
-    setSubmitting(true); setMessage(""); setMessageError(false);
+    setSubmitting(true);
+    setMessage("");
+    setMessageError(false);
     try {
       const response = await fetch("/api/users/create", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
-        body: JSON.stringify({ companyId: store.companyId, storeIds: [store.id], fullName, username, email, phone, password, role: canAssignElevatedRoles ? role : "MEMBER" }),
+        body: JSON.stringify({
+          companyId: store.companyId,
+          storeIds: selectedStoreIds,
+          fullName,
+          username,
+          email,
+          phone,
+          password,
+          role: canAssignElevatedRoles ? role : "MEMBER",
+        }),
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.error || "Falha ao criar usuário.");
@@ -3780,21 +3969,35 @@ function UserAccessModal({ store, accessToken, onClose }: { store: Store; access
       resetForm();
       setMode("LIST");
       setMessage(`Usuário ${payload.username} criado com sucesso.`);
-      setMessageError(false);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Falha ao criar usuário.");
       setMessageError(true);
-    } finally { setSubmitting(false); }
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   async function updateUser() {
     if (!selectedUser) return;
-    setSubmitting(true); setMessage(""); setMessageError(false);
+    setSubmitting(true);
+    setMessage("");
+    setMessageError(false);
     try {
       const response = await fetch("/api/users/update", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
-        body: JSON.stringify({ companyId: store.companyId, storeId: store.id, userId: selectedUser.id, fullName, username, email, phone, password, role: canAssignElevatedRoles ? role : "MEMBER", active, storeAccess }),
+        body: JSON.stringify({
+          companyId: store.companyId,
+          userId: selectedUser.id,
+          fullName,
+          username,
+          email,
+          phone,
+          password: canSetTemporaryPassword ? password : "",
+          role: canAssignElevatedRoles ? role : "MEMBER",
+          active,
+          storeIds: selectedStoreIds,
+        }),
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.error || "Falha ao editar usuário.");
@@ -3802,39 +4005,178 @@ function UserAccessModal({ store, accessToken, onClose }: { store: Store; access
       setMode("LIST");
       setSelectedUser(null);
       setMessage("Usuário atualizado com sucesso.");
-      setMessageError(false);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Falha ao editar usuário.");
       setMessageError(true);
-    } finally { setSubmitting(false); }
+    } finally {
+      setSubmitting(false);
+    }
   }
 
-  const formValid = fullName.trim().length >= 2 && email.includes("@") && availability === "available" && (mode === "EDIT" || password.length >= 8);
+  async function requestPasswordReset() {
+    if (!selectedUser) return;
+    setSubmitting(true);
+    setMessage("");
+    setMessageError(false);
+    try {
+      const response = await fetch("/api/users/reset-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({
+          companyId: store.companyId,
+          userId: selectedUser.id,
+          redirectTo: `${window.location.origin}/`,
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || "Falha ao enviar redefinição.");
+      setMessage(`Link de redefinição enviado para ${payload.email}.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Falha ao enviar redefinição.");
+      setMessageError(true);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  const formValid = fullName.trim().length >= 2
+    && email.includes("@")
+    && availability === "available"
+    && selectedStoreIds.length > 0
+    && (mode === "EDIT" || password.length >= 8);
 
   return (
-    <div className="modal-backdrop"><section className="compact-modal user-access-modal user-access-modal-v177">
-      <header><div><small>USUÁRIOS E ACESSOS</small><h2>{mode === "LIST" ? `Equipe de ${store.name}` : mode === "CREATE" ? "Novo usuário" : `Editar ${selectedUser?.fullName || "usuário"}`}</h2></div><button type="button" onClick={onClose}>×</button></header>
-      {mode === "LIST" ? <>
-        <div className="user-access-toolbar"><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar nome, usuário ou e-mail" /><button type="button" className="primary" onClick={openCreate}>+ Novo usuário</button></div>
-        <div className="managed-users-list">
-          {loading ? <div className="managed-users-loading"><span /><p>Carregando usuários...</p></div> : filteredUsers.length ? filteredUsers.map((user) => <article key={user.id} className={!user.companyActive ? "managed-user-row inactive" : "managed-user-row"}>
-            <div className="managed-user-avatar">{user.fullName.slice(0, 2).toUpperCase()}</div>
-            <div className="managed-user-main"><strong>{user.fullName}</strong><span>@{user.username || "sem.usuario"} · {user.email || "sem e-mail"}</span><small>{user.storeActive ? `Acesso à unidade ${store.name}` : "Sem acesso a esta unidade"}</small></div>
-            <div className="managed-user-badges"><span>{userRoleLabel(user.role)}</span><b className={user.companyActive ? "active" : "inactive"}>{user.companyActive ? "Ativo" : "Inativo"}</b></div>
-            <button type="button" className="outline small" disabled={user.platformRole === "MASTER" || (requesterRole === "MANAGER" && user.role !== "MEMBER")} onClick={() => openEdit(user)}>Editar</button>
-          </article>) : <div className="empty-inline">Nenhum usuário encontrado.</div>}
+    <div
+      className="modal-backdrop user-access-backdrop"
+      onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}
+    >
+      <section className="compact-modal user-access-modal user-access-modal-v179">
+        <header>
+          <div>
+            <small>USUÁRIOS E ACESSOS</small>
+            <h2>{mode === "LIST" ? `Equipe de ${store.companyName}` : mode === "CREATE" ? "Novo usuário" : `Editar ${selectedUser?.fullName || "usuário"}`}</h2>
+          </div>
+          <button type="button" aria-label="Fechar" onClick={onClose}>×</button>
+        </header>
+
+        <div className="user-access-scroll">
+          {mode === "LIST" ? (
+            <>
+              <div className="user-access-toolbar">
+                <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar nome, usuário ou e-mail" />
+                <button type="button" className="primary" onClick={openCreate}>+ Novo usuário</button>
+              </div>
+              <div className="managed-users-list">
+                {loading ? (
+                  <div className="managed-users-loading"><span /><p>Carregando usuários...</p></div>
+                ) : filteredUsers.length ? filteredUsers.map((user) => (
+                  <article key={user.id} className={!user.companyActive ? "managed-user-row inactive" : "managed-user-row"}>
+                    <div className="managed-user-avatar">{user.fullName.slice(0, 2).toUpperCase()}</div>
+                    <div className="managed-user-main">
+                      <strong>{user.fullName}</strong>
+                      <span>@{user.username || "sem.usuario"} · {user.email || "sem e-mail"}</span>
+                      <small>{user.storeIds.length ? `Acesso a ${user.storeIds.length} unidade(s)` : "Sem acesso a unidades"}</small>
+                    </div>
+                    <div className="managed-user-badges">
+                      <span>{userRoleLabel(user.role)}</span>
+                      <b className={user.companyActive ? "active" : "inactive"}>{user.companyActive ? "Ativo" : "Inativo"}</b>
+                    </div>
+                    <button
+                      type="button"
+                      className="outline small"
+                      disabled={requesterRole === "MANAGER" && user.role !== "MEMBER"}
+                      onClick={() => openEdit(user)}
+                    >
+                      Editar
+                    </button>
+                  </article>
+                )) : <div className="empty-inline">Nenhum usuário encontrado.</div>}
+              </div>
+            </>
+          ) : (
+            <div className="user-access-form">
+              <div className="user-access-back">
+                <button type="button" className="text-action" onClick={() => { setMode("LIST"); resetForm(); }}>← Voltar à equipe</button>
+              </div>
+              <Field label="Nome e sobrenome">
+                <input value={fullName} onChange={(event) => { setFullName(event.target.value); if (mode === "CREATE") setUsername(""); }} placeholder="Ex.: Maria Silva" />
+              </Field>
+              <Field label="Usuário">
+                <div className="availability-field">
+                  <input autoCapitalize="none" value={username} onChange={(event) => setUsername(event.target.value.toLowerCase())} placeholder="nome.sobrenome" />
+                  <span className={`availability ${availability}`}>{availability === "checking" ? "Verificando..." : availability === "available" ? "✓ Disponível" : availability === "unavailable" ? "Indisponível" : ""}</span>
+                </div>
+              </Field>
+              <div className="split">
+                <Field label="E-mail de recuperação"><input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="usuario@empresa.com" /></Field>
+                <Field label="Telefone"><input value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="(00) 00000-0000" /></Field>
+              </div>
+              {mode === "CREATE" ? (
+                <div className="split">
+                  <Field label="Senha temporária"><input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Mínimo 8 caracteres" /></Field>
+                  <Field label="Perfil">
+                    <select value={role} disabled={!canAssignElevatedRoles} onChange={(event) => setRole(event.target.value as "ADMIN" | "MANAGER" | "MEMBER")}>
+                      <option value="MEMBER">Usuário</option>
+                      {canAssignElevatedRoles && <option value="MANAGER">Gestor</option>}
+                      {canAssignElevatedRoles && <option value="ADMIN">Administrador</option>}
+                    </select>
+                  </Field>
+                </div>
+              ) : (
+                <div className="split">
+                  <Field label="Perfil">
+                    <select value={role} disabled={!canAssignElevatedRoles} onChange={(event) => setRole(event.target.value as "ADMIN" | "MANAGER" | "MEMBER")}>
+                      <option value="MEMBER">Usuário</option>
+                      {canAssignElevatedRoles && <option value="MANAGER">Gestor</option>}
+                      {canAssignElevatedRoles && <option value="ADMIN">Administrador</option>}
+                    </select>
+                  </Field>
+                  {canSetTemporaryPassword && (
+                    <Field label="Nova senha temporária (opcional)"><input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Mínimo 8 caracteres" /></Field>
+                  )}
+                </div>
+              )}
+              <section className="user-store-access">
+                <header>
+                  <div><strong>Unidades permitidas</strong><small>O mesmo usuário pode trabalhar em mais de uma loja.</small></div>
+                </header>
+                <div>
+                  {manageableStores.map((item) => (
+                    <label key={item.id}>
+                      <input type="checkbox" checked={selectedStoreIds.includes(item.id)} onChange={() => toggleStore(item.id)} />
+                      <span><strong>{item.name}</strong><small>{item.companyName}</small></span>
+                    </label>
+                  ))}
+                </div>
+              </section>
+              {mode === "EDIT" && (
+                <div className="user-access-switches">
+                  <label>
+                    <input type="checkbox" checked={active} onChange={(event) => setActive(event.target.checked)} />
+                    <span><strong>Usuário ativo</strong><small>Permite entrar na empresa.</small></span>
+                  </label>
+                  <button type="button" className="outline reset-password-button" disabled={submitting} onClick={requestPasswordReset}>Enviar redefinição de senha</button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
-      </> : <div className="user-access-form">
-        <div className="user-access-back"><button type="button" className="text-action" onClick={() => { setMode("LIST"); resetForm(); }}>← Voltar à equipe</button></div>
-        <Field label="Nome e sobrenome"><input value={fullName} onChange={(event) => { setFullName(event.target.value); if (mode === "CREATE") setUsername(""); }} placeholder="Ex.: Maria Silva" /></Field>
-        <Field label="Usuário"><div className="availability-field"><input autoCapitalize="none" value={username} onChange={(event) => setUsername(event.target.value.toLowerCase())} placeholder="nome.sobrenome" /><span className={`availability ${availability}`}>{availability === "checking" ? "Verificando..." : availability === "available" ? "✓ Disponível" : availability === "unavailable" ? "Indisponível" : ""}</span></div></Field>
-        <div className="split"><Field label="E-mail de recuperação"><input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="usuario@empresa.com" /></Field><Field label="Telefone"><input value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="(00) 00000-0000" /></Field></div>
-        <div className="split"><Field label={mode === "CREATE" ? "Senha temporária" : "Nova senha (opcional)"}><input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder={mode === "CREATE" ? "Mínimo 8 caracteres" : "Deixe vazio para manter"} /></Field><Field label="Perfil"><select value={role} disabled={!canAssignElevatedRoles} onChange={(event) => setRole(event.target.value as "ADMIN" | "MANAGER" | "MEMBER")}><option value="MEMBER">Usuário</option>{canAssignElevatedRoles && <option value="MANAGER">Gestor</option>}{canAssignElevatedRoles && <option value="ADMIN">Administrador</option>}</select></Field></div>
-        {mode === "EDIT" && <div className="user-access-switches"><label><input type="checkbox" checked={active} onChange={(event) => setActive(event.target.checked)} /><span><strong>Usuário ativo</strong><small>Permite entrar na empresa.</small></span></label><label><input type="checkbox" checked={storeAccess} disabled={!active} onChange={(event) => setStoreAccess(event.target.checked)} /><span><strong>Acesso à unidade atual</strong><small>{store.name}</small></span></label></div>}
-      </div>}
-      {message && <div className={messageError ? "user-access-notice error" : "user-access-notice"}>{message}</div>}
-      <footer>{mode === "LIST" ? <button className="outline" type="button" onClick={onClose}>Fechar</button> : <><button className="outline" type="button" disabled={submitting} onClick={() => { setMode("LIST"); resetForm(); }}>Cancelar</button><button className="primary" type="button" disabled={submitting || !formValid} onClick={() => void (mode === "CREATE" ? createUser() : updateUser())}>{submitting ? "Salvando..." : mode === "CREATE" ? "Criar usuário" : "Salvar alterações"}</button></>}</footer>
-    </section></div>
+
+        {message && <div className={messageError ? "user-access-notice error" : "user-access-notice"}>{message}</div>}
+        <footer>
+          {mode === "LIST" ? (
+            <button className="outline" type="button" onClick={onClose}>Fechar</button>
+          ) : (
+            <>
+              <button className="outline" type="button" disabled={submitting} onClick={() => { setMode("LIST"); resetForm(); }}>Cancelar</button>
+              <button className="primary" type="button" disabled={submitting || !formValid} onClick={() => void (mode === "CREATE" ? createUser() : updateUser())}>
+                {submitting ? "Salvando..." : mode === "CREATE" ? "Criar usuário" : "Salvar alterações"}
+              </button>
+            </>
+          )}
+        </footer>
+      </section>
+    </div>
   );
 }
 
@@ -4006,10 +4348,10 @@ function Catalog({
             <Field label="Tipo"><select value={draft.kind} onChange={(e) => setDraft({ ...draft, kind: e.target.value as CatalogKind })}><option value="PRODUTO">Produto</option><option value="SERVICO">Serviço</option><option value="PECA">Peça</option><option value="KIT">Kit</option><option value="MATERIAL">Material</option></select></Field>
             <Field label="Categoria"><input value={draft.category} onChange={(e) => setDraft({ ...draft, category: e.target.value })} /></Field>
             <Field label="Código / SKU"><input value={draft.sku} onChange={(e) => setDraft({ ...draft, sku: e.target.value })} /></Field>
-            <Field label="Custo"><input inputMode="decimal" value={draft.cost} onChange={(e) => setDraft({ ...draft, cost: Number(e.target.value) || 0 })} /></Field>
+            <Field label="Custo"><CurrencyInput value={draft.cost} onChange={(cost) => setDraft({ ...draft, cost })} /></Field>
             <Field label="Margem"><select value={draft.marginMode} onChange={(e) => setDraft({ ...draft, marginMode: e.target.value as MarginMode })}><option value="GENERAL">Usar margem geral ({generalMargin}%)</option><option value="INDIVIDUAL">Margem individual</option></select></Field>
             {draft.marginMode === "INDIVIDUAL" && <Field label="Margem individual %"><input inputMode="decimal" value={draft.individualMargin ?? ""} onChange={(e) => setDraft({ ...draft, individualMargin: e.target.value === "" ? null : Number(e.target.value) || 0 })} /></Field>}
-            <Field label="Preço de venda"><input inputMode="decimal" value={draft.price} onChange={(e) => setDraft({ ...draft, price: Number(e.target.value) || 0 })} /></Field>
+            <Field label="Preço de venda"><CurrencyInput value={draft.price} onChange={(price) => setDraft({ ...draft, price })} /></Field>
             {draft.kind !== "SERVICO" && <><Field label="Estoque atual"><input inputMode="numeric" value={draft.stock} onChange={(e) => setDraft({ ...draft, stock: Number(e.target.value) || 0 })} /></Field><Field label="Estoque mínimo"><input inputMode="numeric" value={draft.minimumStock} onChange={(e) => setDraft({ ...draft, minimumStock: Number(e.target.value) || 0 })} /></Field><Field label="Fornecedor"><select value={draft.supplierId || ""} onChange={(e) => setDraft({ ...draft, supplierId: e.target.value || null })}><option value="">Sem fornecedor</option>{suppliers.filter((item) => item.active).map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}</select></Field></>}
             <Field label="Situação"><select value={draft.active ? "1" : "0"} onChange={(e) => setDraft({ ...draft, active: e.target.value === "1" })}><option value="1">Ativo</option><option value="0">Inativo</option></select></Field>
           </div>
@@ -4345,10 +4687,10 @@ function monthKey(value: string | Date) {
 
 function operationalHealth(data: StoreData) {
   const closedOrders = data.orders.filter((item) => item.status === "FECHADA");
-  const openQuotes = data.quotes.filter((item) => item.status !== "FECHADO");
+  const openQuotes = data.quotes.filter((item) => !quoteIsTerminal(item.status));
   const incompleteAttendances = data.attendances.filter((item) => item.status !== "CONCLUIDO");
   const lowStock = data.catalog.filter((item) => item.active && item.kind !== "SERVICO" && item.stock <= item.minimumStock);
-  const quoteConversion = data.quotes.length ? data.quotes.filter((item) => item.status === "FECHADO").length / data.quotes.length : 0;
+  const quoteConversion = data.quotes.length ? data.quotes.filter((item) => quoteIsApproved(item.status)).length / data.quotes.length : 0;
   let score = 100;
   score -= Math.min(25, openQuotes.length * 3);
   score -= Math.min(20, incompleteAttendances.length * 2);
@@ -4420,8 +4762,8 @@ function BusinessIntelligencePage({ data }: { data: StoreData }) {
   const matchesStatus = (status: string, closedStatus: string) => statusFilter === "TODOS" || (statusFilter === "FECHADOS" ? status === closedStatus : status !== closedStatus);
   const filteredOrders = data.orders.filter((item) => inRange(recordDate(item)) && matchesResponsible(item.responsible) && matchesCategory(item.items) && matchesStatus(item.status, "FECHADA"));
   const closedOrders = filteredOrders.filter((item) => item.status === "FECHADA");
-  const filteredQuotes = data.quotes.filter((item) => inRange(recordDate(item)) && matchesResponsible(item.responsible) && matchesCategory(item.items) && matchesStatus(item.status, "FECHADO"));
-  const closedQuotes = filteredQuotes.filter((item) => item.status === "FECHADO");
+  const filteredQuotes = data.quotes.filter((item) => inRange(recordDate(item)) && matchesResponsible(item.responsible) && matchesCategory(item.items) && (statusFilter === "TODOS" || (statusFilter === "FECHADOS" ? quoteIsTerminal(item.status) : !quoteIsTerminal(item.status))));
+  const closedQuotes = filteredQuotes.filter((item) => quoteIsApproved(item.status));
   const filteredAppointments = data.appointments.filter((item) => inRange(item.startsAt) && matchesResponsible(item.professional));
   const previousClosedOrders = data.orders.filter((item) => item.status === "FECHADA" && inRange(recordDate(item), previousRange) && matchesResponsible(item.responsible) && matchesCategory(item.items));
   const revenue = closedOrders.reduce((total, item) => total + item.total, 0);
@@ -4432,7 +4774,7 @@ function BusinessIntelligencePage({ data }: { data: StoreData }) {
   const financialConversion = filteredQuotes.reduce((total, item) => total + item.total, 0)
     ? closedQuotes.reduce((total, item) => total + item.total, 0) / filteredQuotes.reduce((total, item) => total + item.total, 0) * 100
     : 0;
-  const openQuoteValue = filteredQuotes.filter((item) => item.status !== "FECHADO").reduce((total, item) => total + item.total, 0);
+  const openQuoteValue = filteredQuotes.filter((item) => !quoteIsTerminal(item.status)).reduce((total, item) => total + item.total, 0);
   const discounts = filteredQuotes.reduce((total, item) => total + item.discountAmount + itemsSubtotal(item.items) * item.discountPercent / 100, 0);
   const activeAppointments = filteredAppointments.filter((item) => !["CONCLUIDO", "CANCELADO"].includes(item.status));
   const canceledAppointments = filteredAppointments.filter((item) => item.status === "CANCELADO");
@@ -4458,21 +4800,65 @@ function BusinessIntelligencePage({ data }: { data: StoreData }) {
   const max = Math.max(1, ...rows.map((row) => row.value));
   const rangeLabel = `${range.start.toLocaleDateString("pt-BR")} a ${range.end.toLocaleDateString("pt-BR")}`;
   const health = operationalHealth({ ...data, orders: filteredOrders, quotes: filteredQuotes, appointments: filteredAppointments });
+  const openQuotes = filteredQuotes.filter((item) => !quoteIsTerminal(item.status));
+  const rejectedQuotes = filteredQuotes.filter((item) => item.status === "NAO_APROVADO");
+  const pendingAttendances = data.attendances.filter((item) => inRange(dateBasis === "CREATED" ? item.createdAt : item.updatedAt) && item.status !== "CONCLUIDO");
+  const categoryRevenue = Array.from(new Set(closedOrders.flatMap((item) => item.items.map((line) => line.category || "Sem categoria"))))
+    .map((category) => ({ category, value: closedOrders.reduce((sum, order) => sum + order.items.filter((line) => (line.category || "Sem categoria") === category).reduce((lineSum, line) => lineSum + line.quantity * line.unitPrice, 0), 0) }))
+    .filter((item) => item.value > 0)
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 5);
+  const maxCategoryRevenue = Math.max(1, ...categoryRevenue.map((item) => item.value));
+  const pipeline = [
+    { label: "Orçados", value: filteredQuotes.length },
+    { label: "Aguardando", value: openQuotes.length },
+    { label: "Aprovados", value: closedQuotes.length },
+    { label: "Não aprovados", value: rejectedQuotes.length },
+  ];
+  const periodQuickOptions: Array<{ mode: BiPeriodMode; label: string }> = [
+    { mode: "MONTH", label: "Este mês" },
+    { mode: "PREVIOUS_MONTH", label: "Mês anterior" },
+    { mode: "THREE_MONTHS", label: "3 meses" },
+    { mode: "SIX_MONTHS", label: "6 meses" },
+    { mode: "YEAR", label: "Ano" },
+    { mode: "CUSTOM", label: "Personalizado" },
+  ];
 
-  return <div className="bi-page">
-    <section className="bi-heading bi-heading-v177"><div><small>GERIVO BI AVANÇADO</small><h2>Indicadores da operação</h2><p>Período analisado: {rangeLabel}</p></div></section>
-    <section className="panel bi-filter-panel"><header><div><small>FILTROS</small><h3>Personalize a análise</h3></div><button type="button" className="outline small" onClick={() => { setPeriodMode("MONTH"); setSelectedMonth(currentMonth); setResponsible("TODOS"); setDateBasis("UPDATED"); setStatusFilter("TODOS"); setCategoryFilter("TODAS"); setComparePrevious(true); }}>Limpar filtros</button></header><div className="bi-filter-grid">
-      <Field label="Período"><select value={periodMode} onChange={(event) => setPeriodMode(event.target.value as BiPeriodMode)}><option value="MONTH">Mês selecionado</option><option value="PREVIOUS_MONTH">Mês anterior</option><option value="THREE_MONTHS">Últimos 3 meses</option><option value="SIX_MONTHS">Últimos 6 meses</option><option value="YEAR">Ano atual</option><option value="CUSTOM">Período personalizado</option></select></Field>
-      {periodMode === "MONTH" && <Field label="Mês"><input type="month" value={selectedMonth} onChange={(event) => setSelectedMonth(event.target.value)} /></Field>}
-      {periodMode === "CUSTOM" && <><Field label="Data inicial"><input type="date" value={customStart} onChange={(event) => setCustomStart(event.target.value)} /></Field><Field label="Data final"><input type="date" value={customEnd} onChange={(event) => setCustomEnd(event.target.value)} /></Field></>}
-      <Field label="Data-base"><select value={dateBasis} onChange={(event) => setDateBasis(event.target.value as "UPDATED" | "CREATED")}><option value="UPDATED">Última atualização / fechamento</option><option value="CREATED">Data de criação</option></select></Field>
-      <Field label="Atendente / responsável"><select value={responsible} onChange={(event) => setResponsible(event.target.value)}><option value="TODOS">Todos</option>{responsibles.map((item) => <option key={item} value={item}>{item}</option>)}</select></Field>
-      <Field label="Situação"><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as "TODOS" | "ABERTOS" | "FECHADOS")}><option value="TODOS">Todas</option><option value="ABERTOS">Em aberto</option><option value="FECHADOS">Fechadas / aprovadas</option></select></Field>
-      <Field label="Categoria"><select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}><option value="TODAS">Todas</option>{categories.map((item) => <option value={item} key={item}>{item}</option>)}</select></Field>
-      <label className="bi-compare-toggle"><input type="checkbox" checked={comparePrevious} onChange={(event) => setComparePrevious(event.target.checked)} /><span><strong>Comparar período anterior</strong><small>Usa um intervalo de mesma duração.</small></span></label>
-    </div></section>
-    <section className="metrics bi-metrics bi-metrics-v177"><Metric label="Faturamento realizado" value={money(revenue)} detail={comparePrevious ? `${revenueChange >= 0 ? "+" : ""}${revenueChange.toFixed(1)}% versus período anterior` : `${closedOrders.length} O.S. fechadas`} /><Metric label="Ticket médio" value={money(averageTicket)} detail={`${closedOrders.length} O.S. fechadas`} /><Metric label="Conversão por quantidade" value={`${conversion.toFixed(1)}%`} detail={`${closedQuotes.length} de ${filteredQuotes.length} orçamentos`} /><Metric label="Conversão financeira" value={`${financialConversion.toFixed(1)}%`} detail="Valor aprovado sobre valor orçado" /><Metric label="Oportunidades abertas" value={money(openQuoteValue)} detail={`${filteredQuotes.filter((item) => item.status !== "FECHADO").length} propostas`} /><Metric label="Descontos concedidos" value={money(discounts)} detail="Valor e percentual aplicados" /><Metric label="Agenda ativa" value={String(activeAppointments.length)} detail={`${canceledAppointments.length} cancelamento(s)`} /><Metric label="Saúde operacional" value={`${health}/100`} detail={lowStock.length ? `${lowStock.length} alerta(s) de estoque` : "Sem alertas críticos"} /></section>
-    <section className="bi-grid bi-grid-v177"><article className="panel bi-chart-card"><header><div><small>EVOLUÇÃO</small><h3>Faturamento no período</h3></div></header><div className="bi-bars">{rows.map((row) => <div key={row.label}><span>{row.label}</span><i><em style={{ width: `${Math.max(2, row.value / max * 100)}%` }} /></i><b>{money(row.value)}</b><small>{row.orders} O.S.</small></div>)}</div></article><article className="panel bi-attention-card"><header><div><small>JORNADA E ATENÇÃO</small><h3>O que acompanhar</h3></div></header><ul><li><strong>{filteredQuotes.length}</strong> propostas criadas ou atualizadas</li><li><strong>{closedQuotes.length}</strong> propostas fechadas</li><li><strong>{data.attendances.filter((item) => inRange(dateBasis === "CREATED" ? item.createdAt : item.updatedAt) && item.status !== "CONCLUIDO").length}</strong> atendimentos em andamento</li><li><strong>{activeAppointments.length}</strong> compromissos ativos</li><li><strong>{lowStock.length}</strong> itens no estoque mínimo ou abaixo</li></ul></article></section>
+  return <div className="bi-page bi-page-v1792">
+    <section className="bi-heading bi-heading-v1792">
+      <div className="bi-heading-copy"><small>GERIVO BI</small><h2>Visão executiva da operação</h2><p>{rangeLabel} · {dateBasis === "CREATED" ? "data de criação" : "última atualização ou fechamento"}</p></div>
+      <div className="bi-period-shortcuts">{periodQuickOptions.map((option) => <button type="button" key={option.mode} className={periodMode === option.mode ? "active" : ""} onClick={() => setPeriodMode(option.mode)}>{option.label}</button>)}</div>
+    </section>
+
+    <section className="panel bi-filter-panel bi-filter-panel-v1792">
+      <header><div><small>FILTROS DA ANÁLISE</small><h3>Refine os indicadores</h3><p>Todos os cards e gráficos abaixo obedecem aos mesmos filtros.</p></div><button type="button" className="outline small" onClick={() => { setPeriodMode("MONTH"); setSelectedMonth(currentMonth); setResponsible("TODOS"); setDateBasis("UPDATED"); setStatusFilter("TODOS"); setCategoryFilter("TODAS"); setComparePrevious(true); }}>Restaurar padrão</button></header>
+      <div className="bi-filter-grid bi-filter-grid-v1792">
+        <Field label="Período"><select value={periodMode} onChange={(event) => setPeriodMode(event.target.value as BiPeriodMode)}><option value="MONTH">Mês selecionado</option><option value="PREVIOUS_MONTH">Mês anterior</option><option value="THREE_MONTHS">Últimos 3 meses</option><option value="SIX_MONTHS">Últimos 6 meses</option><option value="YEAR">Ano atual</option><option value="CUSTOM">Período personalizado</option></select></Field>
+        {periodMode === "MONTH" && <Field label="Mês"><input type="month" value={selectedMonth} onChange={(event) => setSelectedMonth(event.target.value)} /></Field>}
+        {periodMode === "CUSTOM" && <><Field label="Data inicial"><input type="date" value={customStart} onChange={(event) => setCustomStart(event.target.value)} /></Field><Field label="Data final"><input type="date" value={customEnd} onChange={(event) => setCustomEnd(event.target.value)} /></Field></>}
+        <Field label="Data-base"><select value={dateBasis} onChange={(event) => setDateBasis(event.target.value as "UPDATED" | "CREATED")}><option value="UPDATED">Atualização / fechamento</option><option value="CREATED">Criação do registro</option></select></Field>
+        <Field label="Atendente"><select value={responsible} onChange={(event) => setResponsible(event.target.value)}><option value="TODOS">Todos os atendentes</option>{responsibles.map((item) => <option key={item} value={item}>{item}</option>)}</select></Field>
+        <Field label="Situação"><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as "TODOS" | "ABERTOS" | "FECHADOS")}><option value="TODOS">Todas as situações</option><option value="ABERTOS">Em aberto</option><option value="FECHADOS">Concluídas / aprovadas</option></select></Field>
+        <Field label="Categoria"><select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}><option value="TODAS">Todas as categorias</option>{categories.map((item) => <option value={item} key={item}>{item}</option>)}</select></Field>
+        <label className="bi-compare-toggle bi-compare-toggle-v1792"><input type="checkbox" checked={comparePrevious} onChange={(event) => setComparePrevious(event.target.checked)} /><span><strong>Comparar com o período anterior</strong><small>Usa automaticamente um intervalo com a mesma duração.</small></span></label>
+      </div>
+    </section>
+
+    <section className="bi-kpi-grid">
+      <article className="bi-kpi-card primary-kpi"><span><PremiumIcon name="chart" size={21} /></span><div><small>FATURAMENTO</small><strong>{money(revenue)}</strong><p>{comparePrevious ? `${revenueChange >= 0 ? "+" : ""}${revenueChange.toFixed(1)}% contra o período anterior` : `${closedOrders.length} O.S. fechadas`}</p></div></article>
+      <article className="bi-kpi-card"><span><PremiumIcon name="file" size={21} /></span><div><small>OPORTUNIDADES</small><strong>{money(openQuoteValue)}</strong><p>{openQuotes.length} orçamento(s) em aberto</p></div></article>
+      <article className="bi-kpi-card"><span><PremiumIcon name="shield" size={21} /></span><div><small>CONVERSÃO</small><strong>{conversion.toFixed(1)}%</strong><p>{closedQuotes.length} de {filteredQuotes.length} propostas</p></div></article>
+      <article className="bi-kpi-card"><span><PremiumIcon name="wrench" size={21} /></span><div><small>TICKET MÉDIO</small><strong>{money(averageTicket)}</strong><p>{closedOrders.length} ordem(ns) concluída(s)</p></div></article>
+      <article className="bi-kpi-card"><span><PremiumIcon name="calendar" size={21} /></span><div><small>AGENDA ATIVA</small><strong>{activeAppointments.length}</strong><p>{canceledAppointments.length} cancelamento(s)</p></div></article>
+      <article className="bi-kpi-card"><span><PremiumIcon name="sparkle" size={21} /></span><div><small>SAÚDE OPERACIONAL</small><strong>{health}/100</strong><p>{lowStock.length ? `${lowStock.length} alerta(s) de estoque` : "Operação sem alerta crítico"}</p></div></article>
+    </section>
+
+    <section className="bi-dashboard-grid">
+      <article className="panel bi-chart-card bi-chart-card-v1792"><header><div><small>EVOLUÇÃO FINANCEIRA</small><h3>Faturamento no período</h3></div><span>{money(revenue)}</span></header><div className="bi-bars bi-bars-v1792">{rows.map((row) => <div key={row.label}><span>{row.label}</span><i><em style={{ width: `${Math.max(2, row.value / max * 100)}%` }} /></i><b>{money(row.value)}</b><small>{row.orders} O.S.</small></div>)}</div></article>
+      <article className="panel bi-pipeline-card"><header><div><small>FUNIL COMERCIAL</small><h3>Jornada dos orçamentos</h3></div></header><div className="bi-pipeline">{pipeline.map((item, index) => <div key={item.label}><span>{index + 1}</span><div><strong>{item.value}</strong><small>{item.label}</small></div><i style={{ width: `${Math.max(8, filteredQuotes.length ? item.value / filteredQuotes.length * 100 : 0)}%` }} /></div>)}</div></article>
+      <article className="panel bi-category-card"><header><div><small>MIX DE RECEITA</small><h3>Receita por categoria</h3></div></header><div className="bi-category-list">{categoryRevenue.length ? categoryRevenue.map((item) => <div key={item.category}><header><span>{item.category}</span><strong>{money(item.value)}</strong></header><i><em style={{ width: `${Math.max(3, item.value / maxCategoryRevenue * 100)}%` }} /></i></div>) : <div className="empty-inline">Feche O.S. com categorias preenchidas para visualizar este ranking.</div>}</div></article>
+      <article className="panel bi-attention-card bi-attention-card-v1792"><header><div><small>PRÓXIMAS AÇÕES</small><h3>Pontos que pedem atenção</h3></div></header><ul><li><span className={openQuotes.length ? "attention" : "ok"}><PremiumIcon name="file" size={17} /></span><div><strong>{openQuotes.length} proposta(s) em aberto</strong><small>{money(openQuoteValue)} em oportunidades pendentes</small></div></li><li><span className={pendingAttendances.length ? "attention" : "ok"}><PremiumIcon name="car" size={17} /></span><div><strong>{pendingAttendances.length} atendimento(s) em andamento</strong><small>Acompanhe as etapas ainda não concluídas</small></div></li><li><span className={lowStock.length ? "danger" : "ok"}><PremiumIcon name="box" size={17} /></span><div><strong>{lowStock.length} item(ns) no estoque mínimo</strong><small>{lowStock.length ? "Reposição recomendada" : "Sem necessidade de reposição imediata"}</small></div></li><li><span className={rejectedQuotes.length ? "attention" : "ok"}><PremiumIcon name="shield" size={17} /></span><div><strong>{rejectedQuotes.length} orçamento(s) não aprovado(s)</strong><small>Use os motivos de perda para revisar a abordagem</small></div></li></ul></article>
+    </section>
   </div>;
 }
 
@@ -4631,7 +5017,7 @@ function MessageCenterPage({ store }: { store: Store }) {
             <Field label="Como tratar as opções"><select value={tireMode} onChange={(event) => setTireMode(event.target.value as "ALTERNATIVES" | "CUMULATIVE")}><option value="ALTERNATIVES">Alternativas — não somar</option><option value="CUMULATIVE">Itens cumulativos — somar total</option></select></Field>
             <div className="tire-options-editor">
               <header><div><small>OPÇÕES DE PNEUS</small><strong>{tireMode === "ALTERNATIVES" ? "O cliente escolherá uma opção" : "Todos os itens entram no total"}</strong></div><button type="button" className="outline small" onClick={() => setTireOptions((current) => [...current, { id: uid(), description: "", unitPrice: 0, quantity: 4 }])}>+ Adicionar opção</button></header>
-              {tireOptions.map((item, index) => <section key={item.id}><b>{index + 1}</b><input value={item.description} onChange={(event) => updateTireOption(item.id, { description: event.target.value })} placeholder="255/65 R17 110H SCORPION ATR" /><input type="number" min="0" step="0.01" value={item.unitPrice || ""} onChange={(event) => updateTireOption(item.id, { unitPrice: Math.max(0, Number(event.target.value) || 0) })} placeholder="Valor unitário" /><input type="number" min="1" max="20" value={item.quantity} onChange={(event) => updateTireOption(item.id, { quantity: Math.max(1, Number(event.target.value) || 1) })} title="Quantidade" /><button type="button" className="danger small" disabled={tireOptions.length <= 1} onClick={() => setTireOptions((current) => current.filter((option) => option.id !== item.id))}>×</button></section>)}
+              {tireOptions.map((item, index) => <section key={item.id}><b>{index + 1}</b><input value={item.description} onChange={(event) => updateTireOption(item.id, { description: event.target.value })} placeholder="255/65 R17 110H SCORPION ATR" /><CurrencyInput ariaLabel={`Valor unitário da opção ${index + 1}`} value={item.unitPrice} onChange={(unitPrice) => updateTireOption(item.id, { unitPrice })} /><input type="number" min="1" max="20" value={item.quantity} onChange={(event) => updateTireOption(item.id, { quantity: Math.max(1, Number(event.target.value) || 1) })} title="Quantidade" /><button type="button" className="danger small" disabled={tireOptions.length <= 1} onClick={() => setTireOptions((current) => current.filter((option) => option.id !== item.id))}>×</button></section>)}
             </div>
           </> : <>
             <Field label="Veículo / referência"><input value={vehicle} onChange={(event) => setVehicle(event.target.value)} /></Field>
@@ -4753,8 +5139,8 @@ function rankedKnowledge(question: string, entries: KnowledgeEntry[]) {
 function localAssistantAnswer(question: string, data: StoreData): AssistantResult {
   const normalized = normalizeAssistantText(question);
   const closedOrders = data.orders.filter((item) => item.status === "FECHADA");
-  const openQuotes = data.quotes.filter((item) => item.status !== "FECHADO");
-  const closedQuotes = data.quotes.filter((item) => item.status === "FECHADO");
+  const openQuotes = data.quotes.filter((item) => !quoteIsTerminal(item.status));
+  const closedQuotes = data.quotes.filter((item) => quoteIsApproved(item.status));
   const lowStock = data.catalog.filter((item) => item.kind !== "SERVICO" && item.active && item.stock <= item.minimumStock);
   const activeAppointments = data.appointments.filter((item) => !["CANCELADO", "CONCLUIDO"].includes(item.status));
 
@@ -4764,7 +5150,7 @@ function localAssistantAnswer(question: string, data: StoreData): AssistantResul
 
   if (normalized === "pneu" || normalized === "pneus" || (normalized.includes("pneu") && normalized.split(" ").length <= 3)) {
     const tireQuotes = data.quotes.filter((quote) => quote.items.some((item) => normalizeAssistantText(`${item.name} ${item.category}`).includes("pneu")));
-    const tireOpen = tireQuotes.filter((quote) => quote.status !== "FECHADO");
+    const tireOpen = tireQuotes.filter((quote) => !quoteIsTerminal(quote.status));
     const tireStock = data.catalog.filter((item) => item.kind !== "SERVICO" && normalizeAssistantText(`${item.name} ${item.category}`).includes("pneu"));
     return {
       title: "Pneus — escolha o que deseja analisar",
@@ -4903,7 +5289,7 @@ function AssistantPage({ store, data, sessionAccessToken }: { store: Store; data
   const [engine, setEngine] = useState("Motor local v2");
   const health = operationalHealth(data);
   const healthParts = [
-    { label: "Orçamentos", value: Math.max(0, 25 - Math.min(25, data.quotes.filter((item) => item.status !== "FECHADO").length * 2)) },
+    { label: "Orçamentos", value: Math.max(0, 25 - Math.min(25, data.quotes.filter((item) => !quoteIsTerminal(item.status)).length * 2)) },
     { label: "Estoque", value: Math.max(0, 25 - Math.min(25, data.catalog.filter((item) => item.kind !== "SERVICO" && item.active && item.stock <= item.minimumStock).length * 4)) },
     { label: "Atendimentos", value: Math.max(0, 25 - Math.min(25, data.attendances.filter((item) => item.status !== "CONCLUIDO").length * 2)) },
     { label: "Execução", value: data.orders.some((item) => item.status === "FECHADA") ? 25 : 15 },
@@ -4918,7 +5304,7 @@ function AssistantPage({ store, data, sessionAccessToken }: { store: Store; data
     let finalAnswer = local;
     let finalEngine = "Motor local v2";
     try {
-      const response = await fetch("/api/ai", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${sessionAccessToken}` }, body: JSON.stringify({ question: currentQuestion, companyId: store.companyId, storeId: store.id, summary: { health, openQuotes: data.quotes.filter((item) => item.status !== "FECHADO").length, closedOrders: data.orders.filter((item) => item.status === "FECHADA").length, lowStock: data.catalog.filter((item) => item.kind !== "SERVICO" && item.active && item.stock <= item.minimumStock).map((item) => item.name), appointments: data.appointments.filter((item) => !["CANCELADO", "CONCLUIDO"].includes(item.status)).length, localAnalysis: local }, knowledge: rankedKnowledge(currentQuestion, data.knowledgeBase).slice(0, 5).map((item) => ({ title: item.entry.title, content: item.entry.content })) }) });
+      const response = await fetch("/api/ai", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${sessionAccessToken}` }, body: JSON.stringify({ question: currentQuestion, companyId: store.companyId, storeId: store.id, summary: { health, openQuotes: data.quotes.filter((item) => !quoteIsTerminal(item.status)).length, closedOrders: data.orders.filter((item) => item.status === "FECHADA").length, lowStock: data.catalog.filter((item) => item.kind !== "SERVICO" && item.active && item.stock <= item.minimumStock).map((item) => item.name), appointments: data.appointments.filter((item) => !["CANCELADO", "CONCLUIDO"].includes(item.status)).length, localAnalysis: local }, knowledge: rankedKnowledge(currentQuestion, data.knowledgeBase).slice(0, 5).map((item) => ({ title: item.entry.title, content: item.entry.content })) }) });
       const payload = await response.json().catch(() => ({}));
       if (response.ok && payload.answer) {
         finalAnswer = { ...local, title: local.title, text: String(payload.answer), source: "IA conectada", sources: local.sources };
@@ -5045,6 +5431,7 @@ function MasterCommercialPage({
   const [companyName, setCompanyName] = useState("");
   const [document, setDocument] = useState("");
   const [storeName, setStoreName] = useState("");
+  const [storeNameTouched, setStoreNameTouched] = useState(false);
   const [segment, setSegment] = useState("OUTRO");
   const [companyStatus, setCompanyStatus] = useState("ACTIVE");
   const [contract, setContract] = useState<CompanyContractDraft>(() => defaultContractDraft());
@@ -5061,6 +5448,17 @@ function MasterCommercialPage({
     const timer = window.setTimeout(() => setNotice(null), 3000);
     return () => window.clearTimeout(timer);
   }, [notice]);
+
+  useEffect(() => {
+    const close = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || saving) return;
+      if (plansOpen) setPlansOpen(false);
+      else if (editOpen) setEditOpen(false);
+      else if (createOpen) setCreateOpen(false);
+    };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [plansOpen, editOpen, createOpen, saving]);
 
   async function load() {
     const [plansResult, subscriptionsResult, groupsResult, historiesResult] = await Promise.all([
@@ -5085,7 +5483,7 @@ function MasterCommercialPage({
 
   function resetCreate() {
     const plan = plans[0];
-    setGroupMode("NEW"); setGroupId(""); setGroupName(""); setCompanyName(""); setDocument(""); setStoreName(""); setSegment("OUTRO"); setCompanyStatus("ACTIVE");
+    setGroupMode("NEW"); setGroupId(""); setGroupName(""); setCompanyName(""); setDocument(""); setStoreName(""); setStoreNameTouched(false); setSegment("OUTRO"); setCompanyStatus("ACTIVE");
     setContract(defaultContractDraft(plan)); setFormError(""); setActiveTab("DATA");
   }
 
@@ -5150,7 +5548,7 @@ function MasterCommercialPage({
     const store = company.stores?.[0];
     const subscription = subscriptions.find((item) => item.company_id === company.id);
     setSelectedCompany({ ...company, store });
-    setCompanyName(company.name || ""); setDocument(company.document || ""); setStoreName(store?.name || company.name || ""); setSegment(company.segment || "OUTRO"); setCompanyStatus(company.status || "ACTIVE");
+    setCompanyName(company.name || ""); setDocument(formatCnpjInput(company.document || "")); setStoreName(store?.name || company.name || ""); setStoreNameTouched(true); setSegment(company.segment || "OUTRO"); setCompanyStatus(company.status || "ACTIVE");
     setContract(populateContract(subscription)); setFormError(""); setActiveTab("DATA"); setEditOpen(true);
   }
 
@@ -5169,6 +5567,7 @@ function MasterCommercialPage({
     if (!companyName.trim() || !storeName.trim() || saving) return;
     if (groupMode === "NEW" && !groupName.trim()) return setFormError("Informe o nome do novo grupo empresarial.");
     if (groupMode === "EXISTING" && !groupId) return setFormError("Selecione o grupo empresarial.");
+    if (documentDigits(document).length > 0 && documentDigits(document).length !== 14) return setFormError("Informe um CNPJ completo com 14 dígitos ou deixe o campo vazio.");
     if (!contract.contractStart || !contract.contractEnd) return setFormError("Informe o período da contratação.");
     if (contract.planMode === "STANDARD" && !contract.planId) return setFormError("Selecione um plano Gerivo.");
     setSaving(true); setFormError("");
@@ -5183,6 +5582,9 @@ function MasterCommercialPage({
 
   async function saveCompany() {
     if (!selectedCompany || saving) return;
+    if (!companyName.trim()) return setFormError("Informe o nome da empresa.");
+    if (!storeName.trim()) return setFormError("Informe o nome da unidade principal.");
+    if (documentDigits(document).length > 0 && documentDigits(document).length !== 14) return setFormError("Informe um CNPJ completo com 14 dígitos ou deixe o campo vazio.");
     setSaving(true); setFormError("");
     try {
       await apiPost("/api/master/companies/update", { companyId: selectedCompany.id, storeId: selectedCompany.store?.id, name: companyName.trim(), document: document.trim(), storeName: storeName.trim(), segment, status: companyStatus });
@@ -5267,7 +5669,7 @@ function MasterCommercialPage({
   const currentSubscription = subscriptions.find((item) => item.company_id === currentStore.companyId);
   const selectedHistory = selectedCompany ? histories.filter((item) => item.company_id === selectedCompany.id) : [];
 
-  function ContractForm() {
+  function renderContractForm() {
     return <div className="master-contract-form">
       <div className="contract-mode-switch"><button type="button" className={contract.planMode === "STANDARD" ? "active" : ""} onClick={() => { const plan = plans.find((item) => item.id === contract.planId) || plans[0]; setContract({ ...populateContract({ ...contract, plan_id: plan?.id, plan_mode: "STANDARD" }), contractStart: contract.contractStart, contractEnd: contract.contractEnd, billingCycle: contract.billingCycle }); }}>Plano Gerivo</button><button type="button" className={contract.planMode === "CUSTOM" ? "active" : ""} onClick={() => setContract({ ...contract, planMode: "CUSTOM" })}>Plano personalizado</button></div>
       <div className="master-company-form">
@@ -5275,7 +5677,7 @@ function MasterCommercialPage({
         <Field label="Período da contratação"><select value={contract.billingCycle} onChange={(event) => applyCycle(event.target.value as CompanyContractDraft["billingCycle"])}><option value="MONTHLY">Mensal</option><option value="QUARTERLY">Trimestral</option><option value="SEMIANNUAL">Semestral</option><option value="ANNUAL">Anual</option><option value="CUSTOM">Personalizado</option></select></Field>
         <Field label="Data inicial"><input type="date" value={contract.contractStart} onChange={(event) => { const next = { ...contract, contractStart: event.target.value }; setContract(next); if (contract.billingCycle !== "CUSTOM") window.setTimeout(() => applyCycle(contract.billingCycle, next), 0); }} /></Field>
         <Field label="Data final"><input type="date" value={contract.contractEnd} onChange={(event) => setContract({ ...contract, contractEnd: event.target.value, billingCycle: "CUSTOM" })} /></Field>
-        <Field label="Valor contratado"><input type="number" min="0" step="0.01" value={contract.contractedValue} onChange={(event) => setContract({ ...contract, contractedValue: Math.max(0, Number(event.target.value) || 0) })} /></Field>
+        <Field label="Valor contratado"><CurrencyInput value={contract.contractedValue} onChange={(contractedValue) => setContract({ ...contract, contractedValue })} /></Field>
         <Field label="Dia do vencimento"><input type="number" min="1" max="31" value={contract.billingDueDay} onChange={(event) => setContract({ ...contract, billingDueDay: Math.min(31, Math.max(1, Number(event.target.value) || 1)) })} /></Field>
         <Field label="Tolerância após vencimento"><div className="input-suffix"><input type="number" min="0" max="365" value={contract.gracePeriodDays} onChange={(event) => setContract({ ...contract, gracePeriodDays: Math.max(0, Number(event.target.value) || 0) })} /><span>dias</span></div></Field>
         <Field label="Situação da contratação"><select value={companyStatus} onChange={(event) => { setCompanyStatus(event.target.value); setContract({ ...contract, status: event.target.value }); }}><option value="AWAITING_ACTIVATION">Aguardando ativação</option><option value="DEMO">Período de teste</option><option value="ACTIVE">Ativa</option><option value="GRACE">Em tolerância</option><option value="READ_ONLY">Somente consulta</option><option value="SUSPENDED">Suspensa</option><option value="CANCELED">Cancelada / arquivada</option><option value="EXPIRED">Vencida</option></select></Field>
@@ -5286,17 +5688,25 @@ function MasterCommercialPage({
     </div>;
   }
 
-  function ModulesForm() {
+  function renderModulesForm() {
     const editable = contract.planMode === "CUSTOM";
     return <div className="master-modules-contract"><div className="master-limits-grid"><Field label="Empresas / CNPJs"><input disabled={!editable} type="number" min="1" value={contract.companyLimit} onChange={(event) => setContract({ ...contract, companyLimit: Math.max(1, Number(event.target.value) || 1) })} /></Field><Field label="Unidades"><input disabled={!editable} type="number" min="1" value={contract.storeLimit} onChange={(event) => setContract({ ...contract, storeLimit: Math.max(1, Number(event.target.value) || 1) })} /></Field><Field label="Usuários"><input disabled={!editable} type="number" min="1" value={contract.userLimit} onChange={(event) => setContract({ ...contract, userLimit: Math.max(1, Number(event.target.value) || 1) })} /></Field><Field label="Armazenamento"><div className="input-suffix"><input disabled={!editable} type="number" min="1" value={contract.storageGb} onChange={(event) => setContract({ ...contract, storageGb: Math.max(1, Number(event.target.value) || 1) })} /><span>GB</span></div></Field><Field label="Consultas de IA / mês"><input disabled={!editable} type="number" min="0" value={contract.aiQueriesMonthly} onChange={(event) => setContract({ ...contract, aiQueriesMonthly: Math.max(0, Number(event.target.value) || 0) })} /></Field></div><div className="module-grid master-module-grid">{MASTER_MODULES.map((module) => <button type="button" disabled={!editable} key={module} className={contract.modules[module] ? "module-card active" : "module-card"} onClick={() => setContract({ ...contract, modules: { ...contract.modules, [module]: !contract.modules[module] } })}><PremiumIcon name={module === "APPOINTMENTS" ? "calendar" : module === "INVENTORY" ? "box" : module === "ASSISTANT" ? "sparkle" : module === "BI" ? "chart" : module === "MESSAGES" ? "file" : module === "QUOTES" ? "file" : module === "ORDERS" ? "wrench" : "modules"} size={20} /><span><strong>{MODULE_INFO[module].label}</strong><small>{MODULE_INFO[module].description}</small></span><b>{contract.modules[module] ? "Ativo" : "Bloqueado"}</b></button>)}</div>{!editable && <p className="master-plan-help">Os limites e módulos seguem o plano Gerivo escolhido. Selecione Plano personalizado para editá-los.</p>}</div>;
   }
 
-  function ModalBody({ creating }: { creating: boolean }) {
+  function renderModalBody(creating: boolean) {
     return <><nav className="master-edit-tabs"><button type="button" className={activeTab === "DATA" ? "active" : ""} onClick={() => setActiveTab("DATA")}>Dados</button><button type="button" className={activeTab === "CONTRACT" ? "active" : ""} onClick={() => setActiveTab("CONTRACT")}>Plano e contratação</button><button type="button" className={activeTab === "MODULES" ? "active" : ""} onClick={() => setActiveTab("MODULES")}>Módulos e limites</button>{!creating && <button type="button" className={activeTab === "HISTORY" ? "active" : ""} onClick={() => setActiveTab("HISTORY")}>Histórico</button>}</nav>
       <div className="master-company-modal-content">
-        {activeTab === "DATA" && <div className="master-company-form">{creating && <Field label="Vínculo empresarial"><select value={groupMode} onChange={(event) => setGroupMode(event.target.value as "NEW" | "EXISTING")}><option value="NEW">Novo grupo</option><option value="EXISTING">Grupo existente</option></select></Field>}{creating && (groupMode === "NEW" ? <Field label="Nome do grupo empresarial"><input value={groupName} onChange={(event) => setGroupName(event.target.value)} placeholder="Proprietário ou grupo econômico" /></Field> : <Field label="Grupo empresarial"><select value={groupId} onChange={(event) => setGroupId(event.target.value)}><option value="">Selecione</option>{groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</select></Field>)}<Field label="Empresa / razão exibida"><input autoFocus value={companyName} onChange={(event) => { setCompanyName(event.target.value); if (!storeName) setStoreName(event.target.value); }} /></Field><Field label="CNPJ"><input value={document} onChange={(event) => setDocument(event.target.value)} placeholder="00.000.000/0000-00" /></Field><Field label="Unidade principal"><input value={storeName} onChange={(event) => setStoreName(event.target.value)} placeholder="Matriz, Centro, Loja 1..." /></Field><Field label="Segmento"><select value={segment} onChange={(event) => setSegment(event.target.value)}><option value="OFICINA">Oficina e centro automotivo</option><option value="CONCESSIONARIA">Concessionária</option><option value="VAREJO">Comércio varejista</option><option value="CONFEITARIA">Confeitaria</option><option value="SALAO_BELEZA">Salão de beleza</option><option value="ESTETICA_AUTOMOTIVA">Lavagem e estética</option><option value="DELIVERY">Delivery de comida</option><option value="SERVICOS">Prestação de serviços</option><option value="OUTRO">Outro</option></select></Field></div>}
-        {activeTab === "CONTRACT" && <ContractForm />}
-        {activeTab === "MODULES" && <ModulesForm />}
+        {activeTab === "DATA" && <div className="master-company-form master-company-data-form">
+          {creating && <Field label="Vínculo empresarial"><select name="groupMode" value={groupMode} onChange={(event) => setGroupMode(event.target.value as "NEW" | "EXISTING")}><option value="NEW">Novo grupo</option><option value="EXISTING">Grupo existente</option></select></Field>}
+          {creating && (groupMode === "NEW" ? <Field label="Nome do grupo empresarial"><input name="groupName" autoComplete="organization" value={groupName} onChange={(event) => setGroupName(event.target.value)} placeholder="Proprietário ou grupo econômico" /></Field> : <Field label="Grupo empresarial"><select name="groupId" value={groupId} onChange={(event) => setGroupId(event.target.value)}><option value="">Selecione</option>{groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</select></Field>)}
+          <Field label="Empresa / razão exibida"><input name="companyName" autoComplete="organization" autoFocus value={companyName} onChange={(event) => { const value = event.target.value; setCompanyName(value); if (!storeNameTouched) setStoreName(value); }} placeholder="Nome comercial ou razão social" /></Field>
+          <Field label="CNPJ"><input name="companyDocument" autoComplete="off" inputMode="numeric" maxLength={18} value={document} onChange={(event) => setDocument(formatCnpjInput(event.target.value))} placeholder="00.000.000/0000-00" /></Field>
+          <Field label="Unidade principal"><input name="storeName" autoComplete="organization-title" value={storeName} onChange={(event) => { setStoreNameTouched(true); setStoreName(event.target.value); }} placeholder="Matriz, Centro, Loja 1..." /></Field>
+          <Field label="Segmento"><select name="segment" value={segment} onChange={(event) => setSegment(event.target.value)}><option value="OFICINA">Oficina e centro automotivo</option><option value="CONCESSIONARIA">Concessionária</option><option value="VAREJO">Comércio varejista</option><option value="CONFEITARIA">Confeitaria</option><option value="SALAO_BELEZA">Salão de beleza</option><option value="ESTETICA_AUTOMOTIVA">Lavagem e estética</option><option value="DELIVERY">Delivery de comida</option><option value="SERVICOS">Prestação de serviços</option><option value="OUTRO">Outro</option></select></Field>
+          <div className="master-company-data-note"><PremiumIcon name="shield" size={18} /><span><strong>Dados isolados por empresa</strong><small>O CNPJ e a unidade são gravados separadamente e não alteram o nome da empresa.</small></span></div>
+        </div>}
+        {activeTab === "CONTRACT" && renderContractForm()}
+        {activeTab === "MODULES" && renderModulesForm()}
         {activeTab === "HISTORY" && <div className="master-history-list">{selectedHistory.length ? selectedHistory.map((item) => <article key={item.id}><strong>{item.action === "CONTRACT_CHANGED" ? "Contratação alterada" : "Contratação criada"}</strong><span>{new Date(item.changed_at).toLocaleString("pt-BR")}</span><p>{item.justification || "Sem justificativa informada."}</p></article>) : <div className="empty-inline">Nenhuma alteração contratual registrada.</div>}</div>}
         {formError && <div className="auth-error master-company-error" role="alert">{formError}</div>}
       </div></>;
@@ -5308,9 +5718,9 @@ function MasterCommercialPage({
     <section className="panel subscription-current"><header><div><small>EMPRESA SELECIONADA</small><h3>{currentStore.companyName}</h3></div></header>{currentSubscription ? <div className="subscription-detail subscription-detail-v177"><strong>{currentSubscription.plan_mode === "CUSTOM" ? currentSubscription.custom_plan_name || "Personalizado" : currentSubscription.subscription_plans?.name || "Plano"}</strong><span>Status: {currentSubscription.status}</span><span>Período: {formatDate(currentSubscription.contract_start || currentSubscription.activated_at)} a {formatDate(currentSubscription.contract_end || currentSubscription.expires_at)}</span><span>Valor: {money(currentSubscription.contracted_value)}</span></div> : <div className="empty-inline">Empresa ainda sem contratação ativa.</div>}</section>
     <section className="panel master-groups-panel"><header><div><small>ESTRUTURA EMPRESARIAL</small><h3>{groups.length} grupo(s)</h3></div><input className="master-company-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar grupo, CNPJ, empresa ou unidade" /></header><div className="master-group-list master-group-list-v177">{filteredGroups.map((group) => <article key={group.id}><header><div><strong>{group.name}</strong><small>{group.companies?.length || 0} empresa(s)</small></div><span>{group.status || "ATIVO"}</span></header><div>{(group.companies || []).map((company: any) => { const subscription = subscriptions.find((item) => item.company_id === company.id); return <section key={company.id} className="master-company-row-v177"><div className="master-company-identity"><b>{company.name}</b><small>{company.document || "CNPJ não informado"} · {company.segment || "OUTRO"}</small><span className={`company-status status-${String(company.status || "ACTIVE").toLowerCase()}`}>{company.status || "ACTIVE"}</span></div><div className="master-company-contract"><strong>{subscription?.plan_mode === "CUSTOM" ? subscription?.custom_plan_name || "Personalizado" : subscription?.subscription_plans?.name || "Sem plano"}</strong><small>{subscription?.contract_end || subscription?.expires_at ? `até ${formatDate(subscription.contract_end || subscription.expires_at)}` : "sem período definido"}</small></div><ul>{(company.stores || []).map((store: any) => <li key={store.id}>{store.name}<span>ID {store.public_code}</span></li>)}</ul><div className="master-company-actions"><button type="button" className="outline small" onClick={() => openEdit(company)}>Editar</button>{company.status === "SUSPENDED" || company.status === "CANCELED" ? <button type="button" className="primary small" onClick={() => void changeStatus(company, "ACTIVE")}>Reativar</button> : <button type="button" className="outline small" onClick={() => void changeStatus(company, "SUSPENDED")}>Suspender</button>}<button type="button" className="danger small" onClick={() => void changeStatus(company, "CANCELED")}>Arquivar</button></div></section>; })}</div></article>)}</div></section>
     {notice && <div className={notice.error ? "master-pop-toast error" : "master-pop-toast"}><span>{notice.error ? "!" : "✓"}</span><strong>{notice.text}</strong></div>}
-    {plansOpen && <div className="modal-backdrop"><section className="compact-modal master-plans-modal"><header><div><small>PLANOS GERIVO</small><h2>Valores e conteúdo do site de vendas</h2><p>As alterações publicadas aqui aparecem automaticamente na página comercial.</p></div><button type="button" onClick={() => setPlansOpen(false)}>×</button></header><div className="master-plan-editor-grid">{planDrafts.map((plan) => <article key={plan.id} className={plan.recommended ? "master-plan-editor recommended" : "master-plan-editor"}><header><div><small>{plan.code}</small><input value={plan.name} onChange={(event) => patchPlanDraft(plan.id, { name: event.target.value })} /></div><label><input type="checkbox" checked={plan.public_visible} onChange={(event) => patchPlanDraft(plan.id, { public_visible: event.target.checked })} /> Exibir no site</label></header><div className="master-plan-price-row"><Field label="Mensal"><input type="number" min="0" step="0.01" value={plan.monthly_price} onChange={(event) => patchPlanDraft(plan.id, { monthly_price: Number(event.target.value) })} /></Field><Field label="Anual"><input type="number" min="0" step="0.01" value={plan.annual_price} onChange={(event) => patchPlanDraft(plan.id, { annual_price: Number(event.target.value) })} /></Field></div><div className="master-plan-limits"><Field label="Empresas"><input type="number" min="1" value={plan.company_limit} onChange={(event) => patchPlanDraft(plan.id, { company_limit: Number(event.target.value) })} /></Field><Field label="Unidades"><input type="number" min="1" value={plan.store_limit} onChange={(event) => patchPlanDraft(plan.id, { store_limit: Number(event.target.value) })} /></Field><Field label="Usuários"><input type="number" min="1" value={plan.user_limit} onChange={(event) => patchPlanDraft(plan.id, { user_limit: Number(event.target.value) })} /></Field><Field label="IA/mês"><input type="number" min="0" value={plan.ai_queries_monthly} onChange={(event) => patchPlanDraft(plan.id, { ai_queries_monthly: Number(event.target.value) })} /></Field></div><Field label="Descrição pública"><input value={plan.public_description} onChange={(event) => patchPlanDraft(plan.id, { public_description: event.target.value })} /></Field><Field label="Benefícios — um por linha"><textarea rows={4} value={plan.public_features_text} onChange={(event) => patchPlanDraft(plan.id, { public_features_text: event.target.value })} /></Field><div className="master-plan-publish"><label><input type="checkbox" checked={plan.recommended} onChange={(event) => patchPlanDraft(plan.id, { recommended: event.target.checked })} /> Mais indicado</label><Field label="Texto do botão"><input value={plan.public_cta_label} onChange={(event) => patchPlanDraft(plan.id, { public_cta_label: event.target.value })} /></Field><Field label="Ordem"><input type="number" value={plan.public_sort_order} onChange={(event) => patchPlanDraft(plan.id, { public_sort_order: Number(event.target.value) })} /></Field></div><button type="button" className="primary" disabled={Boolean(savingPlanId)} onClick={() => void savePlanDraft(plan)}>{savingPlanId === plan.id ? "Salvando..." : "Salvar este plano"}</button></article>)}</div><footer><button type="button" className="outline" onClick={() => setPlansOpen(false)}>Fechar</button></footer></section></div>}
-    {createOpen && <div className="modal-backdrop"><section className="compact-modal master-company-modal master-company-modal-v177"><header><div><small>NOVA EMPRESA</small><h2>Cadastrar cliente e contratação</h2></div><button type="button" disabled={saving} onClick={() => { if (!saving) setCreateOpen(false); }}>×</button></header><ModalBody creating /><footer><button type="button" className="outline" disabled={saving} onClick={() => setCreateOpen(false)}>Cancelar</button><button type="button" className="primary" disabled={saving || !companyName.trim() || !storeName.trim()} onClick={() => void createCompany()}>{saving ? "Criando e ativando..." : "Criar empresa"}</button></footer></section></div>}
-    {editOpen && selectedCompany && <div className="modal-backdrop"><section className="compact-modal master-company-modal master-company-modal-v177"><header><div><small>EDITAR EMPRESA</small><h2>{selectedCompany.name}</h2></div><button type="button" disabled={saving} onClick={() => { if (!saving) setEditOpen(false); }}>×</button></header><ModalBody creating={false} /><footer><button type="button" className="outline" disabled={saving} onClick={() => setEditOpen(false)}>Cancelar</button><button type="button" className="primary" disabled={saving || !companyName.trim()} onClick={() => void saveCompany()}>{saving ? "Salvando alterações..." : "Salvar alterações"}</button></footer></section></div>}
+    {plansOpen && <div className="modal-backdrop"><section className="compact-modal master-plans-modal"><header><div><small>PLANOS GERIVO</small><h2>Valores e conteúdo do site de vendas</h2><p>As alterações publicadas aqui aparecem automaticamente na página comercial.</p></div><button type="button" onClick={() => setPlansOpen(false)}>×</button></header><div className="master-plan-editor-grid">{planDrafts.map((plan) => <article key={plan.id} className={plan.recommended ? "master-plan-editor recommended" : "master-plan-editor"}><header><div><small>{plan.code}</small><input value={plan.name} onChange={(event) => patchPlanDraft(plan.id, { name: event.target.value })} /></div><label><input type="checkbox" checked={plan.public_visible} onChange={(event) => patchPlanDraft(plan.id, { public_visible: event.target.checked })} /> Exibir no site</label></header><div className="master-plan-price-row"><Field label="Mensal"><CurrencyInput value={plan.monthly_price} onChange={(monthly_price) => patchPlanDraft(plan.id, { monthly_price })} /></Field><Field label="Anual"><CurrencyInput value={plan.annual_price} onChange={(annual_price) => patchPlanDraft(plan.id, { annual_price })} /></Field></div><div className="master-plan-limits"><Field label="Empresas"><input type="number" min="1" value={plan.company_limit} onChange={(event) => patchPlanDraft(plan.id, { company_limit: Number(event.target.value) })} /></Field><Field label="Unidades"><input type="number" min="1" value={plan.store_limit} onChange={(event) => patchPlanDraft(plan.id, { store_limit: Number(event.target.value) })} /></Field><Field label="Usuários"><input type="number" min="1" value={plan.user_limit} onChange={(event) => patchPlanDraft(plan.id, { user_limit: Number(event.target.value) })} /></Field><Field label="IA/mês"><input type="number" min="0" value={plan.ai_queries_monthly} onChange={(event) => patchPlanDraft(plan.id, { ai_queries_monthly: Number(event.target.value) })} /></Field></div><Field label="Descrição pública"><input value={plan.public_description} onChange={(event) => patchPlanDraft(plan.id, { public_description: event.target.value })} /></Field><Field label="Benefícios — um por linha"><textarea rows={4} value={plan.public_features_text} onChange={(event) => patchPlanDraft(plan.id, { public_features_text: event.target.value })} /></Field><div className="master-plan-publish"><label><input type="checkbox" checked={plan.recommended} onChange={(event) => patchPlanDraft(plan.id, { recommended: event.target.checked })} /> Mais indicado</label><Field label="Texto do botão"><input value={plan.public_cta_label} onChange={(event) => patchPlanDraft(plan.id, { public_cta_label: event.target.value })} /></Field><Field label="Ordem"><input type="number" value={plan.public_sort_order} onChange={(event) => patchPlanDraft(plan.id, { public_sort_order: Number(event.target.value) })} /></Field></div><button type="button" className="primary" disabled={Boolean(savingPlanId)} onClick={() => void savePlanDraft(plan)}>{savingPlanId === plan.id ? "Salvando..." : "Salvar este plano"}</button></article>)}</div><footer><button type="button" className="outline" onClick={() => setPlansOpen(false)}>Fechar</button></footer></section></div>}
+    {createOpen && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setCreateOpen(false); }}><section role="dialog" aria-modal="true" className="compact-modal master-company-modal master-company-modal-v1792"><header><div><small>NOVA EMPRESA</small><h2>Cadastrar cliente e contratação</h2></div><button type="button" disabled={saving} onClick={() => { if (!saving) setCreateOpen(false); }}>×</button></header>{renderModalBody(true)}<footer><button type="button" className="outline" disabled={saving} onClick={() => setCreateOpen(false)}>Cancelar</button><button type="button" className="primary" disabled={saving || !companyName.trim() || !storeName.trim()} onClick={() => void createCompany()}>{saving ? "Criando e ativando..." : "Criar empresa"}</button></footer></section></div>}
+    {editOpen && selectedCompany && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setEditOpen(false); }}><section role="dialog" aria-modal="true" className="compact-modal master-company-modal master-company-modal-v1792"><header><div><small>EDITAR EMPRESA</small><h2>{selectedCompany.name}</h2></div><button type="button" disabled={saving} onClick={() => { if (!saving) setEditOpen(false); }}>×</button></header>{renderModalBody(false)}<footer><button type="button" className="outline" disabled={saving} onClick={() => setEditOpen(false)}>Cancelar</button><button type="button" className="primary" disabled={saving || !companyName.trim()} onClick={() => void saveCompany()}>{saving ? "Salvando alterações..." : "Salvar alterações"}</button></footer></section></div>}
   </div>;
 }
 
@@ -6062,6 +6472,8 @@ function QuotesPage({
   quotes,
   attendances,
   deliveryMode,
+  companyName,
+  currentUserName,
   onChange,
   onCreate,
   onOpen,
@@ -6069,26 +6481,42 @@ function QuotesPage({
   quotes: Quote[];
   attendances: Attendance[];
   deliveryMode: QuoteDeliveryMode;
+  companyName: string;
+  currentUserName: string;
   onChange: (quotes: Quote[]) => void;
   onCreate: () => void;
   onOpen: (id: string) => void;
 }) {
   const [filter, setFilter] = useState<QuoteListStatus>("TODOS");
   const [search, setSearch] = useState("");
+  const [messageQuoteId, setMessageQuoteId] = useState<string | null>(null);
   const normalizedSearch = search.trim().toLowerCase();
   const filtered = quotes.filter((quote) => {
     const statusMatches = filter === "TODOS" || quote.status === filter;
     const text = `${quote.code} ${quote.customer} ${quote.vehicle} ${quote.plate}`.toLowerCase();
     return statusMatches && (!normalizedSearch || text.includes(normalizedSearch));
   });
+  const messageQuote = quotes.find((quote) => quote.id === messageQuoteId) ?? null;
 
   function updateStatus(id: string, status: QuoteStatus) {
-    onChange(quotes.map((quote) => quote.id === id ? { ...quote, status, updatedAt: new Date().toISOString() } : quote));
+    const now = new Date().toISOString();
+    onChange(quotes.map((quote) => quote.id === id ? {
+      ...quote,
+      status,
+      statusChangedAt: now,
+      rejectionReason: status === "NAO_APROVADO" ? (quote.rejectionReason || "OUTRO") : "",
+      rejectionNotes: status === "NAO_APROVADO" ? quote.rejectionNotes : "",
+      updatedAt: now,
+    } : quote));
+  }
+
+  function updateMessageQuote(updated: Quote) {
+    onChange(quotes.map((quote) => quote.id === updated.id ? updated : quote));
   }
 
   return (
-    <section className="module-list-page">
-      <div className="module-intro compact"><div><small>ORÇAMENTAÇÃO</small><h2>Gestão de orçamentos</h2></div></div>
+    <section className="module-list-page quotes-list-v179">
+      <div className="module-intro compact"><div><small>ORÇAMENTAÇÃO</small><h2>Gestão de orçamentos</h2><p>Acompanhe aprovação, retorno e comunicação em uma única lista.</p></div></div>
       <FilterToolbar
         search={search}
         onSearch={setSearch}
@@ -6098,78 +6526,133 @@ function QuotesPage({
         options={[
           { value: "TODOS", label: "Todos" },
           { value: "ABERTO", label: "Aberto" },
-          { value: "FECHADO", label: "Fechado" },
           { value: "AGUARDANDO_APROVACAO", label: "Aguardando aprovação" },
+          { value: "AGUARDANDO_RETORNO_CLIENTE", label: "Aguardando retorno" },
+          { value: "APROVADO", label: "Aprovado" },
+          { value: "NAO_APROVADO", label: "Não aprovado" },
           { value: "AGUARDANDO_COTACAO", label: "Aguardando cotação" },
           { value: "AGUARDANDO_DIGITACAO", label: "Aguardando digitação" },
           { value: "INCOMPLETO", label: "Incompleto" },
-          { value: "AGUARDANDO_RETORNO_CLIENTE", label: "Aguardando retorno do cliente" },
           { value: "AGUARDANDO_DESCONTO", label: "Aguardando desconto" },
         ]}
       />
       <section className="panel module-record-panel">
         <header><div><small>ORÇAMENTOS</small><h3>Lista de orçamentos</h3></div><span className="count">{filtered.length} encontrados</span></header>
-        {filtered.length === 0 ? <div className="module-empty">Nenhum orçamento encontrado. Crie um orçamento novo ou abra um a partir de um atendimento.</div> : <div className="document-table">{filtered.map((quote) => { const attendance = attendances.find((item) => item.id === quote.attendanceId); return <article key={quote.id} className="document-row quote-document-row"><div className="document-code"><strong>{quote.code}</strong><small>{formatDate(quote.createdAt)}</small></div><div className="document-main"><strong>{quote.vehicle || quote.customer || "Cadastro incompleto"}</strong><small>{quote.plate || "Sem placa"}{attendance ? ` · ${attendance.code}` : " · Sem checklist vinculado"}</small></div><div className="document-responsible"><span>Responsável</span><strong>{quote.responsible || "Não informado"}</strong></div><label className="inline-status-select quote-status-select"><span>Status</span><select value={quote.status} onChange={(event) => updateStatus(quote.id, event.target.value as QuoteStatus)}><option value="ABERTO">Aberto</option><option value="FECHADO">Fechado</option><option value="AGUARDANDO_APROVACAO">Aguardando aprovação</option><option value="AGUARDANDO_COTACAO">Aguardando cotação</option><option value="AGUARDANDO_DIGITACAO">Aguardando digitação</option><option value="INCOMPLETO">Incompleto</option><option value="AGUARDANDO_RETORNO_CLIENTE">Aguardando retorno do cliente</option><option value="AGUARDANDO_DESCONTO">Aguardando desconto</option></select></label><strong className="document-total">{money(quote.total)}</strong><button className="outline small" onClick={() => onOpen(quote.id)}>Abrir</button></article>; })}</div>}
+        {filtered.length === 0 ? <div className="module-empty">Nenhum orçamento encontrado. Crie um orçamento novo ou abra um a partir de um atendimento.</div> : <div className="document-table">{filtered.map((quote) => {
+          const attendance = attendances.find((item) => item.id === quote.attendanceId);
+          return <article key={quote.id} className="document-row quote-document-row quote-row-v179">
+            <div className="document-code"><strong>{quote.code}</strong><small>{formatDate(quote.createdAt)}</small></div>
+            <div className="document-main"><strong>{quote.customer || "Cliente não informado"}</strong><small>{quote.vehicle || "Veículo não informado"} · {quote.plate || "Sem placa"}{attendance ? ` · ${attendance.code}` : ""}</small></div>
+            <label className="inline-status-select quote-status-select"><span>Status</span><select value={quote.status} onChange={(event) => updateStatus(quote.id, event.target.value as QuoteStatus)}><QuoteStatusOptions /></select></label>
+            <strong className="document-total">{money(quote.total)}</strong>
+            <button className="quote-message-bubble" title="Mensagens do orçamento" aria-label={`Mensagens de ${quote.code}`} onClick={() => setMessageQuoteId(quote.id)}><span>💬</span>{quote.messageHistory.length > 0 && <b>{quote.messageHistory.length}</b>}</button>
+            <button className="outline small" onClick={() => onOpen(quote.id)}>Abrir</button>
+          </article>;
+        })}</div>}
       </section>
+      {messageQuote && <QuoteMessageDrawer quote={messageQuote} companyName={companyName} currentUserName={currentUserName} deliveryMode={deliveryMode} onChange={updateMessageQuote} onClose={() => setMessageQuoteId(null)} />}
     </section>
   );
 }
 
+function QuoteStatusOptions() {
+  return <>
+    <option value="ABERTO">Aberto</option>
+    <option value="AGUARDANDO_APROVACAO">Aguardando aprovação</option>
+    <option value="AGUARDANDO_RETORNO_CLIENTE">Aguardando retorno do cliente</option>
+    <option value="APROVADO">Aprovado</option>
+    <option value="NAO_APROVADO">Não aprovado</option>
+    <option value="AGUARDANDO_COTACAO">Aguardando cotação</option>
+    <option value="AGUARDANDO_DIGITACAO">Aguardando digitação</option>
+    <option value="AGUARDANDO_DESCONTO">Aguardando desconto</option>
+    <option value="INCOMPLETO">Incompleto</option>
+  </>;
+}
+
+function quoteSituationLabel(situation: QuoteMessageSituation) {
+  return ({ ENVIO: "Enviar orçamento", SEM_RETORNO: "Orçamento sem retorno", APROVADO: "Orçamento aprovado", NAO_APROVADO: "Orçamento não aprovado", PNEUS: "Oportunidade de pneus", AGENDAMENTO: "Oferecer agendamento" } as const)[situation];
+}
+
+function buildQuoteSituationMessage(quote: Quote, companyName: string, situation: QuoteMessageSituation, template: QuoteMessageTemplate) {
+  const source = { ...quote, messageTemplate: template };
+  if (situation === "ENVIO") return buildQuoteMessage(source, companyName);
+  if (situation === "SEM_RETORNO") return [`Olá, ${firstName(quote.customer)}! Tudo bem? 👋`, "", `Estou acompanhando o orçamento ${quote.code}, no valor de ${money(quote.total)}.`, "", "Ficou alguma dúvida ou existe algum ponto que você gostaria de revisar antes da aprovação?", "", `Atenciosamente,\n${companyName}`].join("\n");
+  if (situation === "APROVADO") return [`Olá, ${firstName(quote.customer)}! ✅`, "", `Registramos a aprovação do orçamento ${quote.code}, no valor de ${money(quote.total)}.`, "", "Vamos organizar a execução conforme a disponibilidade confirmada pela equipe.", "", companyName].join("\n");
+  if (situation === "NAO_APROVADO") return [`Olá, ${firstName(quote.customer)}.`, "", `Registramos que o orçamento ${quote.code} não seguirá neste momento.`, quote.rejectionReason ? `Motivo registrado: ${quote.rejectionReason}.` : "", "", "Caso queira retomar ou revisar alguma condição, permanecemos à disposição.", "", companyName].filter(Boolean).join("\n");
+  if (situation === "AGENDAMENTO") return [`Olá, ${firstName(quote.customer)}!`, "", `Podemos reservar um horário para executar os itens do orçamento ${quote.code}.`, "", "Qual dia e período são melhores para você?", "", companyName].join("\n");
+  const tireItems = quote.items.filter((item) => normalizeAssistantText(`${item.category} ${item.name}`).includes("pneu"));
+  const lines = tireItems.length ? tireItems.map((item) => `• *${item.name}*\nValor unitário: *${money(item.unitPrice)}*\nValor do jogo: *${money(lineTotal(item))}*`) : ["• Consulte as opções de pneus registradas no orçamento."];
+  return [`Olá, *${firstName(quote.customer)}*! Tudo bem? 👋`, "", `Conforme solicitado, seguem opções de pneus para o seu *${quote.vehicle}${quote.plate ? ` ${quote.plate}` : ""}*.`, "", "🛞 *Pneus recomendados:*", "", ...lines, "", "🎁 Na troca de 2 ou mais pneus, confirme as cortesias disponíveis antes do envio.", "", "Qual opção atende melhor ao que você procura? Posso verificar a disponibilidade e reservar um horário.", "", companyName].join("\n");
+}
+
+function QuoteMessageDrawer({ quote, companyName, currentUserName, deliveryMode, onChange, onClose }: { quote: Quote; companyName: string; currentUserName: string; deliveryMode: QuoteDeliveryMode; onChange: (quote: Quote) => void; onClose: () => void }) {
+  const [situation, setSituation] = useState<QuoteMessageSituation>("ENVIO");
+  const [template, setTemplate] = useState<QuoteMessageTemplate>(quote.messageTemplate);
+  const [draft, setDraft] = useState(() => buildQuoteSituationMessage(quote, companyName, "ENVIO", quote.messageTemplate));
+  useEffect(() => setDraft(buildQuoteSituationMessage(quote, companyName, situation, template)), [quote.id, situation, template]);
+
+  function record(action: QuoteMessageLog["action"]) {
+    const entry: QuoteMessageLog = { id: uid(), situation, template, text: draft, action, createdAt: new Date().toISOString(), createdBy: currentUserName || "Usuário" };
+    onChange({ ...quote, messageTemplate: template, messageHistory: [entry, ...quote.messageHistory].slice(0, 100), updatedAt: new Date().toISOString() });
+  }
+  async function copy() { try { await navigator.clipboard.writeText(draft); record("COPIADA"); } catch { window.alert(draft); } }
+  function whatsapp() { record("WHATSAPP"); window.open(`https://wa.me/?text=${encodeURIComponent(draft)}`, "_blank", "noopener,noreferrer"); }
+
+  return <div className="quote-message-drawer-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><aside className="quote-message-drawer">
+    <header><div><small>CONVERSA DO ORÇAMENTO</small><h2>{quote.customer || quote.code}</h2><p>{quote.code} · {quote.vehicle} · {money(quote.total)}</p></div><button onClick={onClose}>×</button></header>
+    <div className="quote-message-drawer-body">
+      <div className="quote-message-controls"><Field label="Situação"><select value={situation} onChange={(event) => setSituation(event.target.value as QuoteMessageSituation)}>{(["ENVIO","SEM_RETORNO","APROVADO","NAO_APROVADO","PNEUS","AGENDAMENTO"] as QuoteMessageSituation[]).map((item) => <option key={item} value={item}>{quoteSituationLabel(item)}</option>)}</select></Field><Field label="Tom"><select value={template} onChange={(event) => setTemplate(event.target.value as QuoteMessageTemplate)}>{(["PROFISSIONAL","DIRETA","CONSULTIVA","PREVENTIVA","AMIGAVEL","FORMAL","COMERCIAL","CURTA"] as QuoteMessageTemplate[]).map((item) => <option key={item} value={item}>{quoteMessageTemplateLabel(item)}</option>)}</select></Field></div>
+      <textarea rows={13} value={draft} onChange={(event) => setDraft(event.target.value)} />
+      <div className="quote-message-drawer-actions"><button className="outline" onClick={() => setDraft(buildQuoteSituationMessage(quote, companyName, situation, template))}>Restaurar</button><button className="outline" onClick={copy}>Copiar</button>{deliveryMode !== "LINK" && <button className="primary" onClick={whatsapp}>Abrir WhatsApp</button>}<button className="outline" onClick={() => record("REGISTRADA")}>Registrar contato</button></div>
+      <section className="quote-message-history"><header><strong>Histórico</strong><span>{quote.messageHistory.length} interação(ões)</span></header>{quote.messageHistory.length ? quote.messageHistory.map((entry) => <article key={entry.id}><div><strong>{quoteSituationLabel(entry.situation)}</strong><span>{entry.action.toLowerCase()} · {formatDate(entry.createdAt)}</span></div><small>{entry.createdBy}</small><p>{entry.text.slice(0, 180)}{entry.text.length > 180 ? "…" : ""}</p></article>) : <div className="empty-inline">Nenhuma interação registrada neste orçamento.</div>}</section>
+    </div>
+  </aside></div>;
+}
 
 function DocumentItemsEditor({
   items,
   catalog,
+  catalogEnabled,
   onChange,
 }: {
   items: DocumentLine[];
   catalog: CatalogItem[];
+  catalogEnabled: boolean;
   onChange: (items: DocumentLine[]) => void;
 }) {
   const [selectedCatalogId, setSelectedCatalogId] = useState("");
-  const activeCatalog = catalog.filter((item) => item.active);
+  const activeCatalog = catalogEnabled ? catalog.filter((item) => item.active) : [];
 
   function addCatalogItem() {
     const catalogItem = activeCatalog.find((item) => item.id === selectedCatalogId);
     if (!catalogItem) return;
-    onChange([
-      ...items,
-      {
-        id: uid(),
-        catalogItemId: catalogItem.id,
-        name: catalogItem.name,
-        category: catalogItem.category || "Geral",
-        description: "",
-        kind: catalogItem.kind,
-        quantity: 1,
-        unitPrice: catalogItem.price,
-      },
-    ]);
+    onChange([...items, { id: uid(), catalogItemId: catalogItem.id, name: catalogItem.name, category: catalogItem.category || "Geral", description: "", kind: catalogItem.kind, quantity: 1, unitPrice: catalogItem.price }]);
     setSelectedCatalogId("");
   }
+  function addCustomItem() { onChange([...items, { id: uid(), catalogItemId: null, name: "", category: "", description: "", kind: "SERVICO", quantity: 1, unitPrice: 0 }]); }
+  function updateItem(id: string, patch: Partial<DocumentLine>) { onChange(items.map((item) => item.id === id ? { ...item, ...patch } : item)); }
 
-  function addCustomItem() {
-    onChange([...items, { id: uid(), catalogItemId: null, name: "", category: "", description: "", kind: "SERVICO", quantity: 1, unitPrice: 0 }]);
-  }
-
-  function updateItem(id: string, patch: Partial<DocumentLine>) {
-    onChange(items.map((item) => item.id === id ? { ...item, ...patch } : item));
-  }
-
-  return (
-    <section className="document-items-panel">
-      <header><div><small>ITENS DO DOCUMENTO</small><h3>Serviços, peças e produtos</h3></div><div className="document-item-add"><select value={selectedCatalogId} onChange={(event) => setSelectedCatalogId(event.target.value)}><option value="">Selecionar do catálogo</option>{activeCatalog.map((item) => <option key={item.id} value={item.id}>{item.name} · {money(item.price)}</option>)}</select><button className="outline" type="button" disabled={!selectedCatalogId} onClick={addCatalogItem}>Adicionar</button><button className="primary" type="button" onClick={addCustomItem}>+ Item livre</button></div></header>
-      <div className="document-items-table">
-        <div className="document-items-head"><span>Tipo</span><span>Descrição, categoria e detalhe</span><span>Qtd.</span><span>Valor unit.</span><span>Total</span><span /></div>
-        {items.length === 0 ? <div className="document-items-empty">Nenhum item adicionado. Use o catálogo ou crie um item livre.</div> : items.map((item) => <div key={item.id} className="document-item-row"><select value={item.kind} onChange={(event) => updateItem(item.id, { kind: event.target.value as CatalogKind })}><option value="SERVICO">Serviço</option><option value="PECA">Peça</option><option value="PRODUTO">Produto</option><option value="KIT">Kit</option><option value="MATERIAL">Material</option></select><div className="document-item-description"><input value={item.name} onChange={(event) => updateItem(item.id, { name: event.target.value })} placeholder="Descrição do item" /><div className="document-item-meta"><input value={item.category} onChange={(event) => updateItem(item.id, { category: event.target.value })} placeholder="Categoria para agrupamento" /><input value={item.description} onChange={(event) => updateItem(item.id, { description: event.target.value })} placeholder="Detalhe ou observação" /></div></div><input type="number" min="0" step="1" value={item.quantity} onChange={(event) => updateItem(item.id, { quantity: Math.max(0, Number(event.target.value) || 0) })} /><input type="number" min="0" step="0.01" value={item.unitPrice} onChange={(event) => updateItem(item.id, { unitPrice: Math.max(0, Number(event.target.value) || 0) })} /><strong>{money(lineTotal(item))}</strong><button className="document-remove-item" type="button" onClick={() => onChange(items.filter((current) => current.id !== item.id))}><PremiumIcon name="trash" size={16} /></button></div>)}
-      </div>
-    </section>
-  );
+  return <section className="document-items-panel document-items-v179">
+    <header><div><small>ITENS DO DOCUMENTO</small><h3>Serviços, peças e produtos</h3></div><div className={catalogEnabled ? "document-item-add" : "document-item-add no-catalog"}>{catalogEnabled && <><select value={selectedCatalogId} onChange={(event) => setSelectedCatalogId(event.target.value)}><option value="">Selecionar do catálogo</option>{activeCatalog.map((item) => <option key={item.id} value={item.id}>{item.name} · {money(item.price)}</option>)}</select><button className="outline" type="button" disabled={!selectedCatalogId} onClick={addCatalogItem}>Adicionar</button></>}<button className="primary" type="button" onClick={addCustomItem}>+ Item livre</button></div></header>
+    <div className="document-items-table">
+      <div className="document-items-head"><span>Tipo</span><span>Descrição, categoria e detalhe</span><span>Qtd.</span><span>Valor unit.</span><span>Total</span><span /></div>
+      {items.length === 0 ? <div className="document-items-empty">Nenhum item adicionado. Crie um item livre{catalogEnabled ? " ou selecione no catálogo" : ""}.</div> : items.map((item, index) => <article key={item.id} className="document-item-row document-item-card-mobile">
+        <label className="item-kind-field"><span>Tipo</span><select value={item.kind} onChange={(event) => updateItem(item.id, { kind: event.target.value as CatalogKind })}><option value="SERVICO">Serviço</option><option value="PECA">Peça</option><option value="PRODUTO">Produto</option><option value="KIT">Kit</option><option value="MATERIAL">Material</option></select></label>
+        <div className="document-item-description"><label><span>Descrição</span><input value={item.name} onChange={(event) => updateItem(item.id, { name: event.target.value })} placeholder="Descrição do item" /></label><div className="document-item-meta"><label><span>Categoria</span><input value={item.category} onChange={(event) => updateItem(item.id, { category: event.target.value })} placeholder="Categoria para agrupamento" /></label><label><span>Detalhe</span><input value={item.description} onChange={(event) => updateItem(item.id, { description: event.target.value })} placeholder="Detalhe ou observação" /></label></div></div>
+        <label className="item-quantity-field"><span>Qtd.</span><input inputMode="decimal" type="text" value={String(item.quantity).replace(".", ",")} onChange={(event) => updateItem(item.id, { quantity: Math.max(0, Number(event.target.value.replace(",", ".")) || 0) })} /></label>
+        <label className="item-price-field"><span>Valor unitário</span><CurrencyInput ariaLabel={`Valor unitário do item ${index + 1}`} value={item.unitPrice} onChange={(unitPrice) => updateItem(item.id, { unitPrice })} /></label>
+        <div className="item-total-field"><span>Total</span><strong>{money(lineTotal(item))}</strong></div>
+        <button className="document-remove-item" type="button" title="Remover item" onClick={() => onChange(items.filter((current) => current.id !== item.id))}><PremiumIcon name="trash" size={16} /></button>
+      </article>)}
+    </div>
+  </section>;
 }
 
 function ServiceOrderEditor({
   order,
   catalog,
   companyName,
+  catalogEnabled,
   onChange,
   onBack,
   onSaved,
@@ -6177,6 +6660,7 @@ function ServiceOrderEditor({
   order: ServiceOrder;
   catalog: CatalogItem[];
   companyName: string;
+  catalogEnabled: boolean;
   onChange: (order: ServiceOrder) => void;
   onBack: () => void;
   onSaved: () => void;
@@ -6192,7 +6676,7 @@ function ServiceOrderEditor({
       <article className="document-editor-card"><h3>Controle da O.S.</h3><div className="document-form-grid"><Field label="Status"><select value={order.status} onChange={(event) => update({ status: event.target.value as ServiceOrderStatus })}><option value="ABERTA">Aberta</option><option value="PENDENTE">Pendente</option><option value="INCOMPLETA">Incompleta</option><option value="FECHADA">Fechada</option></select></Field><Field label="Responsável"><input value={order.responsible} onChange={(event) => update({ responsible: event.target.value })} /></Field><Field label="Técnico / executor"><input value={order.technician} onChange={(event) => update({ technician: event.target.value })} placeholder="Nome do técnico" /></Field><Field label="Previsão de entrega"><input type="datetime-local" value={order.expectedDelivery} onChange={(event) => update({ expectedDelivery: event.target.value })} /></Field></div></article>
       <article className="document-editor-card"><h3>Informações técnicas</h3><div className="document-textareas"><Field label="Solicitação / relato do cliente"><textarea rows={3} value={order.complaint} onChange={(event) => update({ complaint: event.target.value })} placeholder="Descreva o motivo da entrada do veículo." /></Field><Field label="Diagnóstico / orientação"><textarea rows={3} value={order.diagnosis} onChange={(event) => update({ diagnosis: event.target.value })} placeholder="Diagnóstico, recomendações ou serviço autorizado." /></Field><Field label="Observações internas"><textarea rows={3} value={order.internalNotes} onChange={(event) => update({ internalNotes: event.target.value })} placeholder="Informações internas que não precisam aparecer para o cliente." /></Field></div></article>
     </section>
-    <DocumentItemsEditor items={order.items} catalog={catalog} onChange={(items) => update({ items })} />
+    <DocumentItemsEditor items={order.items} catalog={catalog} catalogEnabled={catalogEnabled} onChange={(items) => update({ items })} />
     <aside className="document-total-bar"><span>Total da O.S.</span><strong>{money(order.total)}</strong></aside>
   </section>;
 }
@@ -6296,7 +6780,7 @@ function buildQuoteConsultiveSuggestions(quote: Quote) {
   if (!quote.notes.trim()) suggestions.push("Inclua prazo de execução, garantia ou condições relevantes nas observações.");
   if (quote.validityDays === 0) suggestions.push("A validade está em 0; ela será ocultada da mensagem e do documento.");
   if (quote.paymentMethod === "CREDITO" && quote.installments > 1) suggestions.push(`Destaque comercial disponível: parcelamento em até ${quote.installments}x.`);
-  if (!["AGUARDANDO_APROVACAO", "FECHADO"].includes(quote.status)) suggestions.push("Antes do envio, considere alterar o status para “Aguardando aprovação”.");
+  if (!["AGUARDANDO_APROVACAO", "APROVADO", "FECHADO"].includes(quote.status)) suggestions.push("Antes do envio, considere alterar o status para “Aguardando aprovação”.");
   if (!suggestions.length) suggestions.push("O orçamento está bem estruturado e pronto para uma abordagem consultiva ao cliente.");
   return suggestions;
 }
@@ -6321,6 +6805,7 @@ function buildQuoteDocumentHtml(quote: Quote, companyIdentity: CompanyIdentity, 
 function QuoteEditor({
   quote,
   catalog,
+  catalogEnabled,
   companyName,
   companyIdentity,
   customer,
@@ -6331,6 +6816,7 @@ function QuoteEditor({
 }: {
   quote: Quote;
   catalog: CatalogItem[];
+  catalogEnabled: boolean;
   companyName: string;
   companyIdentity: CompanyIdentity;
   customer: Customer | null;
@@ -6346,11 +6832,7 @@ function QuoteEditor({
   const [assistantOpen, setAssistantOpen] = useState(false);
   const message = messageOverride ?? generatedMessage;
   const suggestions = buildQuoteConsultiveSuggestions({ ...quote, total });
-
-  useEffect(() => {
-    setMessageOverride(null);
-    setAssistantOpen(false);
-  }, [quote.id]);
+  useEffect(() => { setMessageOverride(null); setAssistantOpen(false); }, [quote.id]);
 
   function update(patch: Partial<Quote>) {
     const items = patch.items ?? quote.items;
@@ -6358,60 +6840,26 @@ function QuoteEditor({
     const discountPercent = patch.discountPercent ?? quote.discountPercent;
     const currentSubtotal = itemsSubtotal(items);
     const currentTotal = Math.max(0, currentSubtotal - discountAmount - currentSubtotal * discountPercent / 100);
-    onChange({ ...quote, ...patch, items, discountAmount, discountPercent, total: currentTotal, updatedAt: new Date().toISOString(), status: quote.status === "AGUARDANDO_DIGITACAO" && items.length ? "ABERTO" : (patch.status ?? quote.status) });
+    const nextStatus = quote.status === "AGUARDANDO_DIGITACAO" && items.length ? "ABERTO" : (patch.status ?? quote.status);
+    onChange({ ...quote, ...patch, items, discountAmount, discountPercent, total: currentTotal, updatedAt: new Date().toISOString(), status: nextStatus, statusChangedAt: patch.status && patch.status !== quote.status ? new Date().toISOString() : quote.statusChangedAt, rejectionReason: nextStatus === "NAO_APROVADO" ? (patch.rejectionReason ?? quote.rejectionReason ?? "OUTRO") : "", rejectionNotes: nextStatus === "NAO_APROVADO" ? (patch.rejectionNotes ?? quote.rejectionNotes) : "" });
   }
+  function changeTemplate(template: QuoteMessageTemplate) { setMessageOverride(null); update({ messageTemplate: template }); }
+  function applyConsultiveImprovement() { setMessageOverride(buildQuoteMessage({ ...quote, total }, companyName, true)); setAssistantOpen(true); }
+  async function copyMessage() { try { await navigator.clipboard.writeText(message); onSaved(); } catch { window.alert(message); } }
+  function shareWhatsApp() { window.open(`https://wa.me/?text=${encodeURIComponent(message)}`, "_blank", "noopener,noreferrer"); }
+  function printQuote() { const printWindow = window.open("", "_blank"); if (!printWindow) return window.alert("Permita pop-ups para imprimir o orçamento."); printWindow.opener = null; printWindow.document.open(); printWindow.document.write(buildQuoteDocumentHtml({ ...quote, total }, companyIdentity, customer)); printWindow.document.close(); printWindow.focus(); window.setTimeout(() => printWindow.print(), 350); }
+  function downloadQuote() { const html = buildQuoteDocumentHtml({ ...quote, total }, companyIdentity, customer); const blob = new Blob([html], { type: "text/html;charset=utf-8" }); const url = URL.createObjectURL(blob); const anchor = document.createElement("a"); anchor.href = url; anchor.download = `${quote.code}-${quote.plate || "orcamento"}.html`; document.body.appendChild(anchor); anchor.click(); anchor.remove(); URL.revokeObjectURL(url); }
 
-  function changeTemplate(template: QuoteMessageTemplate) {
-    setMessageOverride(null);
-    update({ messageTemplate: template });
-  }
-
-  function applyConsultiveImprovement() {
-    setMessageOverride(buildQuoteMessage({ ...quote, total }, companyName, true));
-    setAssistantOpen(true);
-  }
-
-  async function copyMessage() {
-    try { await navigator.clipboard.writeText(message); onSaved(); } catch { window.alert(message); }
-  }
-
-  function shareWhatsApp() {
-    window.open(`https://wa.me/?text=${encodeURIComponent(message)}`, "_blank", "noopener,noreferrer");
-  }
-
-  function printQuote() {
-    const printWindow = window.open("", "_blank");
-    if (!printWindow) return window.alert("Permita pop-ups para imprimir o orçamento.");
-    printWindow.opener = null;
-    printWindow.document.open();
-    printWindow.document.write(buildQuoteDocumentHtml({ ...quote, total }, companyIdentity, customer));
-    printWindow.document.close();
-    printWindow.focus();
-    window.setTimeout(() => printWindow.print(), 350);
-  }
-
-  function downloadQuote() {
-    const html = buildQuoteDocumentHtml({ ...quote, total }, companyIdentity, customer);
-    const blob = new Blob([html], { type: "text/html;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `${quote.code}-${quote.plate || "orcamento"}.html`;
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-    URL.revokeObjectURL(url);
-  }
-
-  return <section className="document-editor-page">
-    <header className="document-editor-header"><div><small>ORÇAMENTO · {companyName}</small><h2>{quote.code}</h2><p>{quote.customer} · {quote.vehicle} · {quote.plate}</p></div><div><button className="outline" onClick={onBack}>← Voltar à lista</button><button className="outline" onClick={downloadQuote}>Baixar orçamento</button><button className="outline" onClick={printQuote}>Imprimir / PDF</button><button className="primary" onClick={onSaved}>Salvar orçamento</button></div></header>
-    <section className="document-editor-grid quote-editor-grid">
-      <article className="document-editor-card"><h3>Condições comerciais</h3><div className="document-form-grid"><Field label="Status"><select value={quote.status} onChange={(event) => update({ status: event.target.value as QuoteStatus })}><option value="ABERTO">Aberto</option><option value="FECHADO">Fechado</option><option value="AGUARDANDO_APROVACAO">Aguardando aprovação</option><option value="AGUARDANDO_COTACAO">Aguardando cotação</option><option value="AGUARDANDO_DIGITACAO">Aguardando digitação</option><option value="INCOMPLETO">Incompleto</option><option value="AGUARDANDO_RETORNO_CLIENTE">Aguardando retorno do cliente</option><option value="AGUARDANDO_DESCONTO">Aguardando desconto</option></select></Field><Field label="Validade"><div className="validity-field"><div className="input-suffix"><input type="number" min="0" value={quote.validityDays} onChange={(event) => update({ validityDays: Math.max(0, Number(event.target.value) || 0) })} /><span>dias</span></div><small>Use 0 para não exibir validade.</small></div></Field><Field label="Forma de pagamento"><select value={quote.paymentMethod} onChange={(event) => update({ paymentMethod: event.target.value as PaymentMethod })}><option value="PIX">Pix</option><option value="DEBITO">Débito</option><option value="CREDITO">Crédito</option><option value="DINHEIRO">Dinheiro</option><option value="OUTRO">Outro</option></select></Field>{quote.paymentMethod === "CREDITO" && <Field label="Parcelamento em até"><select value={quote.installments} onChange={(event) => update({ installments: Number(event.target.value) })}>{Array.from({ length: 12 }, (_, index) => index + 1).map((value) => <option key={value} value={value}>{value}x</option>)}</select></Field>}<Field label="Desconto R$"><input type="number" min="0" step="0.01" value={quote.discountAmount} onChange={(event) => update({ discountAmount: Math.max(0, Number(event.target.value) || 0) })} /></Field><Field label="Desconto %"><input type="number" min="0" max="100" step="0.01" value={quote.discountPercent} onChange={(event) => update({ discountPercent: Math.max(0, Math.min(100, Number(event.target.value) || 0)) })} /></Field></div><label className="quote-combine-toggle"><input type="checkbox" checked={quote.combinePartsLabor} onChange={(event) => update({ combinePartsLabor: event.target.checked })} /><span><strong>Unir peça + mão de obra</strong><small>Une somente os itens que possuem a mesma categoria. Itens sem categoria permanecem separados.</small></span></label></article>
-      <article className="document-editor-card quote-message-card"><div className="message-card-heading"><div><h3>Mensagem ao cliente</h3><span>Modelo profissional com emojis e edição livre.</span></div><select value={quote.messageTemplate} onChange={(event) => changeTemplate(event.target.value as QuoteMessageTemplate)}>{(["PROFISSIONAL", "DIRETA", "CONSULTIVA", "PREVENTIVA", "AMIGAVEL", "FORMAL", "COMERCIAL", "CURTA"] as QuoteMessageTemplate[]).map((template) => <option key={template} value={template}>{quoteMessageTemplateLabel(template)}</option>)}</select></div><textarea rows={14} value={message} onChange={(event) => setMessageOverride(event.target.value)} /><div className="quote-message-actions"><span>Padrão da empresa: {quoteDeliveryLabel(deliveryMode)}</span><button className="outline" type="button" onClick={() => setMessageOverride(null)}>Restaurar automático</button>{deliveryMode !== "LINK" && <button className="outline" type="button" onClick={copyMessage}>Copiar mensagem</button>}<button className="primary" type="button" onClick={shareWhatsApp}>Abrir WhatsApp</button></div></article>
+  return <section className="document-editor-page quote-editor-professional">
+    <header className="document-editor-header quote-editor-header-v179"><div><small>ORÇAMENTO · {companyName}</small><h2>{quote.code}</h2><p>{quote.customer} · {quote.vehicle} · {quote.plate}</p></div><div className="quote-header-actions"><button className="outline" onClick={onBack}>← Lista</button><button className="outline" onClick={downloadQuote}>Baixar</button><button className="outline" onClick={printQuote}>Imprimir / PDF</button><button className="primary" onClick={onSaved}>Salvar</button></div></header>
+    <section className="quote-overview-strip"><div><small>STATUS</small><strong>{quoteStatusLabel(quote.status)}</strong></div><div><small>ITENS</small><strong>{quote.items.filter((item) => item.name.trim()).length}</strong></div><div><small>SUBTOTAL</small><strong>{money(subtotal)}</strong></div><div className="quote-overview-total"><small>TOTAL FINAL</small><strong>{money(total)}</strong></div></section>
+    <section className="document-editor-grid quote-editor-grid quote-editor-grid-v179">
+      <article className="document-editor-card quote-commercial-card"><header><div><small>CONDIÇÕES</small><h3>Condições comerciais</h3></div></header><div className="document-form-grid"><Field label="Status"><select value={quote.status} onChange={(event) => update({ status: event.target.value as QuoteStatus })}><QuoteStatusOptions /></select></Field><Field label="Validade"><div className="validity-field"><div className="input-suffix"><input type="number" min="0" value={quote.validityDays} onChange={(event) => update({ validityDays: Math.max(0, Number(event.target.value) || 0) })} /><span>dias</span></div><small>Use 0 para ocultar.</small></div></Field><Field label="Forma de pagamento"><select value={quote.paymentMethod} onChange={(event) => update({ paymentMethod: event.target.value as PaymentMethod })}><option value="PIX">Pix</option><option value="DEBITO">Débito</option><option value="CREDITO">Crédito</option><option value="DINHEIRO">Dinheiro</option><option value="OUTRO">Outro</option></select></Field>{quote.paymentMethod === "CREDITO" && <Field label="Parcelamento em até"><select value={quote.installments} onChange={(event) => update({ installments: Number(event.target.value) })}>{Array.from({ length: 12 }, (_, index) => index + 1).map((value) => <option key={value} value={value}>{value}x</option>)}</select></Field>}<Field label="Desconto em reais"><CurrencyInput value={quote.discountAmount} onChange={(discountAmount) => update({ discountAmount })} /></Field><Field label="Desconto %"><input inputMode="decimal" type="text" value={String(quote.discountPercent).replace(".", ",")} onChange={(event) => update({ discountPercent: Math.max(0, Math.min(100, Number(event.target.value.replace(",", ".")) || 0)) })} /></Field></div>{quote.status === "NAO_APROVADO" && <div className="quote-rejection-fields"><Field label="Motivo da não aprovação"><select value={quote.rejectionReason} onChange={(event) => update({ rejectionReason: event.target.value })}><option value="PRECO">Preço</option><option value="PRAZO">Prazo</option><option value="DESISTENCIA">Cliente desistiu</option><option value="OUTRO_LOCAL">Executado em outro local</option><option value="SEM_RETORNO">Sem retorno</option><option value="ADIADO">Serviço adiado</option><option value="OUTRO">Outro</option></select></Field><Field label="Observação"><textarea rows={2} value={quote.rejectionNotes} onChange={(event) => update({ rejectionNotes: event.target.value })} placeholder="Detalhe opcional para o histórico." /></Field></div>}<label className="quote-combine-toggle"><input type="checkbox" checked={quote.combinePartsLabor} onChange={(event) => update({ combinePartsLabor: event.target.checked })} /><span><strong>Unir peça + mão de obra por categoria</strong><small>Somente itens da mesma categoria são agrupados.</small></span></label></article>
+      <article className="document-editor-card quote-message-card"><div className="message-card-heading"><div><small>COMUNICAÇÃO</small><h3>Mensagem ao cliente</h3><span>Edite antes de copiar ou abrir no WhatsApp.</span></div><select value={quote.messageTemplate} onChange={(event) => changeTemplate(event.target.value as QuoteMessageTemplate)}>{(["PROFISSIONAL", "DIRETA", "CONSULTIVA", "PREVENTIVA", "AMIGAVEL", "FORMAL", "COMERCIAL", "CURTA"] as QuoteMessageTemplate[]).map((template) => <option key={template} value={template}>{quoteMessageTemplateLabel(template)}</option>)}</select></div><textarea rows={12} value={message} onChange={(event) => setMessageOverride(event.target.value)} /><div className="quote-message-actions"><span>Padrão: {quoteDeliveryLabel(deliveryMode)}</span><button className="outline" type="button" onClick={() => setMessageOverride(null)}>Restaurar</button>{deliveryMode !== "LINK" && <button className="outline" type="button" onClick={copyMessage}>Copiar</button>}<button className="primary" type="button" onClick={shareWhatsApp}>WhatsApp</button></div></article>
     </section>
-    <section className="quote-ai-assistant"><div className="quote-ai-heading"><div className="quote-ai-icon">✦</div><div><small>ASSISTENTE CONSULTIVO GERIVO</small><h3>Análise inteligente da proposta</h3><p>Revisa clareza, condições comerciais e prontidão para envio.</p></div><div><button className="outline" type="button" onClick={() => setAssistantOpen((current) => !current)}>{assistantOpen ? "Ocultar análise" : "Analisar orçamento"}</button><button className="primary" type="button" onClick={applyConsultiveImprovement}>Melhorar mensagem</button></div></div>{assistantOpen && <div className="quote-ai-suggestions">{suggestions.map((suggestion, index) => <div key={`${index}-${suggestion}`}><span>{index + 1}</span><p>{suggestion}</p></div>)}</div>}</section>
-    <DocumentItemsEditor items={quote.items} catalog={catalog} onChange={(items) => update({ items })} />
-    <section className="quote-summary-grid"><Field label="Observações da proposta"><textarea rows={4} value={quote.notes} onChange={(event) => update({ notes: event.target.value })} placeholder="Prazo de execução, garantia, disponibilidade de peças ou informações adicionais." /></Field><aside><span>Subtotal</span><b>{money(subtotal)}</b>{Math.max(0, subtotal - total) > 0 && <><span>Descontos</span><b>- {money(Math.max(0, subtotal - total))}</b></>}<strong>Total final</strong><em>{money(total)}</em></aside></section>
+    <section className="quote-ai-assistant quote-ai-professional"><div className="quote-ai-heading"><div className="quote-ai-icon">✦</div><div><small>ASSISTENTE CONSULTIVO</small><h3>Revisão da proposta</h3><p>Verifique clareza e condições antes do envio.</p></div><div><button className="outline" type="button" onClick={() => setAssistantOpen((current) => !current)}>{assistantOpen ? "Ocultar" : "Analisar"}</button><button className="primary" type="button" onClick={applyConsultiveImprovement}>Melhorar mensagem</button></div></div>{assistantOpen && <div className="quote-ai-suggestions">{suggestions.map((suggestion, index) => <div key={`${index}-${suggestion}`}><span>{index + 1}</span><p>{suggestion}</p></div>)}</div>}</section>
+    <DocumentItemsEditor items={quote.items} catalog={catalog} catalogEnabled={catalogEnabled} onChange={(items) => update({ items })} />
+    <section className="quote-summary-grid quote-summary-v179"><Field label="Observações da proposta"><textarea rows={4} value={quote.notes} onChange={(event) => update({ notes: event.target.value })} placeholder="Prazo, garantia, disponibilidade ou informações adicionais." /></Field><aside><span>Subtotal</span><b>{money(subtotal)}</b>{Math.max(0, subtotal - total) > 0 && <><span>Descontos</span><b>- {money(Math.max(0, subtotal - total))}</b></>}<strong>Total final</strong><em>{money(total)}</em></aside></section>
   </section>;
 }
 
@@ -6442,9 +6890,14 @@ function StartFlowWizard({
   const [email, setEmail] = useState("");
   const [plate, setPlate] = useState("");
   const [vehicleDescription, setVehicleDescription] = useState("");
-  const [responsible, setResponsible] = useState(defaultResponsible);
   const normalizedSearch = search.trim().toLowerCase();
   const normalizedPlate = plate.replace(/[^A-Z0-9]/g, "").toUpperCase();
+
+  useEffect(() => {
+    const close = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [onClose]);
 
   const registry = useMemo(() => {
     const records = customers.filter((customer) => customer.storeId === currentStoreId).flatMap((customer) => {
@@ -6502,14 +6955,14 @@ function StartFlowWizard({
       createdAt: now,
       updatedAt: now,
     };
-    onComplete({ target, customer, vehicle, responsible });
+    onComplete({ target, customer, vehicle, responsible: defaultResponsible });
   }
 
   const title = target === "CHECKLIST" ? "Nova recepção" : target === "ORDER" ? "Nova ordem de serviço" : "Novo orçamento";
   const description = target === "CHECKLIST" ? "Localize o cliente e o veículo antes de iniciar o Check-in." : target === "ORDER" ? "Nenhuma O.S. pode ser aberta sem cliente e veículo vinculados." : "O orçamento será criado somente após identificar o cliente e o veículo.";
 
   return (
-    <div className="modal-backdrop start-flow-backdrop">
+    <div className="modal-backdrop start-flow-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <section className="start-flow-modal">
         <header><div><small>NOVO PROCESSO</small><h2>{title}</h2><p>{description}</p></div><button type="button" onClick={onClose}>×</button></header>
         <div className="start-flow-layout">
@@ -6521,7 +6974,7 @@ function StartFlowWizard({
           </aside>
           <form onSubmit={submit} className="start-flow-form">
             <div className="start-flow-section"><small>CLIENTE</small><div className="start-flow-grid"><label><span>Nome *</span><input value={customerName} onChange={(e) => setCustomerName(e.target.value)} placeholder="Digite o nome do cliente" /></label><label><span>WhatsApp</span><input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="(00) 00000-0000" /></label><label className="wide"><span>E-mail</span><input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="cliente@email.com" /></label></div></div>
-            <div className="start-flow-section"><small>VEÍCULO</small><div className="start-flow-grid"><label><span>Placa *</span><input value={plate} maxLength={7} onChange={(e) => setPlate(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))} placeholder="ABC1D23" /></label><label className="vehicle-description"><span>Veículo *</span><input value={vehicleDescription} onChange={(e) => setVehicleDescription(e.target.value)} placeholder="Modelo e versão" /></label><label className="wide"><span>Responsável</span><input value={responsible} onChange={(e) => setResponsible(e.target.value)} /></label></div>{historicalMatch && <div className="history-match"><PremiumIcon name="car" size={18} /><div><strong>Histórico encontrado para esta placa</strong><span>{historicalMatch.reception.customer} · último atendimento {formatDate(historicalMatch.updatedAt)}</span></div></div>}</div>
+            <div className="start-flow-section"><small>VEÍCULO</small><div className="start-flow-grid"><label><span>Placa *</span><input value={plate} maxLength={7} onChange={(e) => setPlate(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))} placeholder="ABC1D23" /></label><label className="vehicle-description"><span>Veículo *</span><input value={vehicleDescription} onChange={(e) => setVehicleDescription(e.target.value)} placeholder="Modelo e versão" /></label></div>{historicalMatch && <div className="history-match"><PremiumIcon name="car" size={18} /><div><strong>Histórico encontrado para esta placa</strong><span>{historicalMatch.reception.customer} · último atendimento {formatDate(historicalMatch.updatedAt)}</span></div></div>}</div>
             <footer><button type="button" className="outline" onClick={onClose}>Cancelar</button><button type="submit" className="primary">{target === "CHECKLIST" ? "Iniciar Check-in" : target === "ORDER" ? "Criar O.S." : "Criar orçamento"}</button></footer>
           </form>
         </div>

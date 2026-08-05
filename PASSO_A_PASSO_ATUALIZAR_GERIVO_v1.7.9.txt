@@ -1,0 +1,37 @@
+ATUALIZAR GERIVO v1.7.8 PARA v1.7.9
+=====================================
+
+1. Faça uma cópia de segurança de C:\Projetos\mecflow.
+2. Preserve os arquivos/pastas:
+   - .env.local
+   - .git
+3. Pare o servidor com Ctrl+C.
+4. Apague as pastas geradas:
+   - .next
+   - node_modules
+5. Copie o conteúdo deste pacote para C:\Projetos\mecflow e confirme a substituição.
+6. Não execute SQL se o banco já está na v1.7.8.
+7. No PowerShell:
+
+   cd C:\Projetos\mecflow
+   npm install
+   npm run build
+   npm run dev
+
+8. Teste localmente.
+9. Envie ao GitHub:
+
+   git status
+   git add .
+   git commit -m "Atualiza Gerivo para v1.7.9"
+   git push origin main
+
+10. Aguarde o deployment da Vercel e execute o roteiro TESTES-v1.7.9.md.
+
+ATUALIZAÇÃO DIRETA DA v1.7.6
+- Execute no Supabase, uma única vez:
+  SQL_ATUALIZAR_v1.7.6_PARA_v1.7.9.sql
+
+IMPORTANTE
+- Nunca envie .env.local ao GitHub.
+- Confirme SUPABASE_SECRET_KEY na Vercel para criação e edição de usuários/empresas.
