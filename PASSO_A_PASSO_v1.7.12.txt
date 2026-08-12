@@ -1,0 +1,17 @@
+GERIVO v1.7.12 — ATUALIZAÇÃO
+
+1. Preserve os arquivos .env.local e a pasta .git.
+2. Substitua os arquivos da atualização na pasta do projeto.
+3. No Supabase SQL Editor, execute:
+   supabase/migrations/011_v1712_optional_parts_orders.sql
+4. O módulo ficará DESATIVADO por padrão.
+5. Entre no Gerivo como MASTER.
+6. Edite a contratação da empresa, selecione Plano personalizado e ative "Pedidos de peças".
+7. Apague a pasta .next.
+8. Execute:
+   npm install
+   npm run build
+   npm run dev
+9. Teste o módulo antes do git push.
+
+Não execute novamente as migrations anteriores.

@@ -1,0 +1,13 @@
+VALIDAÇÃO DO HOTFIX v1.7.9.2
+
+[OK] TypeScript: node node_modules/typescript/bin/tsc --noEmit
+[OK] Balanceamento estrutural de CSS e TSX
+[OK] Formulário de empresa deixou de ser um componente interno remontado
+[OK] Máscara e validação do CNPJ
+[OK] Layout responsivo do modal MASTER
+[OK] Estrutura e responsividade do BI executivo
+[OK] Nenhuma migration nova
+
+Limitação do ambiente:
+O Next.js não carregou o SWC Linux porque o pacote retornou 404 no registro interno.
+Execute npm run build no Windows antes do push.

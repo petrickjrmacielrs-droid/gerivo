@@ -1,0 +1,4 @@
+Gerivo v1.7.13.2
+- TypeScript: tsc --noEmit executado com sucesso usando as dependências da base.
+- Build Next.js: não concluído neste ambiente porque o Next tentou baixar o binário SWC Linux e o acesso ao registry.npmjs.org não estava disponível.
+- SQL: nenhum SQL novo.

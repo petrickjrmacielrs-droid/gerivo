@@ -1,0 +1,20 @@
+GERIVO v1.7.9.2 — REVISÃO MASTER E BI
+
+CORREÇÕES PRINCIPAIS
+- Corrigido o foco que retornava ao campo Empresa enquanto o CNPJ era digitado.
+- O formulário não é mais recriado a cada tecla.
+- CNPJ com máscara brasileira e validação de 14 dígitos.
+- Nome da unidade acompanha o nome da empresa somente enquanto não for editado manualmente.
+- Criação e edição de empresa usam o mesmo fluxo estável.
+- Abas Dados, Plano e contratação, Módulos e limites e Histórico foram restilizadas.
+- Modal de empresa possui rolagem interna, cabeçalho/rodapé fixos, ESC e clique externo.
+- Gerivo BI reconstruído com atalhos de período, filtros organizados, KPIs, evolução financeira, funil, categorias e alertas.
+- Checkbox de comparação corrigido e responsividade revisada.
+
+BANCO DE DADOS
+Nenhum SQL novo é necessário para quem já instalou a v1.7.8 ou v1.7.9.
+
+VALIDAÇÃO
+TypeScript executado com: tsc --noEmit
+Resultado: aprovado sem erros.
+O build Next.js completo não foi executado neste ambiente por indisponibilidade do binário SWC Linux no registro interno.

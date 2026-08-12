@@ -1,0 +1,11 @@
+GERIVO v1.7.12 — VALIDAÇÃO
+
+- 21 arquivos TypeScript/TSX passaram na verificação sintática do compilador TypeScript.
+- O arquivo principal passou em verificação de tipos isolada com declarações locais equivalentes às dependências do projeto.
+- A nova chave PARTS_ORDERS foi adicionada à aplicação, ao painel MASTER e à rota de assinatura.
+- A migration 011 mantém o módulo desativado por padrão.
+- A persistência dos pedidos utiliza o armazenamento compartilhado já existente por unidade.
+- Não foram incluídos .env.local, .git, .next ou node_modules.
+
+LIMITAÇÃO DO AMBIENTE DE GERAÇÃO
+O npm install não terminou neste ambiente porque o registro interno retornou 404 para uma dependência pública. Por isso, o npm run build completo deve ser executado no computador de instalação antes da publicação na Vercel.

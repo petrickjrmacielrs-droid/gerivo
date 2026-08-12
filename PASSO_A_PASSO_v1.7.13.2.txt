@@ -1,0 +1,12 @@
+GERIVO v1.7.13.2 - HOTFIX
+
+1. Preserve .env.local e .git.
+2. Extraia o ZIP de atualização sobre C:\Projetos\mecflow.
+3. Não execute SQL novo.
+4. Execute:
+   rmdir /s /q .next
+   npm install
+   npm run build
+   npm run dev
+5. Teste um PDF original do Mobato/NBS no importador.
+6. Desative ASSISTANT na contratação e confirme que o bloco do Assistente não aparece dentro do orçamento.

@@ -1,0 +1,8 @@
+VALIDAÇÃO DO HOTFIX v1.7.9.1
+
+- TypeScript (`tsc --noEmit`): APROVADO.
+- Correção da propriedade `stores` no ManagementHub: APROVADA.
+- Chaves React da listagem do painel: corrigidas.
+- Normalização de O.S. e orçamentos duplicados por código: adicionada.
+- Build completo Next.js: não concluído neste ambiente porque o registro interno não disponibilizou o pacote Linux @next/swc-linux-x64-gnu 16.2.10 (HTTP 404). O TypeScript foi validado com as mesmas dependências da versão.
+- SQL novo: não necessário.

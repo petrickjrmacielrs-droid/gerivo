@@ -17,6 +17,7 @@ type Page =
   | "checklist"
   | "orders"
   | "quotes"
+  | "parts-orders"
   | "assistant"
   | "bi"
   | "messages"
@@ -52,7 +53,7 @@ type IconName =
   | "shield"
   | "truck"
   | "image";
-type CompanyModule = "APPOINTMENTS" | "CATALOG" | "INVENTORY" | "CHECKLIST" | "ORDERS" | "QUOTES" | "ASSISTANT" | "BI" | "MESSAGES";
+type CompanyModule = "APPOINTMENTS" | "CATALOG" | "INVENTORY" | "CHECKLIST" | "ORDERS" | "QUOTES" | "PARTS_ORDERS" | "ASSISTANT" | "BI" | "MESSAGES" | "BUDGET_IMPORT";
 type CompanyProfile = "FULL" | "QUOTE_ONLY" | "CUSTOM";
 type QuoteDeliveryMode = "LINK" | "MESSAGE" | "BOTH";
 type ReportMode = "SUMMARY" | "FULL" | "MODULAR";
@@ -185,6 +186,8 @@ type Store = {
   name: string;
   companyId: string;
   companyName: string;
+  groupId: string;
+  groupName: string;
   segment: string;
   role: string;
 };
@@ -204,6 +207,26 @@ type DocumentLine = {
   kind: CatalogKind;
   quantity: number;
   unitPrice: number;
+};
+type BudgetImportContext = {
+  companyId: string;
+  storeId: string;
+  accessToken: string;
+};
+type ConsultantOption = { id: string; name: string; jobFunction: string; customJobFunction: string };
+
+type ImportedBudgetLine = {
+  id: string;
+  selected: boolean;
+  kind: "SERVICO" | "PECA";
+  code: string;
+  name: string;
+  category: string;
+  quantity: number;
+  unitPrice: number;
+  total: number;
+  confidence: number;
+  note: string;
 };
 type Customer = {
   id: string;
@@ -390,6 +413,8 @@ type Quote = {
   vehicle: string;
   plate: string;
   responsible: string;
+  consultantUserId: string;
+  consultantNameSnapshot: string;
   total: number;
   notes: string;
   paymentMethod: PaymentMethod;
@@ -404,6 +429,48 @@ type Quote = {
   statusChangedAt: string;
   messageHistory: QuoteMessageLog[];
   items: DocumentLine[];
+};
+type PartOrderType = "NORMAL" | "PVI" | "TRANSFERENCIA";
+type PartOrderBusinessType = "OFICINA" | "VENDA" | "GARANTIA" | "INTERNA" | "BALCAO";
+type PartOrderItemStatus = "PENDENTE" | "AGENDADO" | "RESERVADO" | "BO" | "RECEBIDO" | "ENTREGUE" | "CANCELADO";
+type PartOrderItem = {
+  id: string;
+  code: string;
+  description: string;
+  quantity: number;
+  status: PartOrderItemStatus;
+  expectedAt: string;
+  reservedAt: string;
+  backOrderAt: string;
+  receivedAt: string;
+  deliveredAt: string;
+  comments: string;
+};
+type PartOrderHistoryEntry = {
+  id: string;
+  createdAt: string;
+  createdBy: string;
+  message: string;
+};
+type PartOrder = {
+  id: string;
+  storeId: string;
+  customerId: string | null;
+  customer: string;
+  contact: string;
+  orderNumber: string;
+  quoteNumber: string;
+  orderType: PartOrderType;
+  businessType: PartOrderBusinessType;
+  orderedAt: string;
+  responsible: string;
+  productive: string;
+  comments: string;
+  fullyReservedAt: string;
+  createdAt: string;
+  updatedAt: string;
+  items: PartOrderItem[];
+  history: PartOrderHistoryEntry[];
 };
 type StoreData = {
   customers: Customer[];
@@ -420,6 +487,7 @@ type StoreData = {
   attendances: Attendance[];
   orders: ServiceOrder[];
   quotes: Quote[];
+  partOrders: PartOrder[];
   knowledgeBase: KnowledgeEntry[];
 };
 type PublicPlan = {
@@ -452,6 +520,8 @@ const EMPTY_STORE: Store = {
   name: "Carregando...",
   companyId: "",
   companyName: "",
+  groupId: "",
+  groupName: "",
   segment: "OUTRO",
   role: "MEMBER",
 };
@@ -462,6 +532,7 @@ const NAV: Array<{ id: Page; label: string; icon: IconName; module?: CompanyModu
   { id: "checklist", label: "Checklist", icon: "clipboard", module: "CHECKLIST" },
   { id: "orders", label: "Ordens de serviço", icon: "wrench", module: "ORDERS" },
   { id: "quotes", label: "Orçamentos", icon: "file", module: "QUOTES" },
+  { id: "parts-orders", label: "Pedidos de peças", icon: "box", module: "PARTS_ORDERS" },
   { id: "assistant", label: "Assistente Gerivo", icon: "sparkle", module: "ASSISTANT" },
   { id: "bi", label: "Gerivo BI", icon: "chart", module: "BI" },
   { id: "messages", label: "Central de mensagens", icon: "file", module: "MESSAGES", hidden: true },
@@ -489,9 +560,11 @@ const MODULE_INFO: Record<CompanyModule, { label: string; description: string }>
   CHECKLIST: { label: "Checklist", description: "Check-in, Check-up, qualidade, Check-out e relatórios." },
   ORDERS: { label: "Ordens de serviço", description: "Execução, responsáveis, andamento e entrega." },
   QUOTES: { label: "Orçamentos", description: "Propostas, condições comerciais e aprovação." },
+  PARTS_ORDERS: { label: "Pedidos de peças", description: "Controle opcional de pedidos, múltiplas peças, reservas, B.O. e recebimentos." },
   ASSISTANT: { label: "Assistente Gerivo", description: "Análises consultivas dos dados autorizados." },
   BI: { label: "Gerivo BI", description: "Indicadores, filtros personalizados, comparativos e visão executiva." },
   MESSAGES: { label: "Central de mensagens", description: "Modelos comerciais, oportunidades e comunicação com clientes." },
+  BUDGET_IMPORT: { label: "Importador Mobato / NBS", description: "Recurso adicional com implantação inicial exclusiva para a IESA, liberado individualmente pelo MASTER." },
 };
 
 function catalogSeedItem(
@@ -1019,9 +1092,11 @@ function seedCompanySettings(segment = "OUTRO"): CompanySettings {
     CHECKLIST: ["OFICINA", "OFICINA_COMPLETA", "CONCESSIONARIA", "DEMO_ESTETICA", "ESTETICA_AUTOMOTIVA"].includes(key),
     ORDERS: ["OFICINA", "OFICINA_COMPLETA", "CONCESSIONARIA", "DEMO_ESTETICA", "ESTETICA_AUTOMOTIVA"].includes(key),
     QUOTES: key !== "DEMO_DELIVERY" && key !== "DELIVERY",
+    PARTS_ORDERS: false,
     ASSISTANT: true,
     BI: true,
     MESSAGES: true,
+    BUDGET_IMPORT: false,
   };
   return {
     profile: "CUSTOM",
@@ -1144,6 +1219,7 @@ function seedStoreData(storeId: string, segment = "OUTRO"): StoreData {
     attendances: [],
     orders: [],
     quotes: [],
+    partOrders: [],
     knowledgeBase: [],
   };
 }
@@ -1241,6 +1317,8 @@ function createQuote(quotes: Quote[], identity: LinkedIdentity, storeId: string,
     vehicle: identity.vehicle,
     plate: identity.plate,
     responsible: identity.responsible,
+    consultantUserId: "",
+    consultantNameSnapshot: identity.responsible,
     total: 0,
     notes: "",
     paymentMethod: "PIX",
@@ -1322,9 +1400,11 @@ function normalizeStoreData(parsed: Partial<StoreData>, storeId: string): StoreD
           CHECKLIST: parsed.companySettings.modules?.CHECKLIST ?? true,
           ORDERS: parsed.companySettings.modules?.ORDERS ?? true,
           QUOTES: parsed.companySettings.modules?.QUOTES ?? true,
+          PARTS_ORDERS: parsed.companySettings.modules?.PARTS_ORDERS ?? false,
           ASSISTANT: parsed.companySettings.modules?.ASSISTANT ?? true,
           BI: parsed.companySettings.modules?.BI ?? parsed.companySettings.modules?.ASSISTANT ?? true,
           MESSAGES: parsed.companySettings.modules?.MESSAGES ?? parsed.companySettings.modules?.ASSISTANT ?? true,
+          BUDGET_IMPORT: parsed.companySettings.modules?.BUDGET_IMPORT ?? false,
         },
         quoteDeliveryMode: parsed.companySettings.quoteDeliveryMode ?? "BOTH",
         quoteMessageTemplate: parsed.companySettings.quoteMessageTemplate ?? "PROFISSIONAL",
@@ -1486,6 +1566,8 @@ function normalizeStoreData(parsed: Partial<StoreData>, storeId: string): StoreD
       customerId: quote.customerId ?? "",
       vehicleId: quote.vehicleId ?? "",
       attendanceId: quote.attendanceId ?? null,
+      consultantUserId: (quote as any).consultantUserId ?? "",
+      consultantNameSnapshot: (quote as any).consultantNameSnapshot ?? quote.responsible ?? "",
       notes: quote.notes ?? "",
       paymentMethod: quote.paymentMethod ?? "PIX",
       installments: Math.max(1, Number(quote.installments) || 1),
@@ -1532,6 +1614,33 @@ function normalizeStoreData(parsed: Partial<StoreData>, storeId: string): StoreD
     return { ...attendance, customerId: customer.id, vehicleId: vehicle.id };
   });
 
+  const partOrders: PartOrder[] = (parsed.partOrders ?? []).filter((order) => !order.storeId || order.storeId === storeId).map((order) => ({
+    id: order.id || uid(),
+    storeId,
+    customerId: order.customerId ?? null,
+    customer: order.customer || "Cliente não informado",
+    contact: order.contact || "",
+    orderNumber: order.orderNumber || "",
+    quoteNumber: order.quoteNumber || "",
+    orderType: (["NORMAL", "PVI", "TRANSFERENCIA"].includes(order.orderType) ? order.orderType : "NORMAL") as PartOrderType,
+    businessType: (["OFICINA", "VENDA", "GARANTIA", "INTERNA", "BALCAO"].includes(order.businessType) ? order.businessType : "OFICINA") as PartOrderBusinessType,
+    orderedAt: order.orderedAt || new Date().toISOString().slice(0, 10),
+    responsible: order.responsible || "",
+    productive: order.productive || "",
+    comments: order.comments || "",
+    fullyReservedAt: order.fullyReservedAt || "",
+    createdAt: order.createdAt || new Date().toISOString(),
+    updatedAt: order.updatedAt || order.createdAt || new Date().toISOString(),
+    items: (order.items ?? []).map((item) => ({
+      id: item.id || uid(), code: item.code || "", description: item.description || "",
+      quantity: Math.max(0.01, Number(item.quantity) || 1),
+      status: (["PENDENTE", "AGENDADO", "RESERVADO", "BO", "RECEBIDO", "ENTREGUE", "CANCELADO"].includes(item.status) ? item.status : "PENDENTE") as PartOrderItemStatus,
+      expectedAt: item.expectedAt || "", reservedAt: item.reservedAt || "", backOrderAt: item.backOrderAt || "",
+      receivedAt: item.receivedAt || "", deliveredAt: item.deliveredAt || "", comments: item.comments || "",
+    })),
+    history: (order.history ?? []).map((entry) => ({ id: entry.id || uid(), createdAt: entry.createdAt || new Date().toISOString(), createdBy: entry.createdBy || "Usuário", message: entry.message || "Atualização do pedido" })),
+  }));
+
   const knowledgeBase: KnowledgeEntry[] = (parsed.knowledgeBase ?? []).map((entry) => ({
     id: entry.id || uid(),
     title: entry.title || "Procedimento sem título",
@@ -1557,6 +1666,7 @@ function normalizeStoreData(parsed: Partial<StoreData>, storeId: string): StoreD
     attendances: linkedAttendances,
     orders: dedupeDocumentsByCode(orders),
     quotes: dedupeDocumentsByCode(quotes),
+    partOrders,
     knowledgeBase,
   };
 }
@@ -1571,6 +1681,7 @@ function isolateStoreData(storeId: string, data: StoreData): StoreData {
     attendances: data.attendances.filter((item) => item.storeId === storeId),
     orders: data.orders.filter((item) => item.storeId === storeId),
     quotes: data.quotes.filter((item) => item.storeId === storeId),
+    partOrders: data.partOrders.filter((item) => item.storeId === storeId),
   };
 }
 
@@ -1616,6 +1727,7 @@ function loadStore(storeId: string, segment = "OUTRO"): StoreData {
           attendances: [],
           orders: [],
           quotes: [],
+          partOrders: [],
           knowledgeBase: legacyParsed.knowledgeBase,
         },
         storeId,
@@ -1676,6 +1788,7 @@ function mergeStoreDataForFirstCloudSync(remote: StoreData, local: StoreData): S
     attendances: mergeRecordsById(remote.attendances, local.attendances),
     orders: mergeRecordsById(remote.orders, local.orders),
     quotes: mergeRecordsById(remote.quotes, local.quotes),
+    partOrders: mergeRecordsById(remote.partOrders, local.partOrders),
     knowledgeBase: mergeRecordsByNaturalKey(remote.knowledgeBase, local.knowledgeBase, (item) => normalizeAssistantText(item.title)),
   };
 }
@@ -1717,6 +1830,21 @@ function CurrencyInput({ value, onChange, ariaLabel }: { value: number; onChange
   return <input aria-label={ariaLabel} className="currency-input" inputMode="numeric" value={draft} onFocus={(event) => event.currentTarget.select()} onChange={(event) => { const next = parseBRLCurrency(event.target.value); setDraft(formatBRLCurrencyInput(next)); onChange(next); }} />;
 }
 
+function DecimalInput({ value, onChange, ariaLabel, min = 0, max = 9999, precision = 2 }: { value: number; onChange: (value: number) => void; ariaLabel?: string; min?: number; max?: number; precision?: number }) {
+  const format = (next: number) => String(Number(next) || 0).replace(".", ",");
+  const [draft, setDraft] = useState(() => format(value));
+  useEffect(() => setDraft(format(value)), [value]);
+  function commit(raw: string) {
+    const normalized = raw.trim().replace(/\s/g, "").replace(",", ".");
+    const parsed = Number(normalized);
+    const safe = Number.isFinite(parsed) ? Math.min(max, Math.max(min, parsed)) : min;
+    const rounded = Number(safe.toFixed(precision));
+    setDraft(format(rounded));
+    onChange(rounded);
+  }
+  return <input aria-label={ariaLabel} className="decimal-input" inputMode="decimal" value={draft} onFocus={(event) => event.currentTarget.select()} onChange={(event) => { const cleaned = event.target.value.replace(/[^0-9.,]/g, "").replace(/([.,].*)[.,]/g, "$1"); setDraft(cleaned); }} onBlur={(event) => commit(event.currentTarget.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); commit(event.currentTarget.value); event.currentTarget.blur(); } }} />;
+}
+
 function formatDate(value: string) {
   return new Date(value).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
 }
@@ -1749,6 +1877,20 @@ function quoteStatusLabel(status: QuoteStatus) {
     AGUARDANDO_RETORNO_CLIENTE: "Aguardando retorno do cliente",
     AGUARDANDO_DESCONTO: "Aguardando desconto",
   } as const)[status];
+}
+
+function companyStatusLabel(status: string) {
+  return ({
+    DRAFT: "Rascunho",
+    AWAITING_ACTIVATION: "Aguardando ativação",
+    ACTIVE: "Ativa",
+    GRACE: "Carência",
+    READ_ONLY: "Somente leitura",
+    SUSPENDED: "Suspensa",
+    CANCELED: "Arquivada",
+    EXPIRED: "Expirada",
+    DEMO: "Demonstração",
+  } as Record<string, string>)[String(status || "ACTIVE").toUpperCase()] || String(status || "Ativa");
 }
 
 function quoteIsApproved(status: QuoteStatus) {
@@ -2089,6 +2231,7 @@ export default function Home() {
   const [page, setPage] = useState<Page>("dashboard");
   const [storeId, setStoreId] = useState(EMPTY_STORE_ID);
   const [data, setData] = useState<StoreData>(() => seedStoreData(EMPTY_STORE_ID));
+  const [consultants, setConsultants] = useState<ConsultantOption[]>([]);
   const [ready, setReady] = useState(false);
   const [activeAttendanceId, setActiveAttendanceId] = useState<string | null>(null);
   const [activeOrderId, setActiveOrderId] = useState<string | null>(null);
@@ -2204,14 +2347,15 @@ export default function Home() {
 
       if (platformMaster) {
         const masterResult: any = await withClientTimeout<any>(
-          supabase.from("stores").select("id, public_code, name, company_id, companies(name, segment)").order("created_at", { ascending: true }),
+          supabase.from("stores").select("id, public_code, name, company_id, companies(name, segment, group_id, business_groups(name))").order("created_at", { ascending: true }),
           6500,
           "O carregamento das empresas da plataforma excedeu o tempo esperado.",
         );
         if (masterResult.error) throw new Error(`Falha ao carregar empresas da plataforma: ${masterResult.error.message}`);
         const masterStores: Store[] = (masterResult.data ?? []).map((row: any) => {
           const company = Array.isArray(row.companies) ? row.companies[0] : row.companies;
-          return { id: row.id, publicCode: Number(row.public_code) || 0, name: row.name, companyId: row.company_id, companyName: company?.name || row.name, segment: company?.segment || "OUTRO", role: "MASTER" };
+          const group = Array.isArray(company?.business_groups) ? company.business_groups[0] : company?.business_groups;
+          return { id: row.id, publicCode: Number(row.public_code) || 0, name: row.name, companyId: row.company_id, companyName: company?.name || row.name, groupId: company?.group_id || "", groupName: group?.name || "", segment: company?.segment || "OUTRO", role: "MASTER" };
         });
         if (!masterStores.length) {
           setStores([]);
@@ -2239,7 +2383,7 @@ export default function Home() {
 
       const storeIds = memberships.map((item: any) => item.store_id);
       const storesResult: any = await withClientTimeout<any>(
-        supabase.from("stores").select("id, public_code, name, company_id, companies(name, segment)").in("id", storeIds).eq("active", true),
+        supabase.from("stores").select("id, public_code, name, company_id, companies(name, segment, group_id, business_groups(name))").in("id", storeIds).eq("active", true),
         6500,
         "O carregamento das unidades autorizadas excedeu o tempo esperado.",
       );
@@ -2247,7 +2391,8 @@ export default function Home() {
       const nextStores: Store[] = (storesResult.data ?? []).map((row: any) => {
         const membership = memberships.find((item: any) => item.store_id === row.id);
         const company = Array.isArray(row.companies) ? row.companies[0] : row.companies;
-        return { id: row.id, publicCode: Number(row.public_code) || 0, name: row.name, companyId: row.company_id, companyName: company?.name || row.name, segment: company?.segment || "OUTRO", role: membership?.role || "MEMBER" };
+        const group = Array.isArray(company?.business_groups) ? company.business_groups[0] : company?.business_groups;
+        return { id: row.id, publicCode: Number(row.public_code) || 0, name: row.name, companyId: row.company_id, companyName: company?.name || row.name, groupId: company?.group_id || "", groupName: group?.name || "", segment: company?.segment || "OUTRO", role: membership?.role || "MEMBER" };
       });
       if (!nextStores.length) {
         setStores([]);
@@ -2402,6 +2547,23 @@ export default function Home() {
     } as StoreData;
   }
 
+  async function loadConsultants(targetStoreId: string) {
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token || "";
+      if (!token) { setConsultants([]); return; }
+      const response = await fetch("/api/users/consultants", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ storeId: targetStoreId }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      setConsultants(response.ok && Array.isArray(payload.consultants) ? payload.consultants : []);
+    } catch {
+      setConsultants([]);
+    }
+  }
+
   async function activateStore(targetStore: Store, showToast = true, restoreNavigation = false) {
     if (pendingSaveTimer.current && loadedStoreIdRef.current !== EMPTY_STORE_ID) window.clearTimeout(pendingSaveTimer.current);
     if (cloudSaveTimer.current && loadedStoreIdRef.current !== EMPTY_STORE_ID) window.clearTimeout(cloudSaveTimer.current);
@@ -2414,6 +2576,7 @@ export default function Home() {
     setStoreId(targetStore.id);
     localStorage.setItem("gerivo:active-store", targetStore.id);
     setData(nextData);
+    void loadConsultants(targetStore.id);
     const savedNavigation = restoreNavigation ? (() => {
       try { return JSON.parse(sessionStorage.getItem(navigationKey(targetStore.id)) || "null"); } catch { return null; }
     })() : null;
@@ -3084,6 +3247,7 @@ export default function Home() {
               onOpenAppointments={() => setPage("appointments")}
               onOpenOrders={() => { setActiveAttendanceId(null); setPage("orders"); }}
               onOpenQuotes={() => { setActiveAttendanceId(null); setPage("quotes"); }}
+              onOpenPartsOrders={() => setPage("parts-orders")}
               companySettings={data.companySettings}
             />
           )}
@@ -3102,12 +3266,23 @@ export default function Home() {
             />
           )}
 
+          {page === "parts-orders" && (
+            <PartsOrdersPage
+              orders={data.partOrders}
+              customers={data.customers}
+              consultants={consultants}
+              currentUserName={userProfile.preferredName}
+              currentStoreId={brandedStore.id}
+              onChange={(partOrders) => setData({ ...data, partOrders })}
+            />
+          )}
+
           {page === "assistant" && (
             <AssistantPage store={brandedStore} data={data} sessionAccessToken={session?.access_token || ""} />
           )}
 
           {page === "bi" && (
-            <BusinessIntelligencePage data={data} />
+            <BusinessIntelligencePage data={data} currentStore={brandedStore} stores={stores} />
           )}
 
           {page === "knowledge" && (
@@ -3221,6 +3396,9 @@ export default function Home() {
                 companyIdentity={data.companyIdentity}
                 customer={data.customers.find((item) => item.id === activeQuote.customerId) ?? null}
                 deliveryMode={data.companySettings.quoteDeliveryMode}
+                importContext={data.companySettings.modules.BUDGET_IMPORT ? { companyId: brandedStore.companyId, storeId: brandedStore.id, accessToken: session?.access_token || "" } : undefined}
+                assistantEnabled={data.companySettings.modules.ASSISTANT}
+                consultants={consultants}
                 onChange={(updated) => setData({ ...data, quotes: data.quotes.map((item) => item.id === updated.id ? updated : item) })}
                 onBack={() => setActiveQuoteId(null)}
                 onSaved={() => { setToast(`${activeQuote.code} salvo`); if (saveToastTimer.current) window.clearTimeout(saveToastTimer.current); saveToastTimer.current = window.setTimeout(() => setToast(""), 3000); }}
@@ -3332,6 +3510,210 @@ export default function Home() {
     </main>
   );
 }
+
+type PartOrderOverallStatus = "PENDENTE" | "AGENDADO" | "PARCIAL" | "RESERVADO" | "BO" | "RECEBIDO" | "CONCLUIDO";
+
+function partOrderItemStatusLabel(status: PartOrderItemStatus) {
+  return ({ PENDENTE: "Pendente", AGENDADO: "Agendado", RESERVADO: "Reservado", BO: "Em B.O.", RECEBIDO: "Recebido", ENTREGUE: "Entregue", CANCELADO: "Cancelado" } as Record<PartOrderItemStatus, string>)[status];
+}
+
+function partOrderBusinessLabel(value: PartOrderBusinessType) {
+  return ({ OFICINA: "Oficina", VENDA: "Venda", GARANTIA: "Garantia", INTERNA: "Interna", BALCAO: "Balcão" } as Record<PartOrderBusinessType, string>)[value];
+}
+
+function partOrderTypeLabel(value: PartOrderType) {
+  return ({ NORMAL: "Normal", PVI: "PVI", TRANSFERENCIA: "Transferência" } as Record<PartOrderType, string>)[value];
+}
+
+function partOrderOverallStatus(order: PartOrder): PartOrderOverallStatus {
+  const active = order.items.filter((item) => item.status !== "CANCELADO");
+  if (!active.length) return "PENDENTE";
+  if (active.every((item) => item.status === "ENTREGUE")) return "CONCLUIDO";
+  if (active.every((item) => ["RECEBIDO", "ENTREGUE"].includes(item.status))) return "RECEBIDO";
+  if (active.some((item) => item.status === "BO")) return "BO";
+  if (active.every((item) => ["RESERVADO", "RECEBIDO", "ENTREGUE"].includes(item.status))) return "RESERVADO";
+  if (active.some((item) => ["RESERVADO", "RECEBIDO", "ENTREGUE"].includes(item.status))) return "PARCIAL";
+  if (active.some((item) => item.status === "AGENDADO")) return "AGENDADO";
+  return "PENDENTE";
+}
+
+function partOrderOverallLabel(status: PartOrderOverallStatus) {
+  return ({ PENDENTE: "Pendente", AGENDADO: "Agendado", PARCIAL: "Parcialmente reservado", RESERVADO: "Todas reservadas", BO: "Com item em B.O.", RECEBIDO: "Recebimento completo", CONCLUIDO: "Entregue" } as Record<PartOrderOverallStatus, string>)[status];
+}
+
+function daysSince(value: string) {
+  if (!value) return 0;
+  const start = new Date(value.length === 10 ? `${value}T00:00:00` : value).getTime();
+  if (!Number.isFinite(start)) return 0;
+  return Math.max(0, Math.floor((Date.now() - start) / 86400000));
+}
+
+function shortDate(value: string) {
+  if (!value) return "—";
+  const date = new Date(value.length === 10 ? `${value}T12:00:00` : value);
+  return Number.isNaN(date.getTime()) ? "—" : date.toLocaleDateString("pt-BR");
+}
+
+function emptyPartOrderItem(): PartOrderItem {
+  return { id: uid(), code: "", description: "", quantity: 1, status: "PENDENTE", expectedAt: "", reservedAt: "", backOrderAt: "", receivedAt: "", deliveredAt: "", comments: "" };
+}
+
+function createPartOrder(currentUserName: string, storeId: string): PartOrder {
+  const now = new Date().toISOString();
+  return { id: uid(), storeId, customerId: null, customer: "", contact: "", orderNumber: "", quoteNumber: "", orderType: "NORMAL", businessType: "OFICINA", orderedAt: now.slice(0, 10), responsible: currentUserName || "", productive: "", comments: "", fullyReservedAt: "", createdAt: now, updatedAt: now, items: [emptyPartOrderItem()], history: [{ id: uid(), createdAt: now, createdBy: currentUserName || "Usuário", message: "Pedido iniciado" }] };
+}
+
+function normalizePartOrderReservation(order: PartOrder): PartOrder {
+  const active = order.items.filter((item) => item.status !== "CANCELADO");
+  const allReserved = active.length > 0 && active.every((item) => ["RESERVADO", "RECEBIDO", "ENTREGUE"].includes(item.status));
+  return { ...order, fullyReservedAt: allReserved ? (order.fullyReservedAt || new Date().toISOString()) : "", updatedAt: new Date().toISOString() };
+}
+
+function PartsOrdersPage({ orders, customers, consultants, currentUserName, currentStoreId, onChange }: { orders: PartOrder[]; customers: Customer[]; consultants: ConsultantOption[]; currentUserName: string; currentStoreId: string; onChange: (orders: PartOrder[]) => void }) {
+  const [search, setSearch] = useState("");
+  const [orderType, setOrderType] = useState<"TODOS" | PartOrderType>("TODOS");
+  const [businessType, setBusinessType] = useState<"TODOS" | PartOrderBusinessType>("TODOS");
+  const [status, setStatus] = useState<"TODOS" | PartOrderOverallStatus>("TODOS");
+  const [responsible, setResponsible] = useState("TODOS");
+  const [draft, setDraft] = useState<PartOrder | null>(null);
+  const [detailTab, setDetailTab] = useState<"DETALHES" | "HISTORICO">("DETALHES");
+
+  const responsibleOptions = Array.from(new Set([currentUserName, ...consultants.map((item) => item.name), ...orders.map((item) => item.responsible)].map((item) => item.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, "pt-BR"));
+  const filtered = orders.filter((order) => {
+    const haystack = normalizeAssistantText(`${order.orderNumber} ${order.quoteNumber} ${order.customer} ${order.contact} ${order.responsible} ${order.items.map((item) => `${item.code} ${item.description}`).join(" ")}`);
+    if (search.trim() && !haystack.includes(normalizeAssistantText(search))) return false;
+    if (orderType !== "TODOS" && order.orderType !== orderType) return false;
+    if (businessType !== "TODOS" && order.businessType !== businessType) return false;
+    if (status !== "TODOS" && partOrderOverallStatus(order) !== status) return false;
+    if (responsible !== "TODOS" && order.responsible !== responsible) return false;
+    return true;
+  }).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+
+  const itemCount = (wanted: PartOrderItemStatus) => orders.reduce((total, order) => total + order.items.filter((item) => item.status === wanted).length, 0);
+  const averageDays = orders.length ? Math.round(orders.reduce((sum, order) => sum + daysSince(order.orderedAt), 0) / orders.length) : 0;
+  const metrics = [
+    { label: "Pendentes", value: itemCount("PENDENTE"), icon: "clock", cls: "pending" },
+    { label: "Agendados", value: itemCount("AGENDADO"), icon: "calendar", cls: "scheduled" },
+    { label: "Reservadas", value: itemCount("RESERVADO"), icon: "bookmark", cls: "reserved" },
+    { label: "Em B.O.", value: itemCount("BO"), icon: "bo", cls: "backorder" },
+    { label: "Recebidas", value: itemCount("RECEBIDO") + itemCount("ENTREGUE"), icon: "truck", cls: "received" },
+    { label: "Tempo médio", value: `${averageDays} dias`, icon: "clock", cls: "average" },
+  ];
+
+  function openNew() {
+    setDetailTab("DETALHES");
+    setDraft(createPartOrder(currentUserName, currentStoreId));
+  }
+
+  function openOrder(order: PartOrder) {
+    setDetailTab("DETALHES");
+    setDraft(JSON.parse(JSON.stringify(order)) as PartOrder);
+  }
+
+  function updateItem(itemId: string, patch: Partial<PartOrderItem>) {
+    if (!draft) return;
+    const now = new Date().toISOString();
+    const items = draft.items.map((item) => {
+      if (item.id !== itemId) return item;
+      const nextStatus = patch.status ?? item.status;
+      const timestamps: Partial<PartOrderItem> = {};
+      if (nextStatus !== item.status) {
+        if (nextStatus === "RESERVADO" && !item.reservedAt) timestamps.reservedAt = now;
+        if (nextStatus === "BO" && !item.backOrderAt) timestamps.backOrderAt = now;
+        if (nextStatus === "RECEBIDO" && !item.receivedAt) timestamps.receivedAt = now;
+        if (nextStatus === "ENTREGUE" && !item.deliveredAt) timestamps.deliveredAt = now;
+      }
+      return { ...item, ...patch, ...timestamps };
+    });
+    const changed = patch.status ? [{ id: uid(), createdAt: now, createdBy: currentUserName || "Usuário", message: `Status de uma peça alterado para ${partOrderItemStatusLabel(patch.status)}` }, ...draft.history] : draft.history;
+    setDraft(normalizePartOrderReservation({ ...draft, items, history: changed }));
+  }
+
+  function saveDraft() {
+    if (!draft) return;
+    if (!draft.customer.trim()) return window.alert("Informe o cliente do pedido.");
+    if (!draft.orderNumber.trim()) return window.alert("Informe o número do pedido.");
+    if (!draft.items.length || draft.items.some((item) => !item.description.trim())) return window.alert("Informe a descrição de todas as peças.");
+    const duplicate = orders.some((item) => item.id !== draft.id && item.orderNumber.trim().toUpperCase() === draft.orderNumber.trim().toUpperCase());
+    if (duplicate && !window.confirm("Já existe um pedido com esse número. Deseja salvar mesmo assim?")) return;
+    const prepared = normalizePartOrderReservation({ ...draft, storeId: draft.storeId || currentStoreId, updatedAt: new Date().toISOString() });
+    const exists = orders.some((item) => item.id === prepared.id);
+    onChange(exists ? orders.map((item) => item.id === prepared.id ? prepared : item) : [prepared, ...orders]);
+    setDraft(null);
+  }
+
+  function deleteDraft() {
+    if (!draft || !orders.some((item) => item.id === draft.id)) return setDraft(null);
+    if (!window.confirm(`Excluir definitivamente o pedido #${draft.orderNumber}?`)) return;
+    onChange(orders.filter((item) => item.id !== draft.id));
+    setDraft(null);
+  }
+
+  return <section className="parts-orders-page">
+    <header className="parts-orders-heading"><h2>Pedidos de peças</h2><button type="button" className="parts-new-button" onClick={openNew}>+ Registrar novo pedido</button></header>
+
+    <section className="parts-metrics">{metrics.map((metric) => <article key={metric.label} className={`parts-metric metric-${metric.cls}`}><span className="parts-metric-icon">{metric.icon === "bo" ? "B.O." : <PremiumIcon name={metric.icon === "calendar" ? "calendar" : metric.icon === "truck" ? "truck" : "box"} size={21} />}</span><div><small>{metric.label}</small><strong>{metric.value}</strong><em>{metric.label === "Tempo médio" ? "desde a abertura" : "itens cadastrados"}</em></div></article>)}</section>
+
+    <section className="panel parts-filter-panel">
+      <div className="parts-filter-search"><PremiumIcon name="file" size={18} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar por pedido, cliente, contato, código ou peça..." /></div>
+      <select value={orderType} onChange={(event) => setOrderType(event.target.value as typeof orderType)}><option value="TODOS">Tipo de pedido: Todos</option><option value="NORMAL">Normal</option><option value="PVI">PVI</option><option value="TRANSFERENCIA">Transferência</option></select>
+      <select value={businessType} onChange={(event) => setBusinessType(event.target.value as typeof businessType)}><option value="TODOS">Tipo: Todos</option>{(["OFICINA", "VENDA", "GARANTIA", "INTERNA", "BALCAO"] as PartOrderBusinessType[]).map((value) => <option key={value} value={value}>{partOrderBusinessLabel(value)}</option>)}</select>
+      <select value={responsible} onChange={(event) => setResponsible(event.target.value)}><option value="TODOS">Responsável: Todos</option>{responsibleOptions.map((value) => <option key={value}>{value}</option>)}</select>
+      <select value={status} onChange={(event) => setStatus(event.target.value as typeof status)}><option value="TODOS">Status: Todos</option>{(["PENDENTE", "AGENDADO", "PARCIAL", "RESERVADO", "BO", "RECEBIDO", "CONCLUIDO"] as PartOrderOverallStatus[]).map((value) => <option key={value} value={value}>{partOrderOverallLabel(value)}</option>)}</select>
+      <button type="button" className="outline" onClick={() => { setSearch(""); setOrderType("TODOS"); setBusinessType("TODOS"); setResponsible("TODOS"); setStatus("TODOS"); }}>Limpar filtros</button>
+    </section>
+
+    <section className="panel parts-list-panel"><header><div><small>LISTAGEM DA UNIDADE</small><h3>{filtered.length} pedido(s) encontrado(s)</h3></div></header>
+      {filtered.length === 0 ? <div className="module-empty">Nenhum pedido encontrado. Use “Registrar novo pedido” para começar.</div> : <div className="parts-orders-table">
+        <div className="parts-table-head"><span>Cliente / contato</span><span>Nº pedido</span><span>Peças</span><span>Tipo pedido</span><span>Tipo</span><span>Data</span><span>Responsável</span><span>Dias</span><span>Status</span><span>Obs.</span></div>
+        {filtered.map((order) => { const overall = partOrderOverallStatus(order); const boCount = order.items.filter((item) => item.status === "BO").length; const reservedCount = order.items.filter((item) => ["RESERVADO", "RECEBIDO", "ENTREGUE"].includes(item.status)).length; return <button type="button" key={order.id} className="parts-order-row" onClick={() => openOrder(order)}>
+          <span className="parts-customer"><i>{order.customer.split(/\s+/).slice(0,2).map((part) => part[0]).join("").toUpperCase()}</i><b>{order.customer}</b><small>{order.contact || "Sem contato"}</small></span>
+          <span><b>{order.orderNumber}</b><small>{order.quoteNumber ? `ORC ${order.quoteNumber}` : "Sem orçamento"}</small></span>
+          <span><b>{order.items.length} peça(s)</b><small>{reservedCount} reservada(s){boCount ? ` · ${boCount} em B.O.` : ""}</small></span>
+          <span><em className={`parts-chip type-${order.orderType.toLowerCase()}`}>{partOrderTypeLabel(order.orderType)}</em></span>
+          <span><em className={`parts-chip business-${order.businessType.toLowerCase()}`}>{partOrderBusinessLabel(order.businessType)}</em></span>
+          <span><b>{shortDate(order.orderedAt)}</b></span>
+          <span><b>{order.responsible || "—"}</b><small>{order.productive || "Consultor"}</small></span>
+          <span className={daysSince(order.orderedAt) >= 30 ? "parts-days overdue" : "parts-days"}><b>{daysSince(order.orderedAt)} dias</b><small>desde o pedido</small></span>
+          <span><em className={`parts-status status-${overall.toLowerCase()}`}>{partOrderOverallLabel(overall)}</em>{order.fullyReservedAt && <small>há {daysSince(order.fullyReservedAt)} dias</small>}</span>
+          <span className="parts-comments"><PremiumIcon name="file" size={16} /><b>{order.comments ? 1 : 0}</b><PremiumIcon name="chevron" size={16} /></span>
+        </button>; })}
+      </div>}
+    </section>
+
+    {draft && <div className="parts-drawer-backdrop" onMouseDown={(event) => { if (event.currentTarget === event.target) setDraft(null); }}><aside className="parts-order-drawer">
+      <header><div>{orders.some((item) => item.id === draft.id) ? <><small>EDITAR PEDIDO</small><h2>Pedido #{draft.orderNumber}</h2></> : <h2>Novo pedido</h2>}<span className={`parts-status status-${partOrderOverallStatus(draft).toLowerCase()}`}>{partOrderOverallLabel(partOrderOverallStatus(draft))}</span></div><button type="button" aria-label="Fechar" onClick={() => setDraft(null)}>×</button></header>
+      <nav><button className={detailTab === "DETALHES" ? "active" : ""} onClick={() => setDetailTab("DETALHES")}>Detalhes</button><button className={detailTab === "HISTORICO" ? "active" : ""} onClick={() => setDetailTab("HISTORICO")}>Histórico</button></nav>
+      {detailTab === "DETALHES" ? <div className="parts-drawer-content">
+        <section><h3>Dados gerais do pedido</h3><div className="parts-form-grid">
+          <Field label="Cliente"><input list="parts-customers" value={draft.customer} onChange={(event) => { const customer = customers.find((item) => item.name === event.target.value); setDraft({ ...draft, customer: event.target.value, customerId: customer?.id ?? null, contact: customer?.phone || draft.contact }); }} /><datalist id="parts-customers">{customers.map((item) => <option key={item.id} value={item.name} />)}</datalist></Field>
+          <Field label="Contato"><input value={draft.contact} onChange={(event) => setDraft({ ...draft, contact: event.target.value })} placeholder="(00) 00000-0000" /></Field>
+          <Field label="Número do pedido"><input value={draft.orderNumber} onChange={(event) => setDraft({ ...draft, orderNumber: event.target.value })} /></Field>
+          <Field label="Orçamento vinculado"><input value={draft.quoteNumber} onChange={(event) => setDraft({ ...draft, quoteNumber: event.target.value })} placeholder="Opcional" /></Field>
+          <Field label="Data do pedido"><input type="date" value={draft.orderedAt} onChange={(event) => setDraft({ ...draft, orderedAt: event.target.value })} /></Field>
+          <Field label="Tipo do pedido"><select value={draft.orderType} onChange={(event) => setDraft({ ...draft, orderType: event.target.value as PartOrderType })}><option value="NORMAL">Normal</option><option value="PVI">PVI</option><option value="TRANSFERENCIA">Transferência</option></select></Field>
+          <Field label="Tipo"><select value={draft.businessType} onChange={(event) => setDraft({ ...draft, businessType: event.target.value as PartOrderBusinessType })}>{(["OFICINA", "VENDA", "GARANTIA", "INTERNA", "BALCAO"] as PartOrderBusinessType[]).map((value) => <option key={value} value={value}>{partOrderBusinessLabel(value)}</option>)}</select></Field>
+          <Field label="Responsável"><input list="parts-responsibles" value={draft.responsible} onChange={(event) => setDraft({ ...draft, responsible: event.target.value })} /><datalist id="parts-responsibles">{responsibleOptions.map((item) => <option key={item} value={item} />)}</datalist></Field>
+          <Field label="Produtivo / oficina"><input value={draft.productive} onChange={(event) => setDraft({ ...draft, productive: event.target.value })} placeholder="Opcional" /></Field>
+        </div></section>
+
+        <section className="parts-items-section"><header><div><h3>Peças deste pedido</h3></div><button type="button" className="outline" onClick={() => setDraft({ ...draft, items: [...draft.items, emptyPartOrderItem()] })}>+ Adicionar peça</button></header>
+          <div className="parts-item-list">{draft.items.map((item, index) => <article key={item.id} className={`parts-item-card item-${item.status.toLowerCase()}`}><header><b>Peça {index + 1}</b><span className={`parts-status status-${item.status.toLowerCase()}`}>{partOrderItemStatusLabel(item.status)}</span><button type="button" title="Remover peça" disabled={draft.items.length === 1} onClick={() => setDraft({ ...draft, items: draft.items.filter((current) => current.id !== item.id) })}><PremiumIcon name="trash" size={16} /></button></header><div className="parts-item-grid">
+            <Field label="Código / referência"><input value={item.code} onChange={(event) => updateItem(item.id, { code: event.target.value })} /></Field>
+            <Field label="Descrição da peça"><input value={item.description} onChange={(event) => updateItem(item.id, { description: event.target.value })} /></Field>
+            <Field label="Quantidade"><input type="number" min="0.01" step="1" value={item.quantity} onChange={(event) => updateItem(item.id, { quantity: Math.max(0.01, Number(event.target.value) || 1) })} /></Field>
+            <Field label="Previsão de chegada"><input type="date" value={item.expectedAt} onChange={(event) => updateItem(item.id, { expectedAt: event.target.value })} /></Field>
+            <Field label="Status"><select value={item.status} onChange={(event) => updateItem(item.id, { status: event.target.value as PartOrderItemStatus })}>{(["PENDENTE", "AGENDADO", "RESERVADO", "BO", "RECEBIDO", "ENTREGUE", "CANCELADO"] as PartOrderItemStatus[]).map((value) => <option key={value} value={value}>{partOrderItemStatusLabel(value)}</option>)}</select></Field>
+            <Field label="Comentário da peça"><input value={item.comments} onChange={(event) => updateItem(item.id, { comments: event.target.value })} /></Field>
+          </div><footer>{item.reservedAt && <span>Reservada há {daysSince(item.reservedAt)} dias</span>}{item.backOrderAt && <span>Em B.O. há {daysSince(item.backOrderAt)} dias</span>}{item.receivedAt && <span>Recebida em {shortDate(item.receivedAt)}</span>}</footer></article>)}</div>
+        </section>
+        <Field label="Comentários / observações gerais"><textarea value={draft.comments} onChange={(event) => setDraft({ ...draft, comments: event.target.value })} maxLength={1000} /></Field>
+      </div> : <div className="parts-history-list">{draft.history.length ? draft.history.map((entry) => <article key={entry.id}><span /><div><b>{entry.message}</b><small>{entry.createdBy} · {new Date(entry.createdAt).toLocaleString("pt-BR")}</small></div></article>) : <div className="module-empty">Nenhum histórico registrado.</div>}</div>}
+      <footer>{orders.some((item) => item.id === draft.id) ? <button type="button" className="danger-link" onClick={deleteDraft}>Excluir pedido</button> : <span />}<div><button type="button" className="outline" onClick={() => setDraft(null)}>Cancelar</button><button type="button" className="primary" onClick={saveDraft}>Salvar pedido</button></div></footer>
+    </aside></div>}
+  </section>;
+}
+
 
 function InactivityWarningModal({ seconds, onContinue, onLogout }: { seconds: number; onContinue: () => void; onLogout: () => void }) {
   const minutes = Math.floor(seconds / 60);
@@ -3607,6 +3989,7 @@ function Dashboard({
   onOpenAppointments,
   onOpenOrders,
   onOpenQuotes,
+  onOpenPartsOrders,
   companySettings,
 }: {
   store: Store;
@@ -3620,6 +4003,7 @@ function Dashboard({
   onOpenAppointments: () => void;
   onOpenOrders: () => void;
   onOpenQuotes: () => void;
+  onOpenPartsOrders: () => void;
   companySettings: CompanySettings;
 }) {
   const now = new Date();
@@ -3630,6 +4014,7 @@ function Dashboard({
   const monthRevenue = companySettings.modules.ORDERS ? monthOrders.reduce((total, item) => total + item.total, 0) : monthQuotes.reduce((total, item) => total + item.total, 0);
   const openOrders = data.orders.filter((item) => item.status !== "FECHADA");
   const openQuotes = data.quotes.filter((item) => !quoteIsTerminal(item.status));
+  const openPartOrders = data.partOrders.filter((order) => partOrderOverallStatus(order) !== "CONCLUIDO");
   const todayAppointments = data.appointments.filter((item) => new Date(item.startsAt).toDateString() === now.toDateString() && !["CANCELADO", "CONCLUIDO"].includes(item.status));
 
   const cards: Array<{ label: string; value: string; detail: string; icon: IconName; action?: () => void }> = [
@@ -3638,6 +4023,7 @@ function Dashboard({
   if (companySettings.modules.APPOINTMENTS) cards.push({ label: isDeliverySegment(store.segment) ? "Pedidos de hoje" : "Clientes agendados", value: String(todayAppointments.length), detail: isDeliverySegment(store.segment) ? "Pedidos programados" : "Agendamentos de hoje", icon: "calendar", action: onOpenAppointments });
   if (companySettings.modules.ORDERS) cards.push({ label: "O.S. abertas", value: money(openOrders.reduce((total, item) => total + item.total, 0)), detail: `${openOrders.length} ordens em aberto`, icon: "wrench", action: onOpenOrders });
   if (companySettings.modules.QUOTES) cards.push({ label: "Orçamentos abertos", value: money(openQuotes.reduce((total, item) => total + item.total, 0)), detail: `${openQuotes.length} orçamentos em andamento`, icon: "file", action: onOpenQuotes });
+  if (companySettings.modules.PARTS_ORDERS) cards.push({ label: "Pedidos de peças", value: String(openPartOrders.length), detail: `${openPartOrders.filter((item) => partOrderOverallStatus(item) === "BO").length} com item em B.O.`, icon: "box", action: onOpenPartsOrders });
 
   return (
     <>
@@ -3645,8 +4031,8 @@ function Dashboard({
         <div><small>{store.companyName.toUpperCase()}</small><h2>Visão geral da operação</h2></div>
         {companySettings.modules.CHECKLIST && <button className="primary" onClick={onCreate}>+ Nova recepção</button>}
       </section>
-      <section className={`dashboard-smart-metrics cards-${Math.min(cards.length, 4)}`}>
-        {cards.slice(0, 4).map((card) => <button key={card.label} className="smart-metric" onClick={card.action} disabled={!card.action}><span><PremiumIcon name={card.icon} size={21} /></span><div><small>{card.label}</small><strong>{card.value}</strong><em>{card.detail}</em></div>{card.action && <PremiumIcon name="chevron" size={16} />}</button>)}
+      <section className={`dashboard-smart-metrics cards-${Math.min(cards.length, 5)}`}>
+        {cards.slice(0, 5).map((card) => <button key={card.label} className="smart-metric" onClick={card.action} disabled={!card.action}><span><PremiumIcon name={card.icon} size={21} /></span><div><small>{card.label}</small><strong>{card.value}</strong><em>{card.detail}</em></div>{card.action && <PremiumIcon name="chevron" size={16} />}</button>)}
       </section>
 
       {(companySettings.modules.ORDERS || companySettings.modules.QUOTES) && <section className="dashboard-operation-grid">
@@ -3736,7 +4122,6 @@ function ManagementHub({
     { key: "inventory", label: "Estoque", icon: "box", value: lowStock ? `${lowStock} alertas` : "Estoque regular", action: onOpenInventory, module: "INVENTORY" },
     { key: "checklist", label: "Modelos de checklist", icon: "clipboard", value: data.checklistSettings.name, action: onOpenChecklist, module: "CHECKLIST" },
     { key: "knowledge", label: "Conhecimento da IA", icon: "sparkle", value: `${data.knowledgeBase.length} procedimentos`, action: onOpenKnowledge, module: "ASSISTANT" },
-    { key: "bi", label: "Gerivo BI", icon: "chart", value: "Período mensal ou personalizado", action: onOpenBi, module: "BI" },
     { key: "users", label: "Usuários e acessos", icon: "users", value: "Criar e editar usuários", action: () => setUsersOpen(true) },
   ];
   if (isPlatformMaster) cards.splice(3, 0, { key: "modules", label: "Módulos contratados", icon: "modules", value: "Controle exclusivo MASTER", action: onOpenModules });
@@ -3759,7 +4144,7 @@ function ManagementHub({
       {usersOpen && (
         <UserAccessModal
           store={store}
-          companyStores={stores.filter((item) => item.companyId === store.companyId)}
+          companyStores={isPlatformMaster && store.groupId ? stores.filter((item) => item.groupId === store.groupId) : stores.filter((item) => item.companyId === store.companyId)}
           accessToken={sessionAccessToken}
           onClose={() => setUsersOpen(false)}
         />
@@ -3787,6 +4172,10 @@ type ManagedCompanyUser = {
   storeActive: boolean;
   platformRole: "USER" | "MASTER";
   storeIds: string[];
+  companyIds: string[];
+  jobFunction: string;
+  customJobFunction: string;
+  availableAsConsultant: boolean;
   createdAt: string | null;
 };
 
@@ -3795,6 +4184,26 @@ function userRoleLabel(role: string) {
   if (role === "MANAGER") return "Gestor";
   if (role === "MASTER") return "MASTER";
   return "Usuário";
+}
+
+const JOB_FUNCTION_OPTIONS = [
+  ["CONSULTOR_SERVICOS", "Consultor de Serviços"],
+  ["RECEPCIONISTA", "Recepcionista"],
+  ["TECNICO", "Técnico"],
+  ["MECANICO", "Mecânico"],
+  ["ESTOQUISTA", "Estoquista"],
+  ["CAIXA", "Caixa"],
+  ["FINANCEIRO", "Financeiro"],
+  ["SUPERVISOR", "Supervisor"],
+  ["GERENTE", "Gerente"],
+  ["ADMINISTRATIVO", "Administrativo"],
+  ["DIRETOR", "Diretor"],
+  ["OUTRO", "Outro"],
+] as const;
+
+function jobFunctionLabel(value: string, custom = "") {
+  if (value === "OUTRO" && custom.trim()) return custom.trim();
+  return JOB_FUNCTION_OPTIONS.find(([key]) => key === value)?.[1] || "Outro";
 }
 
 function UserAccessModal({ store, companyStores, accessToken, onClose }: { store: Store; companyStores: Store[]; accessToken: string; onClose: () => void }) {
@@ -3812,6 +4221,9 @@ function UserAccessModal({ store, companyStores, accessToken, onClose }: { store
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState<"ADMIN" | "MANAGER" | "MEMBER">("MEMBER");
+  const [jobFunction, setJobFunction] = useState("OUTRO");
+  const [customJobFunction, setCustomJobFunction] = useState("");
+  const [availableAsConsultant, setAvailableAsConsultant] = useState(false);
   const [active, setActive] = useState(true);
   const [availability, setAvailability] = useState<"idle" | "checking" | "available" | "unavailable">("idle");
   const [message, setMessage] = useState("");
@@ -3838,6 +4250,9 @@ function UserAccessModal({ store, companyStores, accessToken, onClose }: { store
     setPhone("");
     setPassword("");
     setRole("MEMBER");
+    setJobFunction("OUTRO");
+    setCustomJobFunction("");
+    setAvailableAsConsultant(false);
     setActive(true);
     setSelectedStoreIds([store.id]);
     setAvailability("idle");
@@ -3864,7 +4279,8 @@ function UserAccessModal({ store, companyStores, accessToken, onClose }: { store
           ...store,
           id: String(item.id),
           name: String(item.name),
-          companyId: store.companyId,
+          companyId: String(item.companyId || store.companyId),
+          companyName: String(item.companyName || store.companyName),
         })));
       }
     } catch (error) {
@@ -3930,6 +4346,9 @@ function UserAccessModal({ store, companyStores, accessToken, onClose }: { store
     setPhone(user.phone);
     setPassword("");
     setRole(user.role === "MASTER" ? "ADMIN" : user.role);
+    setJobFunction(user.jobFunction || "OUTRO");
+    setCustomJobFunction(user.customJobFunction || "");
+    setAvailableAsConsultant(Boolean(user.availableAsConsultant));
     setActive(user.companyActive);
     setSelectedStoreIds(user.storeIds.filter((id) => manageableStores.some((item) => item.id === id)));
     setAvailability("available");
@@ -3961,6 +4380,9 @@ function UserAccessModal({ store, companyStores, accessToken, onClose }: { store
           phone,
           password,
           role: canAssignElevatedRoles ? role : "MEMBER",
+          jobFunction,
+          customJobFunction,
+          availableAsConsultant,
         }),
       });
       const payload = await response.json().catch(() => ({}));
@@ -3995,6 +4417,9 @@ function UserAccessModal({ store, companyStores, accessToken, onClose }: { store
           phone,
           password: canSetTemporaryPassword ? password : "",
           role: canAssignElevatedRoles ? role : "MEMBER",
+          jobFunction,
+          customJobFunction,
+          availableAsConsultant,
           active,
           storeIds: selectedStoreIds,
         }),
@@ -4043,6 +4468,7 @@ function UserAccessModal({ store, companyStores, accessToken, onClose }: { store
     && email.includes("@")
     && availability === "available"
     && selectedStoreIds.length > 0
+    && (jobFunction !== "OUTRO" || customJobFunction.trim().length >= 2)
     && (mode === "EDIT" || password.length >= 8);
 
   return (
@@ -4075,7 +4501,7 @@ function UserAccessModal({ store, companyStores, accessToken, onClose }: { store
                     <div className="managed-user-main">
                       <strong>{user.fullName}</strong>
                       <span>@{user.username || "sem.usuario"} · {user.email || "sem e-mail"}</span>
-                      <small>{user.storeIds.length ? `Acesso a ${user.storeIds.length} unidade(s)` : "Sem acesso a unidades"}</small>
+                      <small>{jobFunctionLabel(user.jobFunction, user.customJobFunction)} · {user.storeIds.length ? `acesso a ${user.storeIds.length} unidade(s)` : "sem acesso a unidades"}</small>
                     </div>
                     <div className="managed-user-badges">
                       <span>{userRoleLabel(user.role)}</span>
@@ -4136,9 +4562,28 @@ function UserAccessModal({ store, companyStores, accessToken, onClose }: { store
                   )}
                 </div>
               )}
+              <div className="split user-job-function-row">
+                <Field label="Função exercida">
+                  <select value={jobFunction} onChange={(event) => {
+                    const value = event.target.value;
+                    setJobFunction(value);
+                    if (value === "CONSULTOR_SERVICOS") setAvailableAsConsultant(true);
+                  }}>
+                    {JOB_FUNCTION_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                  </select>
+                </Field>
+                {jobFunction === "OUTRO" ? (
+                  <Field label="Descrição da função"><input value={customJobFunction} onChange={(event) => setCustomJobFunction(event.target.value)} placeholder="Informe a função" /></Field>
+                ) : (
+                  <label className="user-consultant-toggle">
+                    <input type="checkbox" checked={availableAsConsultant} onChange={(event) => setAvailableAsConsultant(event.target.checked)} />
+                    <span><strong>Disponível como consultor</strong><small>Aparece na seleção de consultores dos orçamentos.</small></span>
+                  </label>
+                )}
+              </div>
               <section className="user-store-access">
                 <header>
-                  <div><strong>Unidades permitidas</strong><small>O mesmo usuário pode trabalhar em mais de uma loja.</small></div>
+                  <div><strong>Empresas e unidades permitidas</strong><small>O MASTER pode liberar lojas diferentes do mesmo grupo empresarial.</small></div>
                 </header>
                 <div>
                   {manageableStores.map((item) => (
@@ -4162,7 +4607,7 @@ function UserAccessModal({ store, companyStores, accessToken, onClose }: { store
           )}
         </div>
 
-        {message && <div className={messageError ? "user-access-notice error" : "user-access-notice"}>{message}</div>}
+        {message && <div className={messageError ? "user-access-notice error" : "user-access-notice"}><span>{message}</span>{mode === "LIST" && messageError && <button type="button" className="outline small" disabled={loading} onClick={() => void loadUsers()}>{loading ? "Tentando..." : "Tentar novamente"}</button>}</div>}
         <footer>
           {mode === "LIST" ? (
             <button className="outline" type="button" onClick={onClose}>Fechar</button>
@@ -4700,7 +5145,207 @@ function operationalHealth(data: StoreData) {
   return Math.max(0, Math.round(score));
 }
 
-function BusinessIntelligencePage({ data }: { data: StoreData }) {
+
+function mergeBiStoreData(entries: Array<{ store: Store; data: StoreData }>, fallback: StoreData): StoreData {
+  if (!entries.length) return fallback;
+  const merged = entries.reduce<StoreData>((acc, entry) => ({
+    ...acc,
+    customers: [...acc.customers, ...entry.data.customers],
+    vehicles: [...acc.vehicles, ...entry.data.vehicles],
+    catalog: [...acc.catalog, ...entry.data.catalog],
+    suppliers: [...acc.suppliers, ...entry.data.suppliers],
+    appointments: [...acc.appointments, ...entry.data.appointments],
+    appointmentBlocks: [...acc.appointmentBlocks, ...entry.data.appointmentBlocks],
+    attendances: [...acc.attendances, ...entry.data.attendances],
+    orders: [...acc.orders, ...entry.data.orders],
+    quotes: [...acc.quotes, ...entry.data.quotes],
+    partOrders: [...acc.partOrders, ...entry.data.partOrders],
+    knowledgeBase: [...acc.knowledgeBase, ...entry.data.knowledgeBase],
+    companySettings: {
+      ...acc.companySettings,
+      modules: Object.fromEntries(MASTER_MODULES.map((module) => [module, Boolean(acc.companySettings.modules[module] || entry.data.companySettings.modules[module])])) as Record<CompanyModule, boolean>,
+    },
+  }), {
+    ...fallback,
+    customers: [], vehicles: [], catalog: [], suppliers: [], appointments: [], appointmentBlocks: [], attendances: [], orders: [], quotes: [], partOrders: [], knowledgeBase: [],
+  });
+  return merged;
+}
+
+function QuoteOnlyBusinessIntelligence({ data, storesById }: { data: StoreData; storesById: Map<string, Store> }) {
+  type QuoteBiPeriod = "MONTH" | "PREVIOUS_MONTH" | "THREE_MONTHS" | "SIX_MONTHS" | "YEAR" | "CUSTOM";
+  const today = new Date();
+  const currentMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
+  const [periodMode, setPeriodMode] = useState<QuoteBiPeriod>("MONTH");
+  const [selectedMonth, setSelectedMonth] = useState(currentMonth);
+  const [customStart, setCustomStart] = useState(`${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-01`);
+  const [customEnd, setCustomEnd] = useState(today.toISOString().slice(0, 10));
+  const [consultantFilter, setConsultantFilter] = useState("TODOS");
+
+  function endOfDay(value: Date) {
+    const result = new Date(value);
+    result.setHours(23, 59, 59, 999);
+    return result;
+  }
+
+  const range = useMemo(() => {
+    let startDate: Date;
+    let endDate: Date;
+    if (periodMode === "CUSTOM") {
+      startDate = new Date(`${customStart}T00:00:00`);
+      endDate = endOfDay(new Date(`${customEnd}T00:00:00`));
+    } else if (periodMode === "PREVIOUS_MONTH") {
+      startDate = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+      endDate = endOfDay(new Date(today.getFullYear(), today.getMonth(), 0));
+    } else if (periodMode === "THREE_MONTHS" || periodMode === "SIX_MONTHS") {
+      const months = periodMode === "THREE_MONTHS" ? 3 : 6;
+      startDate = new Date(today.getFullYear(), today.getMonth() - (months - 1), 1);
+      endDate = endOfDay(today);
+    } else if (periodMode === "YEAR") {
+      startDate = new Date(today.getFullYear(), 0, 1);
+      endDate = endOfDay(today);
+    } else {
+      const [year, month] = selectedMonth.split("-").map(Number);
+      startDate = new Date(year, month - 1, 1);
+      endDate = endOfDay(new Date(year, month, 0));
+    }
+    return { start: startDate.getTime(), end: endDate.getTime() };
+  }, [periodMode, selectedMonth, customStart, customEnd]);
+
+  const consultants = useMemo(() => Array.from(new Set(data.quotes.map((quote) => quote.consultantNameSnapshot || quote.responsible).filter(Boolean))).sort((a, b) => a.localeCompare(b, "pt-BR")), [data.quotes]);
+  const periodQuotes = useMemo(() => data.quotes.filter((quote) => {
+    const timestamp = new Date(quote.updatedAt || quote.createdAt).getTime();
+    const consultant = quote.consultantNameSnapshot || quote.responsible || "";
+    return timestamp >= range.start && timestamp <= range.end && (consultantFilter === "TODOS" || consultant === consultantFilter);
+  }), [data.quotes, range, consultantFilter]);
+
+  const terminal = periodQuotes.filter((quote) => quoteIsTerminal(quote.status));
+  const approved = terminal.filter((quote) => quoteIsApproved(quote.status));
+  const rejected = terminal.filter((quote) => quote.status === "NAO_APROVADO");
+  const open = periodQuotes.filter((quote) => !quoteIsTerminal(quote.status));
+  const totalQuoted = periodQuotes.reduce((sum, quote) => sum + quote.total, 0);
+  const approvedValue = approved.reduce((sum, quote) => sum + quote.total, 0);
+  const lostValue = rejected.reduce((sum, quote) => sum + quote.total, 0);
+  const conversion = terminal.length ? approved.length / terminal.length * 100 : 0;
+  const terminalValue = terminal.reduce((sum, quote) => sum + quote.total, 0);
+  const financialConversion = terminalValue ? approvedValue / terminalValue * 100 : 0;
+  const byStore = Array.from(new Set<string>(periodQuotes.map((quote) => String(quote.storeId)))).map((storeId) => {
+    const quotes = periodQuotes.filter((quote) => quote.storeId === storeId);
+    const final = quotes.filter((quote) => quoteIsTerminal(quote.status));
+    const wins = final.filter((quote) => quoteIsApproved(quote.status));
+    const store = storesById.get(storeId);
+    return {
+      id: storeId,
+      name: store ? `${store.companyName} · ${store.name}` : "Unidade",
+      quotes: quotes.length,
+      approved: wins.length,
+      conversion: final.length ? wins.length / final.length * 100 : 0,
+      approvedValue: wins.reduce((sum, quote) => sum + quote.total, 0),
+      lostValue: final.filter((quote) => quote.status === "NAO_APROVADO").reduce((sum, quote) => sum + quote.total, 0),
+    };
+  }).sort((a, b) => b.conversion - a.conversion);
+
+  const byConsultant = Array.from(new Set<string>(periodQuotes.map((quote) => String(quote.consultantNameSnapshot || quote.responsible || "")).filter(Boolean))).map((name) => {
+    const quotes = periodQuotes.filter((quote) => (quote.consultantNameSnapshot || quote.responsible) === name);
+    const final = quotes.filter((quote) => quoteIsTerminal(quote.status));
+    const wins = final.filter((quote) => quoteIsApproved(quote.status));
+    return {
+      name,
+      quotes: quotes.length,
+      approved: wins.length,
+      conversion: final.length ? wins.length / final.length * 100 : 0,
+      approvedValue: wins.reduce((sum, quote) => sum + quote.total, 0),
+    };
+  }).sort((a, b) => b.conversion - a.conversion);
+
+  const rejectionReasons = Array.from(new Set(rejected.map((quote) => quote.rejectionReason || "OUTRO"))).map((reason) => ({
+    reason,
+    count: rejected.filter((quote) => (quote.rejectionReason || "OUTRO") === reason).length,
+    value: rejected.filter((quote) => (quote.rejectionReason || "OUTRO") === reason).reduce((sum, quote) => sum + quote.total, 0),
+  })).sort((a, b) => b.value - a.value);
+
+  return <div className="quote-only-bi">
+    <section className="panel quote-bi-filters">
+      <div className="quote-bi-shortcuts">
+        {([[
+          "MONTH", "Este mês"], ["PREVIOUS_MONTH", "Mês anterior"], ["THREE_MONTHS", "3 meses"], ["SIX_MONTHS", "6 meses"], ["YEAR", "Ano atual"], ["CUSTOM", "Personalizado"]] as Array<[QuoteBiPeriod, string]>).map(([value, label]) => <button type="button" key={value} className={periodMode === value ? "active" : ""} onClick={() => setPeriodMode(value)}>{label}</button>)}
+      </div>
+      <div className="quote-bi-filter-grid">
+        {periodMode === "MONTH" && <Field label="Mês"><input type="month" value={selectedMonth} onChange={(event) => setSelectedMonth(event.target.value)} /></Field>}
+        {periodMode === "CUSTOM" && <><Field label="Data inicial"><input type="date" value={customStart} onChange={(event) => setCustomStart(event.target.value)} /></Field><Field label="Data final"><input type="date" value={customEnd} onChange={(event) => setCustomEnd(event.target.value)} /></Field></>}
+        <Field label="Consultor de Serviços"><select value={consultantFilter} onChange={(event) => setConsultantFilter(event.target.value)}><option value="TODOS">Todos os consultores</option>{consultants.map((name) => <option key={name} value={name}>{name}</option>)}</select></Field>
+      </div>
+    </section>
+    <section className="bi-kpi-grid">
+      <article className="bi-kpi-card primary-kpi"><span><PremiumIcon name="file" size={21} /></span><div><small>VALOR ORÇADO</small><strong>{money(totalQuoted)}</strong><p>{periodQuotes.length} orçamento(s)</p></div></article>
+      <article className="bi-kpi-card"><span><PremiumIcon name="shield" size={21} /></span><div><small>VALOR APROVADO</small><strong>{money(approvedValue)}</strong><p>{approved.length} aprovação(ões)</p></div></article>
+      <article className="bi-kpi-card"><span><PremiumIcon name="chart" size={21} /></span><div><small>CONVERSÃO</small><strong>{conversion.toFixed(1)}%</strong><p>{financialConversion.toFixed(1)}% em valor</p></div></article>
+      <article className="bi-kpi-card"><span><PremiumIcon name="file" size={21} /></span><div><small>VALOR PERDIDO</small><strong>{money(lostValue)}</strong><p>{rejected.length} perda(s)</p></div></article>
+      <article className="bi-kpi-card"><span><PremiumIcon name="sparkle" size={21} /></span><div><small>EM ABERTO</small><strong>{open.length}</strong><p>{money(open.reduce((sum, quote) => sum + quote.total, 0))} em oportunidades</p></div></article>
+      <article className="bi-kpi-card"><span><PremiumIcon name="users" size={21} /></span><div><small>TICKET APROVADO</small><strong>{money(approved.length ? approvedValue / approved.length : 0)}</strong><p>Média dos ganhos</p></div></article>
+    </section>
+    <section className="bi-dashboard-grid">
+      <article className="panel bi-unit-comparison"><header><div><small>COMPARATIVO AUTORIZADO</small><h3>Conversão por unidade</h3></div></header><div className="bi-comparison-table">{byStore.length ? byStore.map((row, index) => <div key={row.id}><b>{index + 1}</b><span><strong>{row.name}</strong><small>{row.approved} aprovados de {row.quotes} orçamentos</small></span><em>{row.conversion.toFixed(1)}%</em><span>{money(row.approvedValue)} aprovados</span><span>{money(row.lostValue)} perdidos</span></div>) : <div className="empty-inline">Nenhum orçamento encontrado no período.</div>}</div></article>
+      <article className="panel bi-unit-comparison"><header><div><small>CONSULTORES DE SERVIÇOS</small><h3>Quem mais converte</h3></div></header><div className="bi-comparison-table">{byConsultant.length ? byConsultant.map((row, index) => <div key={row.name}><b>{index + 1}</b><span><strong>{row.name}</strong><small>{row.approved} aprovados de {row.quotes} orçamentos</small></span><em>{row.conversion.toFixed(1)}%</em><span>{money(row.approvedValue)} aprovados</span></div>) : <div className="empty-inline">Cadastre usuários com a função Consultor de Serviços e selecione-os nos orçamentos.</div>}</div></article>
+      <article className="panel bi-unit-comparison"><header><div><small>PERDAS</small><h3>Motivos de não aprovação</h3></div></header><div className="bi-comparison-table">{rejectionReasons.length ? rejectionReasons.map((row) => <div key={row.reason}><span><strong>{row.reason}</strong><small>{row.count} orçamento(s)</small></span><em>{money(row.value)}</em></div>) : <div className="empty-inline">Nenhuma perda registrada no período.</div>}</div></article>
+    </section>
+  </div>;
+}
+
+function BusinessIntelligencePage({ data, currentStore, stores }: { data: StoreData; currentStore: Store; stores: Store[] }) {
+  const supabase = useMemo(() => getSupabaseBrowserClient(), []);
+  const groupStores = useMemo(() => currentStore.groupId ? stores.filter((store) => store.groupId === currentStore.groupId) : stores.filter((store) => store.companyId === currentStore.companyId), [stores, currentStore.groupId, currentStore.companyId]);
+  const [scope, setScope] = useState("AUTHORIZED");
+  const [entries, setEntries] = useState<Array<{ store: Store; data: StoreData }>>([{ store: currentStore, data }]);
+  const [loadingScope, setLoadingScope] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    async function loadScope() {
+      setLoadingScope(true);
+      try {
+        const ids = groupStores.map((store) => store.id);
+        if (!ids.length) return;
+        const { data: snapshots } = await supabase.from("store_data_snapshots").select("store_id, payload").in("store_id", ids);
+        if (!active) return;
+        const snapshotMap = new Map((snapshots || []).map((item: any) => [String(item.store_id), item.payload]));
+        setEntries(groupStores.map((store) => ({
+          store,
+          data: store.id === currentStore.id ? data : normalizeStoreData((snapshotMap.get(store.id) || {}) as Partial<StoreData>, store.id),
+        })));
+      } finally {
+        if (active) setLoadingScope(false);
+      }
+    }
+    void loadScope();
+    return () => { active = false; };
+  }, [currentStore.id, data, groupStores.map((store) => store.id).join("|")]);
+
+  const selectedEntries = scope === "CURRENT"
+    ? entries.filter((entry) => entry.store.id === currentStore.id)
+    : scope === "AUTHORIZED"
+      ? entries
+      : entries.filter((entry) => entry.store.id === scope);
+  const merged = mergeBiStoreData(selectedEntries, data);
+  const quoteOnly = merged.companySettings.modules.QUOTES && !merged.companySettings.modules.ORDERS;
+  const storesById = new Map<string, Store>(entries.map((entry) => [entry.store.id, entry.store]));
+
+  return <div className="bi-scope-page">
+    <section className="panel bi-scope-selector bi-scope-selector-clean">
+      <Field label="Unidades no BI">
+        <select value={scope} onChange={(event) => setScope(event.target.value)}>
+          <option value="CURRENT">Unidade atual</option>
+          <option value="AUTHORIZED">Todas as unidades autorizadas do grupo</option>
+          {groupStores.map((store) => <option key={store.id} value={store.id}>{store.companyName} · {store.name}</option>)}
+        </select>
+      </Field>
+      <span>{loadingScope ? "Carregando unidades..." : `${selectedEntries.length} unidade(s) na análise`}</span>
+    </section>
+    {quoteOnly ? <QuoteOnlyBusinessIntelligence data={merged} storesById={storesById} /> : <BusinessIntelligenceCore data={merged} />}
+  </div>;
+}
+
+function BusinessIntelligenceCore({ data }: { data: StoreData }) {
   type BiPeriodMode = "MONTH" | "PREVIOUS_MONTH" | "THREE_MONTHS" | "SIX_MONTHS" | "YEAR" | "CUSTOM";
   const today = new Date();
   const currentMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
@@ -5442,6 +6087,11 @@ function MasterCommercialPage({
   const [plansOpen, setPlansOpen] = useState(false);
   const [planDrafts, setPlanDrafts] = useState<any[]>([]);
   const [savingPlanId, setSavingPlanId] = useState("");
+  const [replicateOpen, setReplicateOpen] = useState(false);
+  const [replicateGroup, setReplicateGroup] = useState<any>(null);
+  const [replicateSourceStoreId, setReplicateSourceStoreId] = useState("");
+  const [replicateTargetStoreIds, setReplicateTargetStoreIds] = useState<string[]>([]);
+  const [replicateSections, setReplicateSections] = useState<string[]>(["IDENTITY", "CHECKLIST", "PRICING", "MESSAGES"]);
 
   useEffect(() => {
     if (!notice) return;
@@ -5453,12 +6103,13 @@ function MasterCommercialPage({
     const close = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || saving) return;
       if (plansOpen) setPlansOpen(false);
+      else if (replicateOpen) setReplicateOpen(false);
       else if (editOpen) setEditOpen(false);
       else if (createOpen) setCreateOpen(false);
     };
     window.addEventListener("keydown", close);
     return () => window.removeEventListener("keydown", close);
-  }, [plansOpen, editOpen, createOpen, saving]);
+  }, [plansOpen, replicateOpen, editOpen, createOpen, saving]);
 
   async function load() {
     const [plansResult, subscriptionsResult, groupsResult, historiesResult] = await Promise.all([
@@ -5610,6 +6261,105 @@ function MasterCommercialPage({
     finally { setSaving(false); }
   }
 
+  async function editGroupName(group: any) {
+    if (saving) return;
+    const nextName = window.prompt("Novo nome do grupo empresarial:", String(group.name || ""));
+    if (nextName === null) return;
+    const name = nextName.trim();
+    if (!name || name === group.name) return;
+    setSaving(true);
+    try {
+      await apiPost("/api/master/groups/update", { groupId: group.id, name });
+      await load();
+      await onRefresh();
+      setNotice({ text: `Grupo atualizado para ${name}.` });
+    } catch (error) {
+      setNotice({ text: error instanceof Error ? error.message : "Não foi possível renomear o grupo.", error: true });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function openReplication(group: any) {
+    const groupStores = (group.companies || []).flatMap((company: any) => (company.stores || []).map((store: any) => ({ ...store, companyName: company.name })));
+    if (groupStores.length < 2) {
+      setNotice({ text: "Cadastre pelo menos duas unidades no grupo para replicar configurações.", error: true });
+      return;
+    }
+    const sourceId = String(groupStores[0]?.id || "");
+    setReplicateGroup({ ...group, availableStores: groupStores });
+    setReplicateSourceStoreId(sourceId);
+    setReplicateTargetStoreIds(groupStores.filter((store: any) => String(store.id) !== sourceId).map((store: any) => String(store.id)));
+    setReplicateSections(["IDENTITY", "CHECKLIST", "PRICING", "MESSAGES"]);
+    setReplicateOpen(true);
+  }
+
+  async function replicateGroupSettings() {
+    if (!replicateGroup || !replicateSourceStoreId || !replicateTargetStoreIds.length || !replicateSections.length || saving) return;
+    setSaving(true);
+    try {
+      const payload = await apiPost("/api/master/groups/replicate", {
+        groupId: replicateGroup.id,
+        sourceStoreId: replicateSourceStoreId,
+        targetStoreIds: replicateTargetStoreIds.filter((id) => id !== replicateSourceStoreId),
+        sections: replicateSections,
+      });
+      setReplicateOpen(false);
+      await load();
+      await onRefresh();
+      setNotice({ text: `Configurações replicadas para ${Number(payload.replicated) || replicateTargetStoreIds.length} unidade(s).` });
+    } catch (error) {
+      setNotice({ text: error instanceof Error ? error.message : "Não foi possível replicar as configurações.", error: true });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function deleteCompanyPermanently(company: any) {
+    if (saving) return;
+    const typedName = window.prompt(`EXCLUSÃO DEFINITIVA\n\nDigite exatamente o nome da empresa para confirmar:\n${company.name}`);
+    if (typedName === null) return;
+    if (typedName.trim() !== String(company.name || "").trim()) {
+      setNotice({ text: "O nome digitado não confere. A empresa não foi excluída.", error: true });
+      return;
+    }
+    if (!window.confirm("Esta ação remove unidades, vínculos, configurações e dados operacionais da empresa. Não pode ser desfeita. Continuar?")) return;
+    setSaving(true);
+    try {
+      await apiPost("/api/master/entities/delete", { scope: "COMPANY", entityId: company.id, confirmationName: typedName.trim() });
+      await load();
+      await onRefresh();
+      setNotice({ text: `Empresa ${company.name} excluída definitivamente.` });
+    } catch (error) {
+      setNotice({ text: error instanceof Error ? error.message : "Não foi possível excluir a empresa.", error: true });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function deleteGroupPermanently(group: any) {
+    if (saving) return;
+    const companyCount = Number(group.companies?.length || 0);
+    const typedName = window.prompt(`EXCLUSÃO DEFINITIVA DO GRUPO\n\n${companyCount ? `O grupo possui ${companyCount} empresa(s), que também serão excluídas.\n\n` : ""}Digite exatamente o nome do grupo para confirmar:\n${group.name}`);
+    if (typedName === null) return;
+    if (typedName.trim() !== String(group.name || "").trim()) {
+      setNotice({ text: "O nome digitado não confere. O grupo não foi excluído.", error: true });
+      return;
+    }
+    if (!window.confirm("A exclusão definitiva do grupo não pode ser desfeita. Continuar?")) return;
+    setSaving(true);
+    try {
+      await apiPost("/api/master/entities/delete", { scope: "GROUP", entityId: group.id, confirmationName: typedName.trim(), cascade: true });
+      await load();
+      await onRefresh();
+      setNotice({ text: `Grupo ${group.name} excluído definitivamente.` });
+    } catch (error) {
+      setNotice({ text: error instanceof Error ? error.message : "Não foi possível excluir o grupo.", error: true });
+    } finally {
+      setSaving(false);
+    }
+  }
+
   function openPlansEditor() {
     setPlanDrafts(plans.map((plan) => ({
       ...plan,
@@ -5690,7 +6440,7 @@ function MasterCommercialPage({
 
   function renderModulesForm() {
     const editable = contract.planMode === "CUSTOM";
-    return <div className="master-modules-contract"><div className="master-limits-grid"><Field label="Empresas / CNPJs"><input disabled={!editable} type="number" min="1" value={contract.companyLimit} onChange={(event) => setContract({ ...contract, companyLimit: Math.max(1, Number(event.target.value) || 1) })} /></Field><Field label="Unidades"><input disabled={!editable} type="number" min="1" value={contract.storeLimit} onChange={(event) => setContract({ ...contract, storeLimit: Math.max(1, Number(event.target.value) || 1) })} /></Field><Field label="Usuários"><input disabled={!editable} type="number" min="1" value={contract.userLimit} onChange={(event) => setContract({ ...contract, userLimit: Math.max(1, Number(event.target.value) || 1) })} /></Field><Field label="Armazenamento"><div className="input-suffix"><input disabled={!editable} type="number" min="1" value={contract.storageGb} onChange={(event) => setContract({ ...contract, storageGb: Math.max(1, Number(event.target.value) || 1) })} /><span>GB</span></div></Field><Field label="Consultas de IA / mês"><input disabled={!editable} type="number" min="0" value={contract.aiQueriesMonthly} onChange={(event) => setContract({ ...contract, aiQueriesMonthly: Math.max(0, Number(event.target.value) || 0) })} /></Field></div><div className="module-grid master-module-grid">{MASTER_MODULES.map((module) => <button type="button" disabled={!editable} key={module} className={contract.modules[module] ? "module-card active" : "module-card"} onClick={() => setContract({ ...contract, modules: { ...contract.modules, [module]: !contract.modules[module] } })}><PremiumIcon name={module === "APPOINTMENTS" ? "calendar" : module === "INVENTORY" ? "box" : module === "ASSISTANT" ? "sparkle" : module === "BI" ? "chart" : module === "MESSAGES" ? "file" : module === "QUOTES" ? "file" : module === "ORDERS" ? "wrench" : "modules"} size={20} /><span><strong>{MODULE_INFO[module].label}</strong><small>{MODULE_INFO[module].description}</small></span><b>{contract.modules[module] ? "Ativo" : "Bloqueado"}</b></button>)}</div>{!editable && <p className="master-plan-help">Os limites e módulos seguem o plano Gerivo escolhido. Selecione Plano personalizado para editá-los.</p>}</div>;
+    return <div className="master-modules-contract"><div className="master-limits-grid"><Field label="Empresas / CNPJs"><input disabled={!editable} type="number" min="1" value={contract.companyLimit} onChange={(event) => setContract({ ...contract, companyLimit: Math.max(1, Number(event.target.value) || 1) })} /></Field><Field label="Unidades"><input disabled={!editable} type="number" min="1" value={contract.storeLimit} onChange={(event) => setContract({ ...contract, storeLimit: Math.max(1, Number(event.target.value) || 1) })} /></Field><Field label="Usuários"><input disabled={!editable} type="number" min="1" value={contract.userLimit} onChange={(event) => setContract({ ...contract, userLimit: Math.max(1, Number(event.target.value) || 1) })} /></Field><Field label="Armazenamento"><div className="input-suffix"><input disabled={!editable} type="number" min="1" value={contract.storageGb} onChange={(event) => setContract({ ...contract, storageGb: Math.max(1, Number(event.target.value) || 1) })} /><span>GB</span></div></Field><Field label="Consultas de IA / mês"><input disabled={!editable} type="number" min="0" value={contract.aiQueriesMonthly} onChange={(event) => setContract({ ...contract, aiQueriesMonthly: Math.max(0, Number(event.target.value) || 0) })} /></Field></div><div className="module-grid master-module-grid">{MASTER_MODULES.map((module) => <button type="button" disabled={!editable} key={module} className={contract.modules[module] ? "module-card active" : "module-card"} onClick={() => setContract({ ...contract, modules: { ...contract.modules, [module]: !contract.modules[module] } })}><PremiumIcon name={module === "APPOINTMENTS" ? "calendar" : module === "INVENTORY" ? "box" : module === "ASSISTANT" ? "sparkle" : module === "BI" ? "chart" : module === "MESSAGES" ? "file" : module === "QUOTES" ? "file" : module === "ORDERS" ? "wrench" : module === "PARTS_ORDERS" ? "box" : "modules"} size={20} /><span><strong>{MODULE_INFO[module].label}</strong><small>{MODULE_INFO[module].description}</small></span><b>{contract.modules[module] ? "Ativo" : "Bloqueado"}</b></button>)}</div>{!editable && <p className="master-plan-help">Os limites e módulos seguem o plano Gerivo escolhido. Selecione Plano personalizado para editá-los.</p>}</div>;
   }
 
   function renderModalBody(creating: boolean) {
@@ -5712,13 +6462,99 @@ function MasterCommercialPage({
       </div></>;
   }
 
+  const currentMasterCompany = groups.flatMap((group) => group.companies || []).find((company: any) => String(company.id) === String(currentStore.companyId));
+  const currentCompanyStatus = String(currentMasterCompany?.status || "ACTIVE");
+
   return <div className="master-page master-page-v177">
     <section className="master-heading"><div><small>GERIVO MASTER</small><h2>Empresas, planos e contratações</h2><p>Crie, edite, ative, suspenda e personalize cada operação sem perder o histórico.</p></div><div className="master-heading-actions"><button type="button" className="outline" onClick={openPlansEditor}>Editar planos e valores</button><button type="button" className="primary" onClick={() => { resetCreate(); setCreateOpen(true); }}>+ Nova empresa</button></div></section>
     <section className="master-summary-grid"><Metric label="Empresas cadastradas" value={String(groups.reduce((sum, group) => sum + (group.companies?.length || 0), 0))} detail={`${groups.length} grupo(s) empresarial(is)`} /><Metric label="Contratos ativos" value={String(subscriptions.filter((item) => item.status === "ACTIVE").length)} detail="Assinaturas vigentes" /><Metric label="Próximos do vencimento" value={String(subscriptions.filter((item) => item.expires_at && new Date(item.expires_at).getTime() - Date.now() <= 10 * 86400000 && new Date(item.expires_at).getTime() >= Date.now()).length)} detail="Vencimento em até 10 dias" /><Metric label="Planos personalizados" value={String(subscriptions.filter((item) => item.plan_mode === "CUSTOM").length)} detail="Contratações sob medida" /></section>
-    <section className="panel subscription-current"><header><div><small>EMPRESA SELECIONADA</small><h3>{currentStore.companyName}</h3></div></header>{currentSubscription ? <div className="subscription-detail subscription-detail-v177"><strong>{currentSubscription.plan_mode === "CUSTOM" ? currentSubscription.custom_plan_name || "Personalizado" : currentSubscription.subscription_plans?.name || "Plano"}</strong><span>Status: {currentSubscription.status}</span><span>Período: {formatDate(currentSubscription.contract_start || currentSubscription.activated_at)} a {formatDate(currentSubscription.contract_end || currentSubscription.expires_at)}</span><span>Valor: {money(currentSubscription.contracted_value)}</span></div> : <div className="empty-inline">Empresa ainda sem contratação ativa.</div>}</section>
-    <section className="panel master-groups-panel"><header><div><small>ESTRUTURA EMPRESARIAL</small><h3>{groups.length} grupo(s)</h3></div><input className="master-company-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar grupo, CNPJ, empresa ou unidade" /></header><div className="master-group-list master-group-list-v177">{filteredGroups.map((group) => <article key={group.id}><header><div><strong>{group.name}</strong><small>{group.companies?.length || 0} empresa(s)</small></div><span>{group.status || "ATIVO"}</span></header><div>{(group.companies || []).map((company: any) => { const subscription = subscriptions.find((item) => item.company_id === company.id); return <section key={company.id} className="master-company-row-v177"><div className="master-company-identity"><b>{company.name}</b><small>{company.document || "CNPJ não informado"} · {company.segment || "OUTRO"}</small><span className={`company-status status-${String(company.status || "ACTIVE").toLowerCase()}`}>{company.status || "ACTIVE"}</span></div><div className="master-company-contract"><strong>{subscription?.plan_mode === "CUSTOM" ? subscription?.custom_plan_name || "Personalizado" : subscription?.subscription_plans?.name || "Sem plano"}</strong><small>{subscription?.contract_end || subscription?.expires_at ? `até ${formatDate(subscription.contract_end || subscription.expires_at)}` : "sem período definido"}</small></div><ul>{(company.stores || []).map((store: any) => <li key={store.id}>{store.name}<span>ID {store.public_code}</span></li>)}</ul><div className="master-company-actions"><button type="button" className="outline small" onClick={() => openEdit(company)}>Editar</button>{company.status === "SUSPENDED" || company.status === "CANCELED" ? <button type="button" className="primary small" onClick={() => void changeStatus(company, "ACTIVE")}>Reativar</button> : <button type="button" className="outline small" onClick={() => void changeStatus(company, "SUSPENDED")}>Suspender</button>}<button type="button" className="danger small" onClick={() => void changeStatus(company, "CANCELED")}>Arquivar</button></div></section>; })}</div></article>)}</div></section>
+    <section className="panel subscription-current"><header><div><small>EMPRESA SELECIONADA</small><h3>{currentStore.companyName}</h3></div><span className={`company-status status-${currentCompanyStatus.toLowerCase()}`}>{companyStatusLabel(currentCompanyStatus)}</span></header>{currentSubscription ? <div className="subscription-detail subscription-detail-v177"><strong>{currentSubscription.plan_mode === "CUSTOM" ? currentSubscription.custom_plan_name || "Personalizado" : currentSubscription.subscription_plans?.name || "Plano"}</strong><span>Contrato: {companyStatusLabel(currentSubscription.status)}</span><span>Período: {formatDate(currentSubscription.contract_start || currentSubscription.activated_at)} a {formatDate(currentSubscription.contract_end || currentSubscription.expires_at)}</span><span>Valor: {money(currentSubscription.contracted_value)}</span></div> : <div className="empty-inline master-no-contract"><strong>{companyStatusLabel(currentCompanyStatus)}</strong><span>Empresa cadastrada e operacional, porém ainda sem plano contratado.</span></div>}</section>
+    <section className="panel master-groups-panel">
+      <header>
+        <div><small>ESTRUTURA EMPRESARIAL</small><h3>{groups.length} grupo(s)</h3></div>
+        <input className="master-company-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar grupo, CNPJ, empresa ou unidade" />
+      </header>
+      <div className="master-group-list master-group-list-v177">
+        {filteredGroups.map((group) => (
+          <article key={group.id}>
+            <header className="master-group-header-v1711">
+              <div><strong>{group.name}</strong><small>{group.companies?.length || 0} empresa(s)</small></div>
+              <div className="master-group-header-actions">
+                <span>{companyStatusLabel(group.status || "ACTIVE")}</span>
+                <button type="button" className="outline small" disabled={saving} onClick={() => void editGroupName(group)}>Editar grupo</button>
+                <button type="button" className="outline small" disabled={saving} onClick={() => openReplication(group)}>Replicar configurações</button>
+                <button type="button" className="danger small" disabled={saving} onClick={() => void deleteGroupPermanently(group)}>Excluir grupo</button>
+              </div>
+            </header>
+            <div>
+              {(group.companies || []).map((company: any) => {
+                const subscription = subscriptions.find((item) => item.company_id === company.id);
+                return (
+                  <section key={company.id} className="master-company-row-v177">
+                    <div className="master-company-identity"><b>{company.name}</b><small>{company.document || "CNPJ não informado"} · {company.segment || "OUTRO"}</small><span className={`company-status status-${String(company.status || "ACTIVE").toLowerCase()}`}>{companyStatusLabel(company.status || "ACTIVE")}</span></div>
+                    <div className="master-company-contract"><strong>{subscription?.plan_mode === "CUSTOM" ? subscription?.custom_plan_name || "Personalizado" : subscription?.subscription_plans?.name || "Sem plano"}</strong><small>{subscription?.contract_end || subscription?.expires_at ? `até ${formatDate(subscription.contract_end || subscription.expires_at)}` : "sem período definido"}</small></div>
+                    <ul>{(company.stores || []).map((store: any) => <li key={store.id}>{store.name}<span>ID {store.public_code}</span></li>)}</ul>
+                    <div className="master-company-actions">
+                      <button type="button" className="outline small" disabled={saving} onClick={() => openEdit(company)}>Editar</button>
+                      {company.status === "SUSPENDED" || company.status === "CANCELED" ? <button type="button" className="primary small" disabled={saving} onClick={() => void changeStatus(company, "ACTIVE")}>Reativar</button> : <button type="button" className="outline small" disabled={saving} onClick={() => void changeStatus(company, "SUSPENDED")}>Suspender</button>}
+                      <button type="button" className="outline small" disabled={saving} onClick={() => void changeStatus(company, "CANCELED")}>Arquivar</button>
+                      <button type="button" className="danger small" disabled={saving} onClick={() => void deleteCompanyPermanently(company)}>Excluir definitivamente</button>
+                    </div>
+                  </section>
+                );
+              })}
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
     {notice && <div className={notice.error ? "master-pop-toast error" : "master-pop-toast"}><span>{notice.error ? "!" : "✓"}</span><strong>{notice.text}</strong></div>}
     {plansOpen && <div className="modal-backdrop"><section className="compact-modal master-plans-modal"><header><div><small>PLANOS GERIVO</small><h2>Valores e conteúdo do site de vendas</h2><p>As alterações publicadas aqui aparecem automaticamente na página comercial.</p></div><button type="button" onClick={() => setPlansOpen(false)}>×</button></header><div className="master-plan-editor-grid">{planDrafts.map((plan) => <article key={plan.id} className={plan.recommended ? "master-plan-editor recommended" : "master-plan-editor"}><header><div><small>{plan.code}</small><input value={plan.name} onChange={(event) => patchPlanDraft(plan.id, { name: event.target.value })} /></div><label><input type="checkbox" checked={plan.public_visible} onChange={(event) => patchPlanDraft(plan.id, { public_visible: event.target.checked })} /> Exibir no site</label></header><div className="master-plan-price-row"><Field label="Mensal"><CurrencyInput value={plan.monthly_price} onChange={(monthly_price) => patchPlanDraft(plan.id, { monthly_price })} /></Field><Field label="Anual"><CurrencyInput value={plan.annual_price} onChange={(annual_price) => patchPlanDraft(plan.id, { annual_price })} /></Field></div><div className="master-plan-limits"><Field label="Empresas"><input type="number" min="1" value={plan.company_limit} onChange={(event) => patchPlanDraft(plan.id, { company_limit: Number(event.target.value) })} /></Field><Field label="Unidades"><input type="number" min="1" value={plan.store_limit} onChange={(event) => patchPlanDraft(plan.id, { store_limit: Number(event.target.value) })} /></Field><Field label="Usuários"><input type="number" min="1" value={plan.user_limit} onChange={(event) => patchPlanDraft(plan.id, { user_limit: Number(event.target.value) })} /></Field><Field label="IA/mês"><input type="number" min="0" value={plan.ai_queries_monthly} onChange={(event) => patchPlanDraft(plan.id, { ai_queries_monthly: Number(event.target.value) })} /></Field></div><Field label="Descrição pública"><input value={plan.public_description} onChange={(event) => patchPlanDraft(plan.id, { public_description: event.target.value })} /></Field><Field label="Benefícios — um por linha"><textarea rows={4} value={plan.public_features_text} onChange={(event) => patchPlanDraft(plan.id, { public_features_text: event.target.value })} /></Field><div className="master-plan-publish"><label><input type="checkbox" checked={plan.recommended} onChange={(event) => patchPlanDraft(plan.id, { recommended: event.target.checked })} /> Mais indicado</label><Field label="Texto do botão"><input value={plan.public_cta_label} onChange={(event) => patchPlanDraft(plan.id, { public_cta_label: event.target.value })} /></Field><Field label="Ordem"><input type="number" value={plan.public_sort_order} onChange={(event) => patchPlanDraft(plan.id, { public_sort_order: Number(event.target.value) })} /></Field></div><button type="button" className="primary" disabled={Boolean(savingPlanId)} onClick={() => void savePlanDraft(plan)}>{savingPlanId === plan.id ? "Salvando..." : "Salvar este plano"}</button></article>)}</div><footer><button type="button" className="outline" onClick={() => setPlansOpen(false)}>Fechar</button></footer></section></div>}
+    {replicateOpen && replicateGroup && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setReplicateOpen(false); }}>
+      <section role="dialog" aria-modal="true" className="compact-modal master-replicate-modal">
+        <header>
+          <div><small>REPLICAR CONFIGURAÇÕES</small><h2>{replicateGroup.name}</h2><p>Copie padrões administrativos entre unidades do mesmo grupo sem misturar orçamentos, clientes ou demais dados operacionais.</p></div>
+          <button type="button" disabled={saving} onClick={() => setReplicateOpen(false)}>×</button>
+        </header>
+        <div className="master-replicate-content">
+          <Field label="Unidade de origem">
+            <select value={replicateSourceStoreId} onChange={(event) => {
+              const sourceId = event.target.value;
+              setReplicateSourceStoreId(sourceId);
+              setReplicateTargetStoreIds((replicateGroup.availableStores || []).filter((store: any) => String(store.id) !== sourceId).map((store: any) => String(store.id)));
+            }}>
+              {(replicateGroup.availableStores || []).map((store: any) => <option key={store.id} value={store.id}>{store.companyName} · {store.name}</option>)}
+            </select>
+          </Field>
+          <div className="master-replicate-block">
+            <strong>Unidades de destino</strong>
+            <small>Selecione onde as configurações serão aplicadas.</small>
+            <div className="master-replicate-options">
+              {(replicateGroup.availableStores || []).filter((store: any) => String(store.id) !== replicateSourceStoreId).map((store: any) => {
+                const id = String(store.id);
+                return <label key={id}><input type="checkbox" checked={replicateTargetStoreIds.includes(id)} onChange={(event) => setReplicateTargetStoreIds((current) => event.target.checked ? Array.from(new Set([...current, id])) : current.filter((item) => item !== id))} /><span><b>{store.companyName}</b><small>{store.name}</small></span></label>;
+              })}
+            </div>
+          </div>
+          <div className="master-replicate-block">
+            <strong>O que deseja replicar</strong>
+            <small>Os dados de operação e históricos nunca são copiados.</small>
+            <div className="master-replicate-sections">
+              {[
+                ["IDENTITY", "Identidade visual"],
+                ["CHECKLIST", "Configuração do checklist"],
+                ["PRICING", "Preços e condições"],
+                ["MESSAGES", "Modelos de mensagens"],
+                ["KNOWLEDGE", "Conhecimento da IA"],
+                ["CATALOG", "Catálogo cadastrado"],
+              ].map(([key, label]) => <label key={key}><input type="checkbox" checked={replicateSections.includes(key)} onChange={(event) => setReplicateSections((current) => event.target.checked ? Array.from(new Set([...current, key])) : current.filter((item) => item !== key))} /> {label}</label>)}
+            </div>
+          </div>
+          <aside className="master-replicate-warning"><b>Importante</b><span>Esta ação substitui somente as configurações selecionadas nas unidades de destino. Orçamentos, O.S., clientes, usuários e movimentações permanecem intactos.</span></aside>
+        </div>
+        <footer><button type="button" className="outline" disabled={saving} onClick={() => setReplicateOpen(false)}>Cancelar</button><button type="button" className="primary" disabled={saving || !replicateSourceStoreId || !replicateTargetStoreIds.length || !replicateSections.length} onClick={() => void replicateGroupSettings()}>{saving ? "Replicando..." : "Replicar configurações"}</button></footer>
+      </section>
+    </div>}
     {createOpen && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setCreateOpen(false); }}><section role="dialog" aria-modal="true" className="compact-modal master-company-modal master-company-modal-v1792"><header><div><small>NOVA EMPRESA</small><h2>Cadastrar cliente e contratação</h2></div><button type="button" disabled={saving} onClick={() => { if (!saving) setCreateOpen(false); }}>×</button></header>{renderModalBody(true)}<footer><button type="button" className="outline" disabled={saving} onClick={() => setCreateOpen(false)}>Cancelar</button><button type="button" className="primary" disabled={saving || !companyName.trim() || !storeName.trim()} onClick={() => void createCompany()}>{saving ? "Criando e ativando..." : "Criar empresa"}</button></footer></section></div>}
     {editOpen && selectedCompany && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setEditOpen(false); }}><section role="dialog" aria-modal="true" className="compact-modal master-company-modal master-company-modal-v1792"><header><div><small>EDITAR EMPRESA</small><h2>{selectedCompany.name}</h2></div><button type="button" disabled={saving} onClick={() => { if (!saving) setEditOpen(false); }}>×</button></header>{renderModalBody(false)}<footer><button type="button" className="outline" disabled={saving} onClick={() => setEditOpen(false)}>Cancelar</button><button type="button" className="primary" disabled={saving || !companyName.trim()} onClick={() => void saveCompany()}>{saving ? "Salvando alterações..." : "Salvar alterações"}</button></footer></section></div>}
   </div>;
@@ -6218,11 +7054,11 @@ function CompanySettingsModal({
 
   function setProfile(profile: CompanyProfile) {
     if (profile === "FULL") {
-      setCompanyDraft({ ...companyDraft, profile, modules: { APPOINTMENTS: true, CATALOG: true, INVENTORY: true, CHECKLIST: true, ORDERS: true, QUOTES: true, ASSISTANT: true, BI: true, MESSAGES: true } });
+      setCompanyDraft({ ...companyDraft, profile, modules: { APPOINTMENTS: true, CATALOG: true, INVENTORY: true, CHECKLIST: true, ORDERS: true, QUOTES: true, PARTS_ORDERS: false, ASSISTANT: true, BI: true, MESSAGES: true, BUDGET_IMPORT: false } });
       return;
     }
     if (profile === "QUOTE_ONLY") {
-      setCompanyDraft({ ...companyDraft, profile, modules: { APPOINTMENTS: false, CATALOG: true, INVENTORY: false, CHECKLIST: false, ORDERS: false, QUOTES: true, ASSISTANT: false, BI: false, MESSAGES: true } });
+      setCompanyDraft({ ...companyDraft, profile, modules: { APPOINTMENTS: false, CATALOG: true, INVENTORY: false, CHECKLIST: false, ORDERS: false, QUOTES: true, PARTS_ORDERS: false, ASSISTANT: false, BI: false, MESSAGES: true, BUDGET_IMPORT: false } });
       return;
     }
     setCompanyDraft({ ...companyDraft, profile });
@@ -6516,7 +7352,6 @@ function QuotesPage({
 
   return (
     <section className="module-list-page quotes-list-v179">
-      <div className="module-intro compact"><div><small>ORÇAMENTAÇÃO</small><h2>Gestão de orçamentos</h2><p>Acompanhe aprovação, retorno e comunicação em uma única lista.</p></div></div>
       <FilterToolbar
         search={search}
         onSearch={setSearch}
@@ -6609,18 +7444,127 @@ function QuoteMessageDrawer({ quote, companyName, currentUserName, deliveryMode,
   </aside></div>;
 }
 
+function BudgetImportModal({ context, onClose, onImport }: { context: BudgetImportContext; onClose: () => void; onImport: (items: DocumentLine[]) => void }) {
+  const [file, setFile] = useState<File | null>(null);
+  const [source, setSource] = useState("AUTO");
+  const [lines, setLines] = useState<ImportedBudgetLine[]>([]);
+  const [ignoredCount, setIgnoredCount] = useState(0);
+  const [processing, setProcessing] = useState(false);
+  const [error, setError] = useState("");
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    const close = (event: KeyboardEvent) => { if (event.key === "Escape" && !processing) onClose(); };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [onClose, processing]);
+
+  async function recognize() {
+    if (!file) return setError("Selecione um PDF ou uma imagem do orçamento.");
+    if (!context.accessToken) return setError("Sua sessão não está disponível. Entre novamente no Gerivo.");
+    setProcessing(true);
+    setError("");
+    try {
+      let dataUrl: string;
+      if (file.type.startsWith("image/")) {
+        const prepared = await preparePhoto(file);
+        dataUrl = prepared.dataUrl;
+      } else {
+        if (file.size > 4 * 1024 * 1024) throw new Error("O PDF deve ter no máximo 4 MB nesta versão.");
+        dataUrl = await fileToDataUrl(file);
+      }
+      const response = await fetch("/api/import-budget", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${context.accessToken}` },
+        body: JSON.stringify({ companyId: context.companyId, storeId: context.storeId, filename: file.name, mimeType: file.type, fileData: dataUrl, source }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || "Não foi possível reconhecer o orçamento.");
+      const recognized = Array.isArray(payload.items) ? payload.items : [];
+      setIgnoredCount(Math.max(0, Number(payload.ignoredCount) || 0));
+      setLines(recognized.map((item: any) => ({
+        id: uid(),
+        selected: true,
+        kind: item.kind === "SERVICO" ? "SERVICO" : "PECA",
+        code: String(item.code || "").trim(),
+        name: String(item.name || item.description || "").trim(),
+        category: String(item.category || (item.kind === "SERVICO" ? "Mão de obra" : "Peças")).trim(),
+        quantity: Math.max(0, Number(item.quantity) || 0),
+        unitPrice: Math.max(0, Number(item.unitPrice) || 0),
+        total: Math.max(0, Number(item.total) || 0),
+        confidence: Math.max(0, Math.min(1, Number(item.confidence) || 0)),
+        note: String(item.note || "").trim(),
+      })).filter((item: ImportedBudgetLine) => item.name && item.quantity > 0));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Não foi possível reconhecer o orçamento.");
+    } finally {
+      setProcessing(false);
+    }
+  }
+
+  function updateLine(id: string, patch: Partial<ImportedBudgetLine>) {
+    setLines((current) => current.map((line) => line.id === id ? { ...line, ...patch } : line));
+  }
+
+  function confirmImport() {
+    const selected = lines.filter((line) => line.selected && line.name.trim() && line.quantity > 0).map<DocumentLine>((line) => ({
+      id: uid(),
+      catalogItemId: null,
+      name: line.name.trim(),
+      category: line.category.trim() || (line.kind === "SERVICO" ? "Mão de obra" : "Peças"),
+      description: [line.code ? `Código ${line.code}` : "", line.note].filter(Boolean).join(" · "),
+      kind: line.kind,
+      quantity: line.quantity,
+      unitPrice: line.unitPrice || (line.quantity ? line.total / line.quantity : 0),
+    }));
+    if (!selected.length) return setError("Selecione ao menos um item reconhecido.");
+    onImport(selected);
+    onClose();
+  }
+
+  const selectedCount = lines.filter((line) => line.selected).length;
+  return <div className="modal-backdrop budget-import-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !processing) onClose(); }}>
+    <section className="compact-modal budget-import-modal">
+      <header><div><small>IMPORTAÇÃO DE ORÇAMENTO</small><h2>Mobato ou NBS</h2><p>O Gerivo importa somente peças e mão de obra. Cliente, veículo e placa permanecem os já selecionados.</p></div><button type="button" disabled={processing} onClick={onClose}>×</button></header>
+      <div className="budget-import-scroll">
+        <section className="budget-import-upload">
+          <div className="budget-import-source"><Field label="Origem do documento"><select value={source} onChange={(event) => setSource(event.target.value)}><option value="AUTO">Identificar automaticamente</option><option value="MOBATO">Mobato</option><option value="NBS">NBS</option></select></Field></div>
+          <button type="button" className="budget-file-picker" onClick={() => fileInputRef.current?.click()}><PremiumIcon name="file" size={24} /><span><strong>{file ? file.name : "Selecionar PDF ou imagem"}</strong><small>PDF, PNG, JPG ou WEBP · até 4 MB para PDF</small></span></button>
+          <input ref={fileInputRef} className="budget-import-file-input" type="file" accept="application/pdf,image/png,image/jpeg,image/webp" onChange={(event) => { setFile(event.target.files?.[0] || null); setLines([]); setIgnoredCount(0); setError(""); }} />
+          <div className="budget-import-rules"><span>✓ Quantidades decimais preservadas</span><span>✓ Linhas riscadas ignoradas</span><span>✓ Prévia obrigatória antes de adicionar</span></div>
+          <button type="button" className="primary" disabled={!file || processing} onClick={() => void recognize()}>{processing ? "Reconhecendo documento..." : "Reconhecer peças e mão de obra"}</button>
+        </section>
+        {error && <div className="budget-import-error">{error}</div>}
+        {lines.length > 0 && <section className="budget-import-preview"><header><div><small>PRÉVIA EDITÁVEL</small><h3>{lines.length} item(ns) reconhecido(s)</h3></div><div><span>{selectedCount} selecionado(s)</span>{ignoredCount > 0 && <span>{ignoredCount} riscado(s) ignorado(s)</span>}</div></header><div className="budget-import-lines">{lines.map((line, index) => <article key={line.id} className={!line.selected ? "disabled" : ""}>
+          <label className="budget-import-select"><input type="checkbox" checked={line.selected} onChange={(event) => updateLine(line.id, { selected: event.target.checked })} /><span>{index + 1}</span></label>
+          <label><span>Tipo</span><select value={line.kind} onChange={(event) => updateLine(line.id, { kind: event.target.value as "SERVICO" | "PECA" })}><option value="SERVICO">Mão de obra</option><option value="PECA">Peça</option></select></label>
+          <label className="budget-import-description"><span>Descrição</span><input value={line.name} onChange={(event) => updateLine(line.id, { name: event.target.value })} /></label>
+          <label><span>Categoria</span><input value={line.category} onChange={(event) => updateLine(line.id, { category: event.target.value })} /></label>
+          <label><span>Qtd./tempo</span><DecimalInput ariaLabel={`Quantidade do item importado ${index + 1}`} value={line.quantity} onChange={(quantity) => updateLine(line.id, { quantity })} /></label>
+          <label><span>Valor unitário</span><CurrencyInput ariaLabel={`Valor do item importado ${index + 1}`} value={line.unitPrice} onChange={(unitPrice) => updateLine(line.id, { unitPrice })} /></label>
+          <div className="budget-import-line-total"><span>Total</span><strong>{money(line.quantity * line.unitPrice)}</strong><small>{line.confidence >= .8 ? "Leitura alta" : line.confidence >= .55 ? "Revisar leitura" : "Baixa confiança"}</small></div>
+        </article>)}</div></section>}
+      </div>
+      <footer><button className="outline" type="button" disabled={processing} onClick={onClose}>Cancelar</button><button className="primary" type="button" disabled={!selectedCount || processing} onClick={confirmImport}>Adicionar {selectedCount || ""} ao orçamento</button></footer>
+    </section>
+  </div>;
+}
+
 function DocumentItemsEditor({
   items,
   catalog,
   catalogEnabled,
+  importContext,
   onChange,
 }: {
   items: DocumentLine[];
   catalog: CatalogItem[];
   catalogEnabled: boolean;
+  importContext?: BudgetImportContext;
   onChange: (items: DocumentLine[]) => void;
 }) {
   const [selectedCatalogId, setSelectedCatalogId] = useState("");
+  const [importOpen, setImportOpen] = useState(false);
   const activeCatalog = catalogEnabled ? catalog.filter((item) => item.active) : [];
 
   function addCatalogItem() {
@@ -6633,18 +7577,19 @@ function DocumentItemsEditor({
   function updateItem(id: string, patch: Partial<DocumentLine>) { onChange(items.map((item) => item.id === id ? { ...item, ...patch } : item)); }
 
   return <section className="document-items-panel document-items-v179">
-    <header><div><small>ITENS DO DOCUMENTO</small><h3>Serviços, peças e produtos</h3></div><div className={catalogEnabled ? "document-item-add" : "document-item-add no-catalog"}>{catalogEnabled && <><select value={selectedCatalogId} onChange={(event) => setSelectedCatalogId(event.target.value)}><option value="">Selecionar do catálogo</option>{activeCatalog.map((item) => <option key={item.id} value={item.id}>{item.name} · {money(item.price)}</option>)}</select><button className="outline" type="button" disabled={!selectedCatalogId} onClick={addCatalogItem}>Adicionar</button></>}<button className="primary" type="button" onClick={addCustomItem}>+ Item livre</button></div></header>
+    <header><div><small>ITENS DO DOCUMENTO</small><h3>Serviços, peças e produtos</h3></div><div className={catalogEnabled ? "document-item-add" : "document-item-add no-catalog"}>{catalogEnabled && <><select value={selectedCatalogId} onChange={(event) => setSelectedCatalogId(event.target.value)}><option value="">Selecionar do catálogo</option>{activeCatalog.map((item) => <option key={item.id} value={item.id}>{item.name} · {money(item.price)}</option>)}</select><button className="outline" type="button" disabled={!selectedCatalogId} onClick={addCatalogItem}>Adicionar</button></>}{importContext && <button className="outline budget-import-trigger" type="button" onClick={() => setImportOpen(true)}>Importar Mobato / NBS</button>}<button className="primary" type="button" onClick={addCustomItem}>+ Item livre</button></div></header>
     <div className="document-items-table">
       <div className="document-items-head"><span>Tipo</span><span>Descrição, categoria e detalhe</span><span>Qtd.</span><span>Valor unit.</span><span>Total</span><span /></div>
       {items.length === 0 ? <div className="document-items-empty">Nenhum item adicionado. Crie um item livre{catalogEnabled ? " ou selecione no catálogo" : ""}.</div> : items.map((item, index) => <article key={item.id} className="document-item-row document-item-card-mobile">
         <label className="item-kind-field"><span>Tipo</span><select value={item.kind} onChange={(event) => updateItem(item.id, { kind: event.target.value as CatalogKind })}><option value="SERVICO">Serviço</option><option value="PECA">Peça</option><option value="PRODUTO">Produto</option><option value="KIT">Kit</option><option value="MATERIAL">Material</option></select></label>
         <div className="document-item-description"><label><span>Descrição</span><input value={item.name} onChange={(event) => updateItem(item.id, { name: event.target.value })} placeholder="Descrição do item" /></label><div className="document-item-meta"><label><span>Categoria</span><input value={item.category} onChange={(event) => updateItem(item.id, { category: event.target.value })} placeholder="Categoria para agrupamento" /></label><label><span>Detalhe</span><input value={item.description} onChange={(event) => updateItem(item.id, { description: event.target.value })} placeholder="Detalhe ou observação" /></label></div></div>
-        <label className="item-quantity-field"><span>Qtd.</span><input inputMode="decimal" type="text" value={String(item.quantity).replace(".", ",")} onChange={(event) => updateItem(item.id, { quantity: Math.max(0, Number(event.target.value.replace(",", ".")) || 0) })} /></label>
+        <label className="item-quantity-field"><span>Qtd./tempo</span><DecimalInput ariaLabel={`Quantidade do item ${index + 1}`} value={item.quantity} onChange={(quantity) => updateItem(item.id, { quantity })} /></label>
         <label className="item-price-field"><span>Valor unitário</span><CurrencyInput ariaLabel={`Valor unitário do item ${index + 1}`} value={item.unitPrice} onChange={(unitPrice) => updateItem(item.id, { unitPrice })} /></label>
         <div className="item-total-field"><span>Total</span><strong>{money(lineTotal(item))}</strong></div>
         <button className="document-remove-item" type="button" title="Remover item" onClick={() => onChange(items.filter((current) => current.id !== item.id))}><PremiumIcon name="trash" size={16} /></button>
       </article>)}
     </div>
+    {importOpen && importContext && <BudgetImportModal context={importContext} onClose={() => setImportOpen(false)} onImport={(imported) => onChange([...items, ...imported])} />}
   </section>;
 }
 
@@ -6810,6 +7755,9 @@ function QuoteEditor({
   companyIdentity,
   customer,
   deliveryMode,
+  importContext,
+  assistantEnabled,
+  consultants,
   onChange,
   onBack,
   onSaved,
@@ -6821,6 +7769,9 @@ function QuoteEditor({
   companyIdentity: CompanyIdentity;
   customer: Customer | null;
   deliveryMode: QuoteDeliveryMode;
+  importContext?: BudgetImportContext;
+  assistantEnabled: boolean;
+  consultants: ConsultantOption[];
   onChange: (quote: Quote) => void;
   onBack: () => void;
   onSaved: () => void;
@@ -6831,7 +7782,7 @@ function QuoteEditor({
   const [messageOverride, setMessageOverride] = useState<string | null>(null);
   const [assistantOpen, setAssistantOpen] = useState(false);
   const message = messageOverride ?? generatedMessage;
-  const suggestions = buildQuoteConsultiveSuggestions({ ...quote, total });
+  const suggestions = assistantEnabled ? buildQuoteConsultiveSuggestions({ ...quote, total }) : [];
   useEffect(() => { setMessageOverride(null); setAssistantOpen(false); }, [quote.id]);
 
   function update(patch: Partial<Quote>) {
@@ -6854,11 +7805,11 @@ function QuoteEditor({
     <header className="document-editor-header quote-editor-header-v179"><div><small>ORÇAMENTO · {companyName}</small><h2>{quote.code}</h2><p>{quote.customer} · {quote.vehicle} · {quote.plate}</p></div><div className="quote-header-actions"><button className="outline" onClick={onBack}>← Lista</button><button className="outline" onClick={downloadQuote}>Baixar</button><button className="outline" onClick={printQuote}>Imprimir / PDF</button><button className="primary" onClick={onSaved}>Salvar</button></div></header>
     <section className="quote-overview-strip"><div><small>STATUS</small><strong>{quoteStatusLabel(quote.status)}</strong></div><div><small>ITENS</small><strong>{quote.items.filter((item) => item.name.trim()).length}</strong></div><div><small>SUBTOTAL</small><strong>{money(subtotal)}</strong></div><div className="quote-overview-total"><small>TOTAL FINAL</small><strong>{money(total)}</strong></div></section>
     <section className="document-editor-grid quote-editor-grid quote-editor-grid-v179">
-      <article className="document-editor-card quote-commercial-card"><header><div><small>CONDIÇÕES</small><h3>Condições comerciais</h3></div></header><div className="document-form-grid"><Field label="Status"><select value={quote.status} onChange={(event) => update({ status: event.target.value as QuoteStatus })}><QuoteStatusOptions /></select></Field><Field label="Validade"><div className="validity-field"><div className="input-suffix"><input type="number" min="0" value={quote.validityDays} onChange={(event) => update({ validityDays: Math.max(0, Number(event.target.value) || 0) })} /><span>dias</span></div><small>Use 0 para ocultar.</small></div></Field><Field label="Forma de pagamento"><select value={quote.paymentMethod} onChange={(event) => update({ paymentMethod: event.target.value as PaymentMethod })}><option value="PIX">Pix</option><option value="DEBITO">Débito</option><option value="CREDITO">Crédito</option><option value="DINHEIRO">Dinheiro</option><option value="OUTRO">Outro</option></select></Field>{quote.paymentMethod === "CREDITO" && <Field label="Parcelamento em até"><select value={quote.installments} onChange={(event) => update({ installments: Number(event.target.value) })}>{Array.from({ length: 12 }, (_, index) => index + 1).map((value) => <option key={value} value={value}>{value}x</option>)}</select></Field>}<Field label="Desconto em reais"><CurrencyInput value={quote.discountAmount} onChange={(discountAmount) => update({ discountAmount })} /></Field><Field label="Desconto %"><input inputMode="decimal" type="text" value={String(quote.discountPercent).replace(".", ",")} onChange={(event) => update({ discountPercent: Math.max(0, Math.min(100, Number(event.target.value.replace(",", ".")) || 0)) })} /></Field></div>{quote.status === "NAO_APROVADO" && <div className="quote-rejection-fields"><Field label="Motivo da não aprovação"><select value={quote.rejectionReason} onChange={(event) => update({ rejectionReason: event.target.value })}><option value="PRECO">Preço</option><option value="PRAZO">Prazo</option><option value="DESISTENCIA">Cliente desistiu</option><option value="OUTRO_LOCAL">Executado em outro local</option><option value="SEM_RETORNO">Sem retorno</option><option value="ADIADO">Serviço adiado</option><option value="OUTRO">Outro</option></select></Field><Field label="Observação"><textarea rows={2} value={quote.rejectionNotes} onChange={(event) => update({ rejectionNotes: event.target.value })} placeholder="Detalhe opcional para o histórico." /></Field></div>}<label className="quote-combine-toggle"><input type="checkbox" checked={quote.combinePartsLabor} onChange={(event) => update({ combinePartsLabor: event.target.checked })} /><span><strong>Unir peça + mão de obra por categoria</strong><small>Somente itens da mesma categoria são agrupados.</small></span></label></article>
+      <article className="document-editor-card quote-commercial-card"><header><div><small>CONDIÇÕES</small><h3>Condições comerciais</h3></div></header><div className="document-form-grid"><Field label="Status"><select value={quote.status} onChange={(event) => update({ status: event.target.value as QuoteStatus })}><QuoteStatusOptions /></select></Field><Field label="Consultor de Serviços"><select value={quote.consultantUserId || ""} onChange={(event) => { const selected = consultants.find((item) => item.id === event.target.value); update({ consultantUserId: selected?.id || "", consultantNameSnapshot: selected?.name || "", responsible: selected?.name || quote.responsible }); }}><option value="">Selecione o consultor</option>{consultants.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field><Field label="Validade"><div className="validity-field"><div className="input-suffix"><input type="number" min="0" value={quote.validityDays} onChange={(event) => update({ validityDays: Math.max(0, Number(event.target.value) || 0) })} /><span>dias</span></div><small>Use 0 para ocultar.</small></div></Field><Field label="Forma de pagamento"><select value={quote.paymentMethod} onChange={(event) => update({ paymentMethod: event.target.value as PaymentMethod })}><option value="PIX">Pix</option><option value="DEBITO">Débito</option><option value="CREDITO">Crédito</option><option value="DINHEIRO">Dinheiro</option><option value="OUTRO">Outro</option></select></Field>{quote.paymentMethod === "CREDITO" && <Field label="Parcelamento em até"><select value={quote.installments} onChange={(event) => update({ installments: Number(event.target.value) })}>{Array.from({ length: 12 }, (_, index) => index + 1).map((value) => <option key={value} value={value}>{value}x</option>)}</select></Field>}<Field label="Desconto em reais"><CurrencyInput value={quote.discountAmount} onChange={(discountAmount) => update({ discountAmount })} /></Field><Field label="Desconto %"><input inputMode="decimal" type="text" value={String(quote.discountPercent).replace(".", ",")} onChange={(event) => update({ discountPercent: Math.max(0, Math.min(100, Number(event.target.value.replace(",", ".")) || 0)) })} /></Field></div>{quote.status === "NAO_APROVADO" && <div className="quote-rejection-fields"><Field label="Motivo da não aprovação"><select value={quote.rejectionReason} onChange={(event) => update({ rejectionReason: event.target.value })}><option value="PRECO">Preço</option><option value="PRAZO">Prazo</option><option value="DESISTENCIA">Cliente desistiu</option><option value="OUTRO_LOCAL">Executado em outro local</option><option value="SEM_RETORNO">Sem retorno</option><option value="ADIADO">Serviço adiado</option><option value="OUTRO">Outro</option></select></Field><Field label="Observação"><textarea rows={2} value={quote.rejectionNotes} onChange={(event) => update({ rejectionNotes: event.target.value })} placeholder="Detalhe opcional para o histórico." /></Field></div>}<label className="quote-combine-toggle"><input type="checkbox" checked={quote.combinePartsLabor} onChange={(event) => update({ combinePartsLabor: event.target.checked })} /><span><strong>Unir peça + mão de obra por categoria</strong><small>Somente itens da mesma categoria são agrupados.</small></span></label></article>
       <article className="document-editor-card quote-message-card"><div className="message-card-heading"><div><small>COMUNICAÇÃO</small><h3>Mensagem ao cliente</h3><span>Edite antes de copiar ou abrir no WhatsApp.</span></div><select value={quote.messageTemplate} onChange={(event) => changeTemplate(event.target.value as QuoteMessageTemplate)}>{(["PROFISSIONAL", "DIRETA", "CONSULTIVA", "PREVENTIVA", "AMIGAVEL", "FORMAL", "COMERCIAL", "CURTA"] as QuoteMessageTemplate[]).map((template) => <option key={template} value={template}>{quoteMessageTemplateLabel(template)}</option>)}</select></div><textarea rows={12} value={message} onChange={(event) => setMessageOverride(event.target.value)} /><div className="quote-message-actions"><span>Padrão: {quoteDeliveryLabel(deliveryMode)}</span><button className="outline" type="button" onClick={() => setMessageOverride(null)}>Restaurar</button>{deliveryMode !== "LINK" && <button className="outline" type="button" onClick={copyMessage}>Copiar</button>}<button className="primary" type="button" onClick={shareWhatsApp}>WhatsApp</button></div></article>
     </section>
-    <section className="quote-ai-assistant quote-ai-professional"><div className="quote-ai-heading"><div className="quote-ai-icon">✦</div><div><small>ASSISTENTE CONSULTIVO</small><h3>Revisão da proposta</h3><p>Verifique clareza e condições antes do envio.</p></div><div><button className="outline" type="button" onClick={() => setAssistantOpen((current) => !current)}>{assistantOpen ? "Ocultar" : "Analisar"}</button><button className="primary" type="button" onClick={applyConsultiveImprovement}>Melhorar mensagem</button></div></div>{assistantOpen && <div className="quote-ai-suggestions">{suggestions.map((suggestion, index) => <div key={`${index}-${suggestion}`}><span>{index + 1}</span><p>{suggestion}</p></div>)}</div>}</section>
-    <DocumentItemsEditor items={quote.items} catalog={catalog} catalogEnabled={catalogEnabled} onChange={(items) => update({ items })} />
+    {assistantEnabled && <section className="quote-ai-assistant quote-ai-professional"><div className="quote-ai-heading"><div className="quote-ai-icon">✦</div><div><small>ASSISTENTE CONSULTIVO</small><h3>Revisão da proposta</h3><p>Verifique clareza e condições antes do envio.</p></div><div><button className="outline" type="button" onClick={() => setAssistantOpen((current) => !current)}>{assistantOpen ? "Ocultar" : "Analisar"}</button><button className="primary" type="button" onClick={applyConsultiveImprovement}>Melhorar mensagem</button></div></div>{assistantOpen && <div className="quote-ai-suggestions">{suggestions.map((suggestion, index) => <div key={`${index}-${suggestion}`}><span>{index + 1}</span><p>{suggestion}</p></div>)}</div>}</section>}
+    <DocumentItemsEditor items={quote.items} catalog={catalog} catalogEnabled={catalogEnabled} importContext={importContext} onChange={(items) => update({ items })} />
     <section className="quote-summary-grid quote-summary-v179"><Field label="Observações da proposta"><textarea rows={4} value={quote.notes} onChange={(event) => update({ notes: event.target.value })} placeholder="Prazo, garantia, disponibilidade ou informações adicionais." /></Field><aside><span>Subtotal</span><b>{money(subtotal)}</b>{Math.max(0, subtotal - total) > 0 && <><span>Descontos</span><b>- {money(Math.max(0, subtotal - total))}</b></>}<strong>Total final</strong><em>{money(total)}</em></aside></section>
   </section>;
 }
@@ -6899,8 +7850,8 @@ function StartFlowWizard({
     return () => window.removeEventListener("keydown", close);
   }, [onClose]);
 
-  const registry = useMemo(() => {
-    const records = customers.filter((customer) => customer.storeId === currentStoreId).flatMap((customer) => {
+  const registry: Array<{ customer: Customer; vehicle: Vehicle | null }> = useMemo<Array<{ customer: Customer; vehicle: Vehicle | null }>>(() => {
+    const records: Array<{ customer: Customer; vehicle: Vehicle | null }> = customers.filter((customer) => customer.storeId === currentStoreId).flatMap((customer) => {
       const linkedVehicles = vehicles.filter((vehicle) => vehicle.storeId === currentStoreId && vehicle.customerId === customer.id);
       return linkedVehicles.length ? linkedVehicles.map((vehicle) => ({ customer, vehicle })) : [{ customer, vehicle: null as Vehicle | null }];
     });

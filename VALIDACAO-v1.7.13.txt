@@ -1,0 +1,6 @@
+Gerivo v1.7.13
+
+- Verificação sintática TypeScript/TSX: aprovada por transpileModule.
+- npm install não concluído no ambiente de geração: pacote zod-validation-error retornou 404 no registro interno.
+- npm run build deve ser executado no ambiente do projeto antes da publicação.
+- Migration 011 substituída pela versão corrigida do hotfix.

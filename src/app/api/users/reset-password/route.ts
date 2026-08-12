@@ -20,23 +20,31 @@ export async function POST(request: Request) {
     const admin = getSupabaseAdminClient();
     const { data: authData, error: authError } = await admin.auth.getUser(token);
     if (authError || !authData.user) return NextResponse.json({ error: "Sessão expirada." }, { status: 401 });
-    const [{ data: requesterProfile }, { data: requesterMember }, { data: requesterStores }, { data: targetProfile }, { data: targetMember }, { data: targetStores }] = await Promise.all([
+    const [{ data: requesterProfile }, { data: requesterMember }, { data: requesterStores }, { data: anchorCompany }] = await Promise.all([
       admin.from("profiles").select("platform_role, active").eq("id", authData.user.id).maybeSingle(),
       admin.from("company_members").select("role, active").eq("company_id", companyId).eq("user_id", authData.user.id).maybeSingle(),
       admin.from("store_members").select("store_id").eq("company_id", companyId).eq("user_id", authData.user.id).eq("active", true),
-      admin.from("profiles").select("recovery_email, email, platform_role, active").eq("id", userId).maybeSingle(),
-      admin.from("company_members").select("role, active").eq("company_id", companyId).eq("user_id", userId).maybeSingle(),
-      admin.from("store_members").select("store_id").eq("company_id", companyId).eq("user_id", userId).eq("active", true),
+      admin.from("companies").select("id, group_id").eq("id", companyId).maybeSingle(),
     ]);
     const platformMaster = requesterProfile?.platform_role === "MASTER" && requesterProfile.active;
     const requesterRole = platformMaster ? "MASTER" : requesterMember?.active ? String(requesterMember.role || "MEMBER") : "MEMBER";
     if (!platformMaster && !["ADMIN", "MANAGER"].includes(requesterRole)) return NextResponse.json({ error: "Sem permissão para solicitar redefinição." }, { status: 403 });
-    if (!targetProfile || !targetMember) return NextResponse.json({ error: "Usuário não encontrado na empresa." }, { status: 404 });
+
+    const allowedCompanyIds: string[] = platformMaster && anchorCompany?.group_id
+      ? ((await admin.from("companies").select("id").eq("group_id", anchorCompany.group_id)).data || []).map((item: any) => String(item.id))
+      : [companyId];
+    const [{ data: targetProfile }, { data: targetMembers }, { data: targetStores }] = await Promise.all([
+      admin.from("profiles").select("recovery_email, email, platform_role, active").eq("id", userId).maybeSingle(),
+      admin.from("company_members").select("company_id, role, active").in("company_id", allowedCompanyIds).eq("user_id", userId),
+      admin.from("store_members").select("company_id, store_id").in("company_id", allowedCompanyIds).eq("user_id", userId).eq("active", true),
+    ]);
+    const currentTargetMember = (targetMembers || []).find((item: any) => String(item.company_id) === companyId) || (targetMembers || [])[0];
+    if (!targetProfile || !currentTargetMember) return NextResponse.json({ error: "Usuário não encontrado no escopo autorizado." }, { status: 404 });
     if (!platformMaster && targetProfile.platform_role === "MASTER") return NextResponse.json({ error: "Essa credencial é reservada ao MASTER Gerivo." }, { status: 403 });
     if (requesterRole === "MANAGER") {
       const requesterIds = new Set((requesterStores || []).map((item: any) => String(item.store_id)));
-      const sharesStore = (targetStores || []).some((item: any) => requesterIds.has(String(item.store_id)));
-      if (!sharesStore || String(targetMember.role) !== "MEMBER") return NextResponse.json({ error: "Gestores só podem redefinir usuários da própria equipe." }, { status: 403 });
+      const sharesStore = (targetStores || []).some((item: any) => String(item.company_id) === companyId && requesterIds.has(String(item.store_id)));
+      if (!sharesStore || String(currentTargetMember.role) !== "MEMBER") return NextResponse.json({ error: "Gestores só podem redefinir usuários da própria equipe." }, { status: 403 });
     }
     const email = String(targetProfile.recovery_email || targetProfile.email || "").toLowerCase();
     if (!email.includes("@")) return NextResponse.json({ error: "O usuário não possui e-mail de recuperação válido." }, { status: 400 });
@@ -47,7 +55,7 @@ export async function POST(request: Request) {
     const client = createClient(url, anonKey, { auth: { persistSession: false, autoRefreshToken: false } });
     const { error } = await client.auth.resetPasswordForEmail(email, { redirectTo });
     if (error) return NextResponse.json({ error: error.message }, { status: 400 });
-    await admin.from("audit_logs").insert({ company_id: companyId, user_id: authData.user.id, action: "PASSWORD_RESET_REQUESTED", entity: "profile", entity_id: userId, new_value: { email } });
+    await admin.from("audit_logs").insert({ company_id: currentTargetMember.company_id || companyId, user_id: authData.user.id, action: "PASSWORD_RESET_REQUESTED", entity: "profile", entity_id: userId, new_value: { email } });
     return NextResponse.json({ success: true, email });
   } catch (error) {
     console.error("Gerivo reset password:", error);

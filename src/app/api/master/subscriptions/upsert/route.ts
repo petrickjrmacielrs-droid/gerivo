@@ -5,7 +5,7 @@ export const runtime = "nodejs";
 
 const ALLOWED_STATUS = new Set(["DRAFT", "AWAITING_ACTIVATION", "ACTIVE", "GRACE", "READ_ONLY", "SUSPENDED", "CANCELED", "EXPIRED", "DEMO"]);
 const ALLOWED_CYCLES = new Set(["MONTHLY", "QUARTERLY", "SEMIANNUAL", "ANNUAL", "CUSTOM"]);
-const MODULE_KEYS = ["APPOINTMENTS", "CATALOG", "INVENTORY", "CHECKLIST", "ORDERS", "QUOTES", "ASSISTANT", "BI", "MESSAGES"];
+const MODULE_KEYS = ["APPOINTMENTS", "CATALOG", "INVENTORY", "CHECKLIST", "ORDERS", "QUOTES", "PARTS_ORDERS", "ASSISTANT", "BI", "MESSAGES", "BUDGET_IMPORT"];
 
 function cleanModules(value: unknown) {
   const input = value && typeof value === "object" ? value as Record<string, unknown> : {};

@@ -1,0 +1,15 @@
+GERIVO v1.7.9 — HOTFIX 1
+
+Correções:
+1. Corrigida a propriedade obrigatória `stores` no componente ManagementHub, que interrompia o `npm run build` durante a verificação TypeScript.
+2. Corrigidas chaves duplicadas no painel inicial quando havia mais de um documento com o mesmo código.
+3. Adicionada normalização de O.S. e orçamentos duplicados por código, preservando o registro mais recentemente atualizado.
+
+Banco de dados:
+- Nenhum SQL novo é necessário.
+
+Atualização rápida:
+- Substitua `src/app/page.tsx` pelo arquivo desta versão.
+- Opcionalmente substitua `package.json` e `package-lock.json` para registrar a versão do hotfix.
+- Apague `.next`.
+- Execute `npm run build` novamente.

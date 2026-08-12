@@ -1,34 +1,48 @@
-# Gerivo v1.7.9
+# Gerivo v1.7.13.2
 
-Plataforma white-label de gestão operacional, comercial e inteligência para empresas.
+Revisão visual das telas de Orçamentos, Pedidos de peças, Gerivo BI e Gerivo MASTER. A versão mantém o módulo opcional de Pedidos de peças e incorpora a migration 011 corrigida.
 
-## Requisitos
+# Gerivo v1.7.11
 
-- Node.js compatível com Next.js 16
-- Projeto Supabase configurado
-- Variáveis em `.env.local` no ambiente local ou na Vercel
+Plataforma white-label de gestão operacional e comercial.
+
+## Atualização
+
+Consulte `PASSO_A_PASSO_v1.7.11.txt`.
+
+## Migration desta versão
+
+```text
+supabase/migrations/010_v1711_groups_access_importer.sql
+```
+
+## Importador Mobato/NBS
+
+É um módulo adicional. A migration libera inicialmente o recurso somente para empresas IESA já cadastradas. Para outra empresa, o MASTER precisa editar a contratação, selecionar Plano personalizado e ativar `Importador Mobato / NBS`.
+
+O reconhecimento de PDF/imagem também exige no servidor:
 
 ```env
-NEXT_PUBLIC_SUPABASE_URL=
-NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=
-SUPABASE_SECRET_KEY=
-
-# Opcional
 OPENAI_API_KEY=
-OPENAI_MODEL=gpt-5-mini
+OPENAI_IMPORT_MODEL=gpt-5-mini
 ```
 
-## Instalação
+## Exclusão definitiva
 
-```bash
-npm install
-npm run build
-npm run dev
-```
+A exclusão de empresa ou grupo exige confirmação pelo nome exato e está disponível somente para o MASTER. Use primeiro em registros de teste.
 
-## Banco
 
-- Quem já instalou a v1.7.8 não precisa executar novo SQL.
-- Quem está atualizando diretamente da v1.7.6 deve executar `SQL_ATUALIZAR_v1.7.6_PARA_v1.7.9.sql` uma única vez.
 
-Leia `PASSO_A_PASSO_ATUALIZAR_GERIVO_v1.7.9.txt` antes de publicar.
+## Hotfix v1.7.13.2
+
+- Corrige a leitura local de PDFs Mobato/NBS usando extração tabular antes do parser textual.
+- Melhora o reconhecimento de serviços e peças com códigos como REVN, PCT e BRPRT.
+- Mantém quantidades/tempos decimais na importação.
+- Oculta integralmente o Assistente Consultivo dentro do orçamento quando o módulo ASSISTANT estiver desativado na empresa.
+- Não exige SQL novo.
+
+Consulte `CHANGELOG-v1.7.13.2.md`.
+
+## Hotfix v1.7.13.1
+
+Consulte `CHANGELOG-v1.7.13.1.md` e execute `supabase/migrations/012_v17131_user_management_repair.sql`.

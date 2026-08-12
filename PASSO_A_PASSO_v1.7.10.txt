@@ -1,0 +1,17 @@
+GERIVO v1.7.10 — ATUALIZAÇÃO
+
+1. Faça backup da pasta atual e preserve .env.local e .git.
+2. Substitua os arquivos pelo pacote da v1.7.10.
+3. Apague as pastas .next e node_modules.
+4. Execute npm install.
+5. Execute npm run build.
+6. Execute npm run dev e teste localmente.
+7. Faça git add ., git commit e git push.
+
+BANCO DE DADOS
+Não há SQL novo para esta versão.
+
+IMPORTAÇÃO MOBATO/NBS
+A função aparece dentro da edição de orçamento, no bloco Itens do documento.
+Para reconhecer PDF ou imagem automaticamente, configure OPENAI_API_KEY no servidor.
+A prévia deve sempre ser revisada antes de adicionar os itens.
