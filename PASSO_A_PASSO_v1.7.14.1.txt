@@ -1,0 +1,16 @@
+GERIVO v1.7.14.1 — INSTALAÇÃO
+
+1. Faça backup da pasta atual do projeto.
+2. Preserve o arquivo .env.local e a pasta .git.
+3. Extraia o pacote de atualização sobre C:\Projetos\mecflow.
+4. No Supabase SQL Editor, execute uma única vez:
+   supabase/migrations/013_v17141_parts_orders_workflow.sql
+5. No terminal:
+   cd C:\Projetos\mecflow
+   rmdir /s /q .next
+   npm install
+   npm run build
+   npm run dev
+6. Teste Pedidos de peças e as configurações do módulo antes do push.
+
+A migration 013 apenas adiciona a configuração dos campos do módulo por unidade. Não altera pedidos existentes.

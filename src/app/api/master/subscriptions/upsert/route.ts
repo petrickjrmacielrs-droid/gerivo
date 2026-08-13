@@ -116,13 +116,21 @@ export async function POST(request: Request) {
     const { data: subscription, error: subscriptionError } = await admin.from("company_subscriptions").insert(payload).select("id").single();
     if (subscriptionError || !subscription) throw new Error(subscriptionError?.message || "Não foi possível salvar a contratação.");
 
-    const companyIds = company.group_id
-      ? (await admin.from("companies").select("id").eq("group_id", company.group_id)).data?.map((item: any) => item.id) || [companyId]
-      : [companyId];
-    await admin.from("companies").update({ status, active: isEnabled, updated_at: new Date().toISOString() }).in("id", companyIds);
-    await admin.from("stores").update({ active: isEnabled, updated_at: new Date().toISOString() }).in("company_id", companyIds);
-    await admin.from("store_settings").update({ modules: finalModules, updated_by: userId, updated_at: new Date().toISOString() }).in("company_id", companyIds);
-    if (company.group_id) await admin.from("business_groups").update({ status, active: isEnabled, updated_at: new Date().toISOString() }).eq("id", company.group_id);
+    // Contratação é por empresa/CNPJ. Outras empresas do mesmo grupo só recebem
+    // módulos, limites ou configurações quando o MASTER escolhe explicitamente replicar.
+    await admin.from("companies").update({ status, active: isEnabled, updated_at: new Date().toISOString() }).eq("id", companyId);
+    await admin.from("stores").update({ active: isEnabled, updated_at: new Date().toISOString() }).eq("company_id", companyId);
+    await admin.from("store_settings").update({ modules: finalModules, updated_by: userId, updated_at: new Date().toISOString() }).eq("company_id", companyId);
+
+    if (company.group_id) {
+      const { data: groupCompanies } = await admin.from("companies").select("active, status").eq("group_id", company.group_id);
+      const groupActive = (groupCompanies || []).some((item: any) => Boolean(item.active));
+      await admin.from("business_groups").update({
+        active: groupActive,
+        status: groupActive ? "ACTIVE" : status,
+        updated_at: new Date().toISOString(),
+      }).eq("id", company.group_id);
+    }
 
     await admin.from("company_subscription_history").insert({ company_id: companyId, subscription_id: subscription.id, action: previous ? "CONTRACT_CHANGED" : "CONTRACT_CREATED", old_value: previous || null, new_value: payload, justification, changed_by: userId });
     await admin.from("audit_logs").insert({ company_id: companyId, user_id: userId, action: "COMPANY_CONTRACT_SAVED", entity: "company_subscription", entity_id: subscription.id, old_value: previous || null, new_value: payload });

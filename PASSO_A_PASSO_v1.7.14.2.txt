@@ -1,0 +1,20 @@
+GERIVO v1.7.14.2 — ATUALIZAÇÃO
+
+Base esperada: v1.7.14.1
+
+1. Preserve .env.local e .git.
+2. Substitua os arquivos da atualização no projeto.
+3. Apague a pasta .next.
+4. Execute npm install.
+5. Execute npm run build.
+6. Execute npm run dev e teste Pedidos de peças.
+
+NÃO HÁ SQL NOVO NESTA VERSÃO.
+
+TESTE PRINCIPAL
+- Abra um pedido já salvo.
+- Clique em Editar pedido.
+- Clique em + Adicionar peça.
+- Preencha código, descrição, quantidade e previsão.
+- Salve.
+- Confirme que a nova peça aparece no acompanhamento e que o histórico registrou a inclusão.

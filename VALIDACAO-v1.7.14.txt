@@ -1,0 +1,6 @@
+GERIVO v1.7.14 — VALIDAÇÃO TÉCNICA
+
+- Os arquivos TypeScript/TSX alterados foram processados isoladamente pelo compilador TypeScript 5.8.3 via transpileModule, sem erros de sintaxe/parser.
+- O tsc --noEmit do projeto foi iniciado, mas o ambiente de empacotamento não possui node_modules. Os diagnósticos restantes são de módulos/tipos ausentes (Next, React, Supabase, Node e bibliotecas de PDF), não de sintaxe dos arquivos modificados.
+- Por isso, o npm run build completo deve ser executado no ambiente local antes do deploy.
+- Não há migration SQL nova na v1.7.14.

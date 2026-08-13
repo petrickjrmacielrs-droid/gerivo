@@ -26,7 +26,7 @@ type Page =
   | "catalog"
   | "inventory"
   | "master";
-type SettingsTab = "IDENTITY" | "MODULES" | "CHECKLIST" | "QUOTES" | "PRICING";
+type SettingsTab = "IDENTITY" | "MODULES" | "CHECKLIST" | "QUOTES" | "PRICING" | "PARTS_ORDERS";
 type IconName =
   | "home"
   | "clipboard"
@@ -376,6 +376,7 @@ type CompanySettings = {
   quoteDeliveryMode: QuoteDeliveryMode;
   quoteMessageTemplate: QuoteMessageTemplate;
   generalMargin: number;
+  partOrderSettings: PartOrderSettings;
 };
 type ServiceOrder = {
   id: string;
@@ -431,7 +432,10 @@ type Quote = {
   items: DocumentLine[];
 };
 type PartOrderType = "NORMAL" | "PVI" | "TRANSFERENCIA";
-type PartOrderBusinessType = "OFICINA" | "VENDA" | "GARANTIA" | "INTERNA" | "BALCAO";
+type PartOrderBusinessType = "CLIENTE" | "GARANTIA" | "INTERNA";
+type PartOrderOptionalField = "contact" | "plate" | "quoteNumber" | "productive";
+type PartOrderFieldRule = { enabled: boolean; required: boolean };
+type PartOrderSettings = { fields: Record<PartOrderOptionalField, PartOrderFieldRule> };
 type PartOrderItemStatus = "PENDENTE" | "AGENDADO" | "RESERVADO" | "BO" | "RECEBIDO" | "ENTREGUE" | "CANCELADO";
 type PartOrderItem = {
   id: string;
@@ -458,6 +462,7 @@ type PartOrder = {
   customerId: string | null;
   customer: string;
   contact: string;
+  plate: string;
   orderNumber: string;
   quoteNumber: string;
   orderType: PartOrderType;
@@ -1083,6 +1088,28 @@ function seedCompanyIdentity(_storeId: string): CompanyIdentity {
   return { displayName: "Minha empresa", logo: "", sidebarColor: "#0B1F3A", selectionColor: "#C89B3C" };
 }
 
+function defaultPartOrderSettings(): PartOrderSettings {
+  return {
+    fields: {
+      contact: { enabled: true, required: false },
+      plate: { enabled: false, required: false },
+      quoteNumber: { enabled: true, required: false },
+      productive: { enabled: true, required: false },
+    },
+  };
+}
+
+function normalizePartOrderSettings(value: any): PartOrderSettings {
+  const defaults = defaultPartOrderSettings();
+  const result = JSON.parse(JSON.stringify(defaults)) as PartOrderSettings;
+  (Object.keys(result.fields) as PartOrderOptionalField[]).forEach((key) => {
+    const source = value?.fields?.[key];
+    if (!source) return;
+    result.fields[key] = { enabled: source.enabled !== false, required: source.enabled !== false && Boolean(source.required) };
+  });
+  return result;
+}
+
 function seedCompanySettings(segment = "OUTRO"): CompanySettings {
   const key = segment.toUpperCase();
   const modules: Record<CompanyModule, boolean> = {
@@ -1104,6 +1131,7 @@ function seedCompanySettings(segment = "OUTRO"): CompanySettings {
     quoteDeliveryMode: "BOTH",
     quoteMessageTemplate: "PROFISSIONAL",
     generalMargin: 35,
+    partOrderSettings: defaultPartOrderSettings(),
   };
 }
 
@@ -1409,6 +1437,7 @@ function normalizeStoreData(parsed: Partial<StoreData>, storeId: string): StoreD
         quoteDeliveryMode: parsed.companySettings.quoteDeliveryMode ?? "BOTH",
         quoteMessageTemplate: parsed.companySettings.quoteMessageTemplate ?? "PROFISSIONAL",
         generalMargin: Math.max(0, Number(parsed.companySettings.generalMargin) || 35),
+        partOrderSettings: normalizePartOrderSettings(parsed.companySettings.partOrderSettings),
       }
     : defaultCompanySettings;
   const defaultIdentity = seedCompanyIdentity(storeId);
@@ -1620,10 +1649,11 @@ function normalizeStoreData(parsed: Partial<StoreData>, storeId: string): StoreD
     customerId: order.customerId ?? null,
     customer: order.customer || "Cliente não informado",
     contact: order.contact || "",
+    plate: String(order.plate || "").toUpperCase(),
     orderNumber: order.orderNumber || "",
     quoteNumber: order.quoteNumber || "",
     orderType: (["NORMAL", "PVI", "TRANSFERENCIA"].includes(order.orderType) ? order.orderType : "NORMAL") as PartOrderType,
-    businessType: (["OFICINA", "VENDA", "GARANTIA", "INTERNA", "BALCAO"].includes(order.businessType) ? order.businessType : "OFICINA") as PartOrderBusinessType,
+    businessType: (order.businessType === "GARANTIA" ? "GARANTIA" : order.businessType === "INTERNA" ? "INTERNA" : "CLIENTE") as PartOrderBusinessType,
     orderedAt: order.orderedAt || new Date().toISOString().slice(0, 10),
     responsible: order.responsible || "",
     productive: order.productive || "",
@@ -2359,8 +2389,9 @@ export default function Home() {
         });
         if (!masterStores.length) {
           setStores([]);
-          setNeedsOnboarding(true);
-          setReady(false);
+          setNeedsOnboarding(false);
+          setPage("master");
+          setReady(true);
           return;
         }
         setStores(masterStores);
@@ -2370,6 +2401,8 @@ export default function Home() {
         setAuthStage(`Abrindo ${selected.companyName}...`);
         await withClientTimeout(activateStore(selected, false, true), 5500, "A empresa demorou demais para abrir. Tente novamente.");
         if (sequence !== accessLoadSequenceRef.current) return;
+        // O MASTER entra primeiro na Central Gerivo, separada da identidade visual de qualquer cliente.
+        setPage("master");
         setReady(true);
         return;
       }
@@ -2501,7 +2534,7 @@ export default function Home() {
   async function loadCloudSettings(targetStore: Store, localData: StoreData) {
     const settingsResult: any = await withClientTimeout<any>(
       supabase.from("store_settings")
-        .select("display_name, logo_value, sidebar_color, selection_color, company_profile, modules, quote_delivery_mode, quote_message_template, checklist_name, checklist_enabled_keys, general_margin")
+        .select("display_name, logo_value, sidebar_color, selection_color, company_profile, modules, quote_delivery_mode, quote_message_template, checklist_name, checklist_enabled_keys, general_margin, parts_order_settings")
         .eq("store_id", targetStore.id)
         .maybeSingle(),
       4200,
@@ -2528,6 +2561,7 @@ export default function Home() {
         quoteDeliveryMode: settings.quote_delivery_mode || localData.companySettings.quoteDeliveryMode,
         quoteMessageTemplate: settings.quote_message_template || localData.companySettings.quoteMessageTemplate,
         generalMargin: Math.max(0, Number(settings.general_margin) || localData.companySettings.generalMargin),
+        partOrderSettings: normalizePartOrderSettings(settings.parts_order_settings || localData.companySettings.partOrderSettings),
       },
       checklistSettings: {
         ...localData.checklistSettings,
@@ -2613,6 +2647,7 @@ export default function Home() {
       checklist_name: checklistSettings.name,
       checklist_enabled_keys: checklistSettings.enabledItemKeys,
       general_margin: companySettings.generalMargin,
+      parts_order_settings: companySettings.partOrderSettings,
       updated_by: session.user.id,
       updated_at: new Date().toISOString(),
     };
@@ -3101,7 +3136,50 @@ export default function Home() {
     if (session?.user?.id) await loadAccessContext(session.user.id);
   }} onLogout={logout} />;
   if (needsOnboarding) return platformRole === "MASTER" ? <CompanyOnboarding onSubmit={bootstrapCompany} onLogout={logout} error={authError} /> : <NoAccess onLogout={logout} />;
-  if (!ready || !stores.length) return <EnvironmentRecovery error={authError || "Não foi possível terminar de carregar seu ambiente."} onRetry={() => session?.user && loadAccessContext(session.user.id)} onLogout={logout} />;
+  if (!ready || (!stores.length && platformRole !== "MASTER")) return <EnvironmentRecovery error={authError || "Não foi possível terminar de carregar seu ambiente."} onRetry={() => session?.user && loadAccessContext(session.user.id)} onLogout={logout} />;
+
+  if (page === "master" && platformRole === "MASTER") {
+    return (
+      <main className="master-control-shell">
+        <aside className="master-control-sidebar">
+          <div className="master-control-brand">
+            <img src="/gerivo-logo-light.png" alt="Gerivo" />
+            <span>CONTROL CENTER</span>
+          </div>
+          <nav>
+            <button type="button" className="active"><PremiumIcon name="shield" size={18} /><span>Central de empresas</span></button>
+            <button type="button" onClick={() => window.dispatchEvent(new CustomEvent("gerivo:master-open-plans"))}><PremiumIcon name="layers" size={18} /><span>Planos e módulos</span></button>
+            <button type="button" disabled={!stores.length} onClick={() => { if (stores.length) void changeStore(storeId).then(() => setPage("dashboard")); }}><PremiumIcon name="store" size={18} /><span>Abrir operação atual</span></button>
+          </nav>
+          <div className="master-control-sidebar-foot">
+            <div><b>{userProfile.preferredName || "Gerivo Owner"}</b><small>MASTER da plataforma</small></div>
+            <button type="button" onClick={() => void logout()}><PremiumIcon name="logout" size={17} /> Sair</button>
+          </div>
+        </aside>
+        <section className="master-control-workspace">
+          <header className="master-control-topbar">
+            <div><small>GERIVO / MASTER</small><h1>Painel de controle</h1></div>
+            <div className="master-control-top-actions">
+              <span><i /> Plataforma online</span>
+              <button type="button" disabled={!stores.length} onClick={() => { if (stores.length) void changeStore(storeId).then(() => setPage("dashboard")); }}>Entrar na operação</button>
+            </div>
+          </header>
+          <div className="master-control-content">
+            <MasterCommercialPage
+              stores={stores}
+              currentStore={brandedStore}
+              sessionAccessToken={session?.access_token || ""}
+              onCreateCompany={(input) => bootstrapCompany(input.companyName, input.storeName, input.segment, input.groupId, input.groupName, input.document)}
+              onRefresh={() => loadAccessContext(session.user.id)}
+              onOpenStore={async (targetStoreId) => { await changeStore(targetStoreId); setPage("dashboard"); }}
+            />
+          </div>
+        </section>
+        {inactivityWarning > 0 && <InactivityWarningModal seconds={inactivityWarning} onContinue={continueActiveSession} onLogout={() => void logout()} />}
+        {toast && <div className="save-toast" role="status"><span>✓</span><div><strong>{toast}</strong><small>Este aviso fecha automaticamente em 3 segundos.</small></div></div>}
+      </main>
+    );
+  }
 
   return (
     <main style={{ ...sidebarTheme, ...selectionTheme } as any} className={`${sidebarCollapsed ? "shell sidebar-collapsed" : "shell"} ${mobileMenuOpen ? "mobile-menu-open" : ""}`}>
@@ -3273,6 +3351,7 @@ export default function Home() {
               consultants={consultants}
               currentUserName={userProfile.preferredName}
               currentStoreId={brandedStore.id}
+              settings={data.companySettings.partOrderSettings}
               onChange={(partOrders) => setData({ ...data, partOrders })}
             />
           )}
@@ -3331,10 +3410,6 @@ export default function Home() {
               onItemsChange={(catalog) => setData({ ...data, catalog })}
               onSuppliersChange={(suppliers) => setData({ ...data, suppliers })}
             />
-          )}
-
-          {page === "master" && platformRole === "MASTER" && (
-            <MasterCommercialPage stores={stores} currentStore={brandedStore} sessionAccessToken={session?.access_token || ""} onCreateCompany={(input) => bootstrapCompany(input.companyName, input.storeName, input.segment, input.groupId, input.groupName, input.document)} onRefresh={() => loadAccessContext(session.user.id)} />
           )}
 
           {page === "checklist" && (
@@ -3400,6 +3475,14 @@ export default function Home() {
                 assistantEnabled={data.companySettings.modules.ASSISTANT}
                 consultants={consultants}
                 onChange={(updated) => setData({ ...data, quotes: data.quotes.map((item) => item.id === updated.id ? updated : item) })}
+                onDelete={() => {
+                  if (!window.confirm(`Excluir definitivamente ${activeQuote.code}? Esta ação remove o orçamento desta unidade.`)) return;
+                  setData({ ...data, quotes: data.quotes.filter((item) => item.id !== activeQuote.id) });
+                  setActiveQuoteId(null);
+                  setToast(`${activeQuote.code} excluído`);
+                  if (saveToastTimer.current) window.clearTimeout(saveToastTimer.current);
+                  saveToastTimer.current = window.setTimeout(() => setToast(""), 3000);
+                }}
                 onBack={() => setActiveQuoteId(null)}
                 onSaved={() => { setToast(`${activeQuote.code} salvo`); if (saveToastTimer.current) window.clearTimeout(saveToastTimer.current); saveToastTimer.current = window.setTimeout(() => setToast(""), 3000); }}
               />
@@ -3518,7 +3601,11 @@ function partOrderItemStatusLabel(status: PartOrderItemStatus) {
 }
 
 function partOrderBusinessLabel(value: PartOrderBusinessType) {
-  return ({ OFICINA: "Oficina", VENDA: "Venda", GARANTIA: "Garantia", INTERNA: "Interna", BALCAO: "Balcão" } as Record<PartOrderBusinessType, string>)[value];
+  return ({ CLIENTE: "Cliente final", GARANTIA: "Garantia", INTERNA: "Interna" } as Record<PartOrderBusinessType, string>)[value];
+}
+
+function partOrderBusinessTag(value: PartOrderBusinessType) {
+  return value === "GARANTIA" ? { letter: "G", className: "guarantee", label: "Garantia" } : value === "INTERNA" ? { letter: "I", className: "internal", label: "Interna" } : { letter: "C", className: "customer", label: "Cliente final" };
 }
 
 function partOrderTypeLabel(value: PartOrderType) {
@@ -3538,7 +3625,15 @@ function partOrderOverallStatus(order: PartOrder): PartOrderOverallStatus {
 }
 
 function partOrderOverallLabel(status: PartOrderOverallStatus) {
-  return ({ PENDENTE: "Pendente", AGENDADO: "Agendado", PARCIAL: "Parcialmente reservado", RESERVADO: "Todas reservadas", BO: "Com item em B.O.", RECEBIDO: "Recebimento completo", CONCLUIDO: "Entregue" } as Record<PartOrderOverallStatus, string>)[status];
+  return ({ PENDENTE: "Pendente", AGENDADO: "Agendado", PARCIAL: "Reserva parcial", RESERVADO: "Todas reservadas", BO: "Com item em B.O.", RECEBIDO: "Recebido", CONCLUIDO: "Finalizado" } as Record<PartOrderOverallStatus, string>)[status];
+}
+
+function partOrderRowClass(status: PartOrderOverallStatus) {
+  if (status === "BO") return "row-bo";
+  if (status === "PARCIAL") return "row-partial";
+  if (status === "RESERVADO") return "row-ready";
+  if (status === "RECEBIDO" || status === "CONCLUIDO") return "row-complete";
+  return "row-neutral";
 }
 
 function daysSince(value: string) {
@@ -3560,7 +3655,7 @@ function emptyPartOrderItem(): PartOrderItem {
 
 function createPartOrder(currentUserName: string, storeId: string): PartOrder {
   const now = new Date().toISOString();
-  return { id: uid(), storeId, customerId: null, customer: "", contact: "", orderNumber: "", quoteNumber: "", orderType: "NORMAL", businessType: "OFICINA", orderedAt: now.slice(0, 10), responsible: currentUserName || "", productive: "", comments: "", fullyReservedAt: "", createdAt: now, updatedAt: now, items: [emptyPartOrderItem()], history: [{ id: uid(), createdAt: now, createdBy: currentUserName || "Usuário", message: "Pedido iniciado" }] };
+  return { id: uid(), storeId, customerId: null, customer: "", contact: "", plate: "", orderNumber: "", quoteNumber: "", orderType: "NORMAL", businessType: "CLIENTE", orderedAt: now.slice(0, 10), responsible: currentUserName || "", productive: "", comments: "", fullyReservedAt: "", createdAt: now, updatedAt: now, items: [emptyPartOrderItem()], history: [] };
 }
 
 function normalizePartOrderReservation(order: PartOrder): PartOrder {
@@ -3569,18 +3664,20 @@ function normalizePartOrderReservation(order: PartOrder): PartOrder {
   return { ...order, fullyReservedAt: allReserved ? (order.fullyReservedAt || new Date().toISOString()) : "", updatedAt: new Date().toISOString() };
 }
 
-function PartsOrdersPage({ orders, customers, consultants, currentUserName, currentStoreId, onChange }: { orders: PartOrder[]; customers: Customer[]; consultants: ConsultantOption[]; currentUserName: string; currentStoreId: string; onChange: (orders: PartOrder[]) => void }) {
+function PartsOrdersPage({ orders, customers, consultants, currentUserName, currentStoreId, settings, onChange }: { orders: PartOrder[]; customers: Customer[]; consultants: ConsultantOption[]; currentUserName: string; currentStoreId: string; settings: PartOrderSettings; onChange: (orders: PartOrder[]) => void }) {
   const [search, setSearch] = useState("");
   const [orderType, setOrderType] = useState<"TODOS" | PartOrderType>("TODOS");
   const [businessType, setBusinessType] = useState<"TODOS" | PartOrderBusinessType>("TODOS");
   const [status, setStatus] = useState<"TODOS" | PartOrderOverallStatus>("TODOS");
   const [responsible, setResponsible] = useState("TODOS");
   const [draft, setDraft] = useState<PartOrder | null>(null);
-  const [detailTab, setDetailTab] = useState<"DETALHES" | "HISTORICO">("DETALHES");
+  const [editorMode, setEditorMode] = useState<"CREATE" | "TRACK" | "EDIT">("CREATE");
+  const fieldRules = normalizePartOrderSettings(settings).fields;
+  const persistedDraft = draft ? orders.find((item) => item.id === draft.id) : undefined;
 
   const responsibleOptions = Array.from(new Set([currentUserName, ...consultants.map((item) => item.name), ...orders.map((item) => item.responsible)].map((item) => item.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, "pt-BR"));
   const filtered = orders.filter((order) => {
-    const haystack = normalizeAssistantText(`${order.orderNumber} ${order.quoteNumber} ${order.customer} ${order.contact} ${order.responsible} ${order.items.map((item) => `${item.code} ${item.description}`).join(" ")}`);
+    const haystack = normalizeAssistantText(`${order.orderNumber} ${order.quoteNumber} ${order.customer} ${order.contact} ${order.plate} ${order.responsible} ${order.items.map((item) => `${item.code} ${item.description}`).join(" ")}`);
     if (search.trim() && !haystack.includes(normalizeAssistantText(search))) return false;
     if (orderType !== "TODOS" && order.orderType !== orderType) return false;
     if (businessType !== "TODOS" && order.businessType !== businessType) return false;
@@ -3601,13 +3698,18 @@ function PartsOrdersPage({ orders, customers, consultants, currentUserName, curr
   ];
 
   function openNew() {
-    setDetailTab("DETALHES");
+    setEditorMode("CREATE");
     setDraft(createPartOrder(currentUserName, currentStoreId));
   }
 
   function openOrder(order: PartOrder) {
-    setDetailTab("DETALHES");
+    setEditorMode("TRACK");
     setDraft(JSON.parse(JSON.stringify(order)) as PartOrder);
+  }
+
+  function editCurrentOrder() {
+    if (!draft) return;
+    setEditorMode("EDIT");
   }
 
   function updateItem(itemId: string, patch: Partial<PartOrderItem>) {
@@ -3625,20 +3727,80 @@ function PartsOrdersPage({ orders, customers, consultants, currentUserName, curr
       }
       return { ...item, ...patch, ...timestamps };
     });
-    const changed = patch.status ? [{ id: uid(), createdAt: now, createdBy: currentUserName || "Usuário", message: `Status de uma peça alterado para ${partOrderItemStatusLabel(patch.status)}` }, ...draft.history] : draft.history;
-    setDraft(normalizePartOrderReservation({ ...draft, items, history: changed }));
+    setDraft(normalizePartOrderReservation({ ...draft, items }));
+  }
+
+  function validateCreate(order: PartOrder) {
+    if (!order.customer.trim()) return "Informe o cliente do pedido.";
+    if (!order.orderNumber.trim()) return "Informe o número do pedido.";
+    if (fieldRules.contact.enabled && fieldRules.contact.required && !order.contact.trim()) return "Informe o contato do cliente.";
+    if (fieldRules.plate.enabled && fieldRules.plate.required && !order.plate.trim()) return "Informe a placa.";
+    if (fieldRules.quoteNumber.enabled && fieldRules.quoteNumber.required && !order.quoteNumber.trim()) return "Informe o orçamento vinculado.";
+    if (fieldRules.productive.enabled && fieldRules.productive.required && !order.productive.trim()) return "Informe o produtivo / oficina.";
+    if (!order.items.length || order.items.some((item) => !item.description.trim())) return "Informe a descrição de todas as peças.";
+    return "";
   }
 
   function saveDraft() {
     if (!draft) return;
-    if (!draft.customer.trim()) return window.alert("Informe o cliente do pedido.");
-    if (!draft.orderNumber.trim()) return window.alert("Informe o número do pedido.");
-    if (!draft.items.length || draft.items.some((item) => !item.description.trim())) return window.alert("Informe a descrição de todas as peças.");
-    const duplicate = orders.some((item) => item.id !== draft.id && item.orderNumber.trim().toUpperCase() === draft.orderNumber.trim().toUpperCase());
-    if (duplicate && !window.confirm("Já existe um pedido com esse número. Deseja salvar mesmo assim?")) return;
-    const prepared = normalizePartOrderReservation({ ...draft, storeId: draft.storeId || currentStoreId, updatedAt: new Date().toISOString() });
-    const exists = orders.some((item) => item.id === prepared.id);
-    onChange(exists ? orders.map((item) => item.id === prepared.id ? prepared : item) : [prepared, ...orders]);
+    const original = orders.find((item) => item.id === draft.id);
+    if (!original) {
+      const validation = validateCreate(draft);
+      if (validation) return window.alert(validation);
+      const duplicate = orders.some((item) => item.orderNumber.trim().toUpperCase() === draft.orderNumber.trim().toUpperCase());
+      if (duplicate && !window.confirm("Já existe um pedido com esse número. Deseja salvar mesmo assim?")) return;
+      const now = new Date().toISOString();
+      const prepared = normalizePartOrderReservation({ ...draft, plate: draft.plate.trim().toUpperCase(), storeId: draft.storeId || currentStoreId, history: [{ id: uid(), createdAt: now, createdBy: currentUserName || "Usuário", message: `Pedido #${draft.orderNumber} criado com ${draft.items.length} peça(s).` }], updatedAt: now });
+      onChange([prepared, ...orders]);
+      setDraft(null);
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const history: PartOrderHistoryEntry[] = [...original.history];
+
+    if (editorMode === "EDIT") {
+      const validation = validateCreate(draft);
+      if (validation) return window.alert(validation);
+      const duplicate = orders.some((item) => item.id !== draft.id && item.orderNumber.trim().toUpperCase() === draft.orderNumber.trim().toUpperCase());
+      if (duplicate && !window.confirm("Já existe outro pedido com esse número. Deseja salvar mesmo assim?")) return;
+
+      const changedLabels: string[] = [];
+      const fields: Array<[keyof PartOrder, string]> = [
+        ["customer", "cliente"], ["contact", "contato"], ["plate", "placa"], ["orderNumber", "número do pedido"],
+        ["quoteNumber", "orçamento"], ["orderedAt", "data do pedido"], ["businessType", "TAG / tipo"],
+        ["orderType", "tipo do pedido"], ["responsible", "responsável"], ["productive", "produtivo / oficina"], ["comments", "observações gerais"],
+      ];
+      fields.forEach(([key, label]) => { if (String(draft[key] ?? "") !== String(original[key] ?? "")) changedLabels.push(label); });
+      if (changedLabels.length) history.unshift({ id: uid(), createdAt: now, createdBy: currentUserName || "Usuário", message: `Dados do pedido atualizados: ${changedLabels.join(", ")}.` });
+
+      draft.items.forEach((item) => {
+        const before = original.items.find((current) => current.id === item.id);
+        const itemName = item.code.trim() || item.description.trim() || "Peça";
+        if (!before) {
+          history.unshift({ id: uid(), createdAt: now, createdBy: currentUserName || "Usuário", message: `${itemName}: nova peça adicionada ao pedido (qtd. ${item.quantity}).` });
+          return;
+        }
+        const itemChanged = before.code !== item.code || before.description !== item.description || before.quantity !== item.quantity || before.expectedAt !== item.expectedAt;
+        if (itemChanged) history.unshift({ id: uid(), createdAt: now, createdBy: currentUserName || "Usuário", message: `${itemName}: dados da peça atualizados.` });
+      });
+
+      const prepared = normalizePartOrderReservation({ ...draft, plate: draft.plate.trim().toUpperCase(), storeId: draft.storeId || currentStoreId, history, updatedAt: now });
+      onChange(orders.map((item) => item.id === prepared.id ? prepared : item));
+      setDraft(JSON.parse(JSON.stringify(prepared)) as PartOrder);
+      setEditorMode("TRACK");
+      return;
+    }
+
+    draft.items.forEach((item) => {
+      const before = original.items.find((current) => current.id === item.id);
+      if (!before) return;
+      const itemName = item.code.trim() || item.description.trim() || "Peça";
+      if (item.status !== before.status) history.unshift({ id: uid(), createdAt: now, createdBy: currentUserName || "Usuário", message: `${itemName}: ${partOrderItemStatusLabel(before.status)} → ${partOrderItemStatusLabel(item.status)}` });
+      if (item.comments.trim() && item.comments.trim() !== before.comments.trim()) history.unshift({ id: uid(), createdAt: now, createdBy: currentUserName || "Usuário", message: `${itemName}: ${item.comments.trim()}` });
+    });
+    const prepared = normalizePartOrderReservation({ ...original, items: draft.items, history, updatedAt: now });
+    onChange(orders.map((item) => item.id === prepared.id ? prepared : item));
     setDraft(null);
   }
 
@@ -3649,68 +3811,75 @@ function PartsOrdersPage({ orders, customers, consultants, currentUserName, curr
     setDraft(null);
   }
 
+  if (draft && (editorMode === "CREATE" || editorMode === "EDIT")) return <section className="parts-order-workspace parts-order-create">
+    <header className="parts-workspace-header"><div><button type="button" className="parts-back-link" onClick={() => { if (editorMode === "EDIT") setEditorMode("TRACK"); else setDraft(null); }}>← {editorMode === "EDIT" ? `Pedido #${draft.orderNumber}` : "Pedidos de peças"}</button><small>{editorMode === "EDIT" ? "EDITAR PEDIDO" : "NOVO PEDIDO"}</small><h2>{editorMode === "EDIT" ? `Editar pedido #${draft.orderNumber}` : "Registrar pedido de peças"}</h2><p>{editorMode === "EDIT" ? "Inclua novas peças ou corrija os dados do pedido. As alterações ficam registradas no histórico." : "Cadastre os dados do pedido e adicione quantas peças forem necessárias."}</p></div><div><button type="button" className="outline" onClick={() => { if (editorMode === "EDIT") setEditorMode("TRACK"); else setDraft(null); }}>Cancelar</button><button type="button" className="primary" onClick={saveDraft}>{editorMode === "EDIT" ? "Salvar alterações" : "Salvar pedido"}</button></div></header>
+    <div className="parts-editor-layout">
+      <section className="panel parts-general-card"><header><div><small>DADOS DO PEDIDO</small><h3>Identificação</h3></div><span className={`parts-business-tag tag-${partOrderBusinessTag(draft.businessType).className}`} title={partOrderBusinessTag(draft.businessType).label}>{partOrderBusinessTag(draft.businessType).letter}</span></header><div className="parts-create-fields">
+        <Field label="Cliente"><input list="parts-customers" value={draft.customer} onChange={(event) => { const customer = customers.find((item) => item.name === event.target.value); setDraft({ ...draft, customer: event.target.value, customerId: customer?.id ?? null, contact: customer?.phone || draft.contact }); }} /><datalist id="parts-customers">{customers.map((item) => <option key={item.id} value={item.name} />)}</datalist></Field>
+        {fieldRules.contact.enabled && <Field label={`Contato${fieldRules.contact.required ? " *" : ""}`}><input value={draft.contact} onChange={(event) => setDraft({ ...draft, contact: event.target.value })} placeholder="(00) 00000-0000" /></Field>}
+        {fieldRules.plate.enabled && <Field label={`Placa${fieldRules.plate.required ? " *" : ""}`}><input value={draft.plate} onChange={(event) => setDraft({ ...draft, plate: event.target.value.toUpperCase() })} placeholder="ABC1D23" maxLength={8} /></Field>}
+        <Field label="Número do pedido"><input value={draft.orderNumber} onChange={(event) => setDraft({ ...draft, orderNumber: event.target.value })} /></Field>
+        {fieldRules.quoteNumber.enabled && <Field label={`Orçamento${fieldRules.quoteNumber.required ? " *" : ""}`}><input value={draft.quoteNumber} onChange={(event) => setDraft({ ...draft, quoteNumber: event.target.value })} placeholder="Número do orçamento" /></Field>}
+        <Field label="Data do pedido"><input type="date" value={draft.orderedAt} onChange={(event) => setDraft({ ...draft, orderedAt: event.target.value })} /></Field>
+        <Field label="TAG / Tipo"><select value={draft.businessType} onChange={(event) => setDraft({ ...draft, businessType: event.target.value as PartOrderBusinessType })}><option value="CLIENTE">Cliente final</option><option value="GARANTIA">Garantia</option><option value="INTERNA">Interna</option></select></Field>
+        <Field label="Tipo do pedido"><select value={draft.orderType} onChange={(event) => setDraft({ ...draft, orderType: event.target.value as PartOrderType })}><option value="NORMAL">Normal</option><option value="PVI">PVI</option><option value="TRANSFERENCIA">Transferência</option></select></Field>
+        <Field label="Responsável"><input list="parts-responsibles" value={draft.responsible} onChange={(event) => setDraft({ ...draft, responsible: event.target.value })} /><datalist id="parts-responsibles">{responsibleOptions.map((item) => <option key={item} value={item} />)}</datalist></Field>
+        {fieldRules.productive.enabled && <Field label={`Produtivo / oficina${fieldRules.productive.required ? " *" : ""}`}><input value={draft.productive} onChange={(event) => setDraft({ ...draft, productive: event.target.value })} /></Field>}
+      </div></section>
+      <section className="panel parts-create-items"><header><div><small>ITENS DO PEDIDO</small><h3>{draft.items.length} peça(s)</h3></div><button type="button" className="outline" onClick={() => setDraft({ ...draft, items: [...draft.items, emptyPartOrderItem()] })}>+ Adicionar peça</button></header><div className="parts-create-item-list">{draft.items.map((item, index) => <article key={item.id} className="parts-create-item"><header><b>{String(index + 1).padStart(2, "0")}</b><strong>Peça {index + 1}</strong><button type="button" title={editorMode === "EDIT" && persistedDraft?.items.some((current) => current.id === item.id) ? "Peça já cadastrada; altere o status no acompanhamento." : "Remover peça"} disabled={draft.items.length === 1 || (editorMode === "EDIT" && !!persistedDraft?.items.some((current) => current.id === item.id))} onClick={() => setDraft({ ...draft, items: draft.items.filter((current) => current.id !== item.id) })}><PremiumIcon name="trash" size={16} /></button></header><div>
+        <Field label="Código / referência"><input value={item.code} onChange={(event) => updateItem(item.id, { code: event.target.value })} /></Field>
+        <Field label="Descrição da peça"><input value={item.description} onChange={(event) => updateItem(item.id, { description: event.target.value })} /></Field>
+        <Field label="Quantidade"><input type="number" min="0.01" step="1" value={item.quantity} onChange={(event) => updateItem(item.id, { quantity: Math.max(0.01, Number(event.target.value) || 1) })} /></Field>
+        <Field label="Previsão de chegada"><input type="date" value={item.expectedAt} onChange={(event) => updateItem(item.id, { expectedAt: event.target.value })} /></Field>
+      </div></article>)}</div></section>
+      <section className="panel parts-general-comments"><Field label="Comentários / observações gerais"><textarea value={draft.comments} onChange={(event) => setDraft({ ...draft, comments: event.target.value })} maxLength={1000} placeholder="Informações gerais do pedido..." /></Field></section>
+    </div>
+    <footer className="parts-workspace-footer"><button type="button" className="outline" onClick={() => { if (editorMode === "EDIT") setEditorMode("TRACK"); else setDraft(null); }}>Cancelar</button><button type="button" className="primary" onClick={saveDraft}>{editorMode === "EDIT" ? "Salvar alterações" : "Salvar pedido"}</button></footer>
+  </section>;
+
+  if (draft && editorMode === "TRACK") {
+    const overall = partOrderOverallStatus(draft);
+    const tag = partOrderBusinessTag(draft.businessType);
+    return <section className="parts-order-workspace parts-order-track">
+      <header className="parts-workspace-header"><div><button type="button" className="parts-back-link" onClick={() => setDraft(null)}>← Pedidos de peças</button><small>ACOMPANHAMENTO DO PEDIDO</small><h2>Pedido #{draft.orderNumber}</h2><p>Atualize o status das peças e registre comentários. Para incluir novas peças ou corrigir dados, use Editar pedido.</p></div><div className="parts-track-header-actions"><button type="button" className="outline" onClick={editCurrentOrder}>Editar pedido</button><div className="parts-track-head-status"><span className={`parts-business-tag tag-${tag.className}`} title={tag.label}>{tag.letter}</span><em className={`parts-status status-${overall.toLowerCase()}`}>{partOrderOverallLabel(overall)}</em></div></div></header>
+      <section className={`panel parts-order-summary ${partOrderRowClass(overall)}`}><div><small>Cliente</small><b>{draft.customer}</b></div>{fieldRules.plate.enabled && <div><small>Placa</small><b>{draft.plate || "—"}</b></div>}<div><small>Pedido</small><b>{draft.orderNumber}</b></div>{fieldRules.quoteNumber.enabled && <div><small>Orçamento</small><b>{draft.quoteNumber || "—"}</b></div>}<div><small>Data</small><b>{shortDate(draft.orderedAt)}</b></div><div><small>Responsável</small><b>{draft.responsible || "—"}</b></div><div><small>Dias do pedido</small><b>{daysSince(draft.orderedAt)} dias</b></div><div><small>Tipo pedido</small><b>{partOrderTypeLabel(draft.orderType)}</b></div>{draft.fullyReservedAt && <div className="parts-ready-callout"><small>Pronto para contato</small><b>Reservado há {daysSince(draft.fullyReservedAt)} dias</b></div>}</section>
+      <div className="parts-track-layout"><section className="panel parts-track-items"><header><div><small>PEÇAS DO PEDIDO</small><h3>{draft.items.length} item(ns)</h3></div></header><div className="parts-track-list">{draft.items.map((item, index) => <article key={item.id} className={`parts-track-item track-${item.status.toLowerCase()}`}><div className="parts-track-item-main"><span>{String(index + 1).padStart(2, "0")}</span><div><b>{item.code || "Sem código"}</b><strong>{item.description}</strong><small>Quantidade: {item.quantity}{item.expectedAt ? ` · Previsão: ${shortDate(item.expectedAt)}` : ""}</small></div></div><div className="parts-track-controls"><Field label="Status"><select value={item.status} onChange={(event) => updateItem(item.id, { status: event.target.value as PartOrderItemStatus })}>{(["PENDENTE", "AGENDADO", "RESERVADO", "BO", "RECEBIDO", "ENTREGUE", "CANCELADO"] as PartOrderItemStatus[]).map((value) => <option key={value} value={value}>{partOrderItemStatusLabel(value)}</option>)}</select></Field><Field label="Comentário para o histórico"><input value={item.comments} onChange={(event) => updateItem(item.id, { comments: event.target.value })} placeholder="Ex.: peça separada, cliente aguardando..." /></Field></div><footer>{item.reservedAt && <span>Reservada há {daysSince(item.reservedAt)} dias</span>}{item.backOrderAt && item.status === "BO" && <span className="bo-time">B.O. há {daysSince(item.backOrderAt)} dias</span>}{item.receivedAt && <span>Recebida em {shortDate(item.receivedAt)}</span>}</footer></article>)}</div></section>
+      <aside className="panel parts-track-history"><header><div><small>HISTÓRICO</small><h3>Movimentações</h3></div></header>{draft.history.length ? <div>{draft.history.map((entry) => <article key={entry.id}><span /><div><b>{entry.message}</b><small>{entry.createdBy} · {new Date(entry.createdAt).toLocaleString("pt-BR")}</small></div></article>)}</div> : <div className="module-empty">Nenhuma movimentação registrada.</div>}{draft.comments && <section><small>OBSERVAÇÃO ORIGINAL</small><p>{draft.comments}</p></section>}</aside></div>
+      <footer className="parts-workspace-footer split"><button type="button" className="danger-link" onClick={deleteDraft}>Excluir pedido</button><div><button type="button" className="outline" onClick={() => setDraft(null)}>Voltar</button><button type="button" className="primary" onClick={saveDraft}>Salvar acompanhamento</button></div></footer>
+    </section>;
+  }
+
   return <section className="parts-orders-page">
     <header className="parts-orders-heading"><h2>Pedidos de peças</h2><button type="button" className="parts-new-button" onClick={openNew}>+ Registrar novo pedido</button></header>
 
     <section className="parts-metrics">{metrics.map((metric) => <article key={metric.label} className={`parts-metric metric-${metric.cls}`}><span className="parts-metric-icon">{metric.icon === "bo" ? "B.O." : <PremiumIcon name={metric.icon === "calendar" ? "calendar" : metric.icon === "truck" ? "truck" : "box"} size={21} />}</span><div><small>{metric.label}</small><strong>{metric.value}</strong><em>{metric.label === "Tempo médio" ? "desde a abertura" : "itens cadastrados"}</em></div></article>)}</section>
 
     <section className="panel parts-filter-panel">
-      <div className="parts-filter-search"><PremiumIcon name="file" size={18} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar por pedido, cliente, contato, código ou peça..." /></div>
+      <div className="parts-filter-search"><PremiumIcon name="file" size={18} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar por pedido, cliente, placa, código ou peça..." /></div>
       <select value={orderType} onChange={(event) => setOrderType(event.target.value as typeof orderType)}><option value="TODOS">Tipo de pedido: Todos</option><option value="NORMAL">Normal</option><option value="PVI">PVI</option><option value="TRANSFERENCIA">Transferência</option></select>
-      <select value={businessType} onChange={(event) => setBusinessType(event.target.value as typeof businessType)}><option value="TODOS">Tipo: Todos</option>{(["OFICINA", "VENDA", "GARANTIA", "INTERNA", "BALCAO"] as PartOrderBusinessType[]).map((value) => <option key={value} value={value}>{partOrderBusinessLabel(value)}</option>)}</select>
+      <select value={businessType} onChange={(event) => setBusinessType(event.target.value as typeof businessType)}><option value="TODOS">TAG: Todas</option><option value="CLIENTE">Cliente final</option><option value="GARANTIA">Garantia</option><option value="INTERNA">Interna</option></select>
       <select value={responsible} onChange={(event) => setResponsible(event.target.value)}><option value="TODOS">Responsável: Todos</option>{responsibleOptions.map((value) => <option key={value}>{value}</option>)}</select>
       <select value={status} onChange={(event) => setStatus(event.target.value as typeof status)}><option value="TODOS">Status: Todos</option>{(["PENDENTE", "AGENDADO", "PARCIAL", "RESERVADO", "BO", "RECEBIDO", "CONCLUIDO"] as PartOrderOverallStatus[]).map((value) => <option key={value} value={value}>{partOrderOverallLabel(value)}</option>)}</select>
       <button type="button" className="outline" onClick={() => { setSearch(""); setOrderType("TODOS"); setBusinessType("TODOS"); setResponsible("TODOS"); setStatus("TODOS"); }}>Limpar filtros</button>
     </section>
 
     <section className="panel parts-list-panel"><header><div><small>LISTAGEM DA UNIDADE</small><h3>{filtered.length} pedido(s) encontrado(s)</h3></div></header>
-      {filtered.length === 0 ? <div className="module-empty">Nenhum pedido encontrado. Use “Registrar novo pedido” para começar.</div> : <div className="parts-orders-table">
-        <div className="parts-table-head"><span>Cliente / contato</span><span>Nº pedido</span><span>Peças</span><span>Tipo pedido</span><span>Tipo</span><span>Data</span><span>Responsável</span><span>Dias</span><span>Status</span><span>Obs.</span></div>
-        {filtered.map((order) => { const overall = partOrderOverallStatus(order); const boCount = order.items.filter((item) => item.status === "BO").length; const reservedCount = order.items.filter((item) => ["RESERVADO", "RECEBIDO", "ENTREGUE"].includes(item.status)).length; return <button type="button" key={order.id} className="parts-order-row" onClick={() => openOrder(order)}>
-          <span className="parts-customer"><i>{order.customer.split(/\s+/).slice(0,2).map((part) => part[0]).join("").toUpperCase()}</i><b>{order.customer}</b><small>{order.contact || "Sem contato"}</small></span>
-          <span><b>{order.orderNumber}</b><small>{order.quoteNumber ? `ORC ${order.quoteNumber}` : "Sem orçamento"}</small></span>
-          <span><b>{order.items.length} peça(s)</b><small>{reservedCount} reservada(s){boCount ? ` · ${boCount} em B.O.` : ""}</small></span>
-          <span><em className={`parts-chip type-${order.orderType.toLowerCase()}`}>{partOrderTypeLabel(order.orderType)}</em></span>
-          <span><em className={`parts-chip business-${order.businessType.toLowerCase()}`}>{partOrderBusinessLabel(order.businessType)}</em></span>
+      {filtered.length === 0 ? <div className="module-empty">Nenhum pedido encontrado. Use “Registrar novo pedido” para começar.</div> : <div className={`parts-orders-table ${fieldRules.plate.enabled ? "has-plate" : "no-plate"}`}>
+        <div className="parts-table-head"><span>TAG</span><span>Data</span><span>Cliente</span>{fieldRules.plate.enabled && <span>Placa</span>}<span>Pedido</span><span>Tipo pedido</span><span>Dias pedido</span><span>Responsável</span><span>Status</span><span></span></div>
+        {filtered.map((order) => { const overall = partOrderOverallStatus(order); const tag = partOrderBusinessTag(order.businessType); const boDates = order.items.filter((item) => item.status === "BO" && item.backOrderAt).map((item) => item.backOrderAt).sort(); return <button type="button" key={order.id} className={`parts-order-row ${partOrderRowClass(overall)}`} onClick={() => openOrder(order)}>
+          <span><i className={`parts-business-tag tag-${tag.className}`} title={tag.label}>{tag.letter}</i></span>
           <span><b>{shortDate(order.orderedAt)}</b></span>
-          <span><b>{order.responsible || "—"}</b><small>{order.productive || "Consultor"}</small></span>
-          <span className={daysSince(order.orderedAt) >= 30 ? "parts-days overdue" : "parts-days"}><b>{daysSince(order.orderedAt)} dias</b><small>desde o pedido</small></span>
-          <span><em className={`parts-status status-${overall.toLowerCase()}`}>{partOrderOverallLabel(overall)}</em>{order.fullyReservedAt && <small>há {daysSince(order.fullyReservedAt)} dias</small>}</span>
-          <span className="parts-comments"><PremiumIcon name="file" size={16} /><b>{order.comments ? 1 : 0}</b><PremiumIcon name="chevron" size={16} /></span>
+          <span className="parts-list-customer"><b>{order.customer}</b><small>{order.items.length} peça(s)</small></span>
+          {fieldRules.plate.enabled && <span><b>{order.plate || "—"}</b></span>}
+          <span><b>{order.orderNumber}</b></span>
+          <span><em className={`parts-chip type-${order.orderType.toLowerCase()}`}>{partOrderTypeLabel(order.orderType)}</em></span>
+          <span className={daysSince(order.orderedAt) >= 30 ? "parts-days overdue" : "parts-days"}><b>{daysSince(order.orderedAt)} dias</b></span>
+          <span><b>{order.responsible || "—"}</b></span>
+          <span><em className={`parts-status status-${overall.toLowerCase()}`}>{partOrderOverallLabel(overall)}</em>{overall === "RESERVADO" && order.fullyReservedAt && <small className="ready-contact">Pronto para contato · há {daysSince(order.fullyReservedAt)} dias</small>}{overall === "BO" && boDates[0] && <small className="bo-contact">B.O. há {daysSince(boDates[0])} dias</small>}</span>
+          <span className="parts-open-circle" aria-label="Abrir pedido"><PremiumIcon name="chevron" size={18} /></span>
         </button>; })}
       </div>}
     </section>
-
-    {draft && <div className="parts-drawer-backdrop" onMouseDown={(event) => { if (event.currentTarget === event.target) setDraft(null); }}><aside className="parts-order-drawer">
-      <header><div>{orders.some((item) => item.id === draft.id) ? <><small>EDITAR PEDIDO</small><h2>Pedido #{draft.orderNumber}</h2></> : <h2>Novo pedido</h2>}<span className={`parts-status status-${partOrderOverallStatus(draft).toLowerCase()}`}>{partOrderOverallLabel(partOrderOverallStatus(draft))}</span></div><button type="button" aria-label="Fechar" onClick={() => setDraft(null)}>×</button></header>
-      <nav><button className={detailTab === "DETALHES" ? "active" : ""} onClick={() => setDetailTab("DETALHES")}>Detalhes</button><button className={detailTab === "HISTORICO" ? "active" : ""} onClick={() => setDetailTab("HISTORICO")}>Histórico</button></nav>
-      {detailTab === "DETALHES" ? <div className="parts-drawer-content">
-        <section><h3>Dados gerais do pedido</h3><div className="parts-form-grid">
-          <Field label="Cliente"><input list="parts-customers" value={draft.customer} onChange={(event) => { const customer = customers.find((item) => item.name === event.target.value); setDraft({ ...draft, customer: event.target.value, customerId: customer?.id ?? null, contact: customer?.phone || draft.contact }); }} /><datalist id="parts-customers">{customers.map((item) => <option key={item.id} value={item.name} />)}</datalist></Field>
-          <Field label="Contato"><input value={draft.contact} onChange={(event) => setDraft({ ...draft, contact: event.target.value })} placeholder="(00) 00000-0000" /></Field>
-          <Field label="Número do pedido"><input value={draft.orderNumber} onChange={(event) => setDraft({ ...draft, orderNumber: event.target.value })} /></Field>
-          <Field label="Orçamento vinculado"><input value={draft.quoteNumber} onChange={(event) => setDraft({ ...draft, quoteNumber: event.target.value })} placeholder="Opcional" /></Field>
-          <Field label="Data do pedido"><input type="date" value={draft.orderedAt} onChange={(event) => setDraft({ ...draft, orderedAt: event.target.value })} /></Field>
-          <Field label="Tipo do pedido"><select value={draft.orderType} onChange={(event) => setDraft({ ...draft, orderType: event.target.value as PartOrderType })}><option value="NORMAL">Normal</option><option value="PVI">PVI</option><option value="TRANSFERENCIA">Transferência</option></select></Field>
-          <Field label="Tipo"><select value={draft.businessType} onChange={(event) => setDraft({ ...draft, businessType: event.target.value as PartOrderBusinessType })}>{(["OFICINA", "VENDA", "GARANTIA", "INTERNA", "BALCAO"] as PartOrderBusinessType[]).map((value) => <option key={value} value={value}>{partOrderBusinessLabel(value)}</option>)}</select></Field>
-          <Field label="Responsável"><input list="parts-responsibles" value={draft.responsible} onChange={(event) => setDraft({ ...draft, responsible: event.target.value })} /><datalist id="parts-responsibles">{responsibleOptions.map((item) => <option key={item} value={item} />)}</datalist></Field>
-          <Field label="Produtivo / oficina"><input value={draft.productive} onChange={(event) => setDraft({ ...draft, productive: event.target.value })} placeholder="Opcional" /></Field>
-        </div></section>
-
-        <section className="parts-items-section"><header><div><h3>Peças deste pedido</h3></div><button type="button" className="outline" onClick={() => setDraft({ ...draft, items: [...draft.items, emptyPartOrderItem()] })}>+ Adicionar peça</button></header>
-          <div className="parts-item-list">{draft.items.map((item, index) => <article key={item.id} className={`parts-item-card item-${item.status.toLowerCase()}`}><header><b>Peça {index + 1}</b><span className={`parts-status status-${item.status.toLowerCase()}`}>{partOrderItemStatusLabel(item.status)}</span><button type="button" title="Remover peça" disabled={draft.items.length === 1} onClick={() => setDraft({ ...draft, items: draft.items.filter((current) => current.id !== item.id) })}><PremiumIcon name="trash" size={16} /></button></header><div className="parts-item-grid">
-            <Field label="Código / referência"><input value={item.code} onChange={(event) => updateItem(item.id, { code: event.target.value })} /></Field>
-            <Field label="Descrição da peça"><input value={item.description} onChange={(event) => updateItem(item.id, { description: event.target.value })} /></Field>
-            <Field label="Quantidade"><input type="number" min="0.01" step="1" value={item.quantity} onChange={(event) => updateItem(item.id, { quantity: Math.max(0.01, Number(event.target.value) || 1) })} /></Field>
-            <Field label="Previsão de chegada"><input type="date" value={item.expectedAt} onChange={(event) => updateItem(item.id, { expectedAt: event.target.value })} /></Field>
-            <Field label="Status"><select value={item.status} onChange={(event) => updateItem(item.id, { status: event.target.value as PartOrderItemStatus })}>{(["PENDENTE", "AGENDADO", "RESERVADO", "BO", "RECEBIDO", "ENTREGUE", "CANCELADO"] as PartOrderItemStatus[]).map((value) => <option key={value} value={value}>{partOrderItemStatusLabel(value)}</option>)}</select></Field>
-            <Field label="Comentário da peça"><input value={item.comments} onChange={(event) => updateItem(item.id, { comments: event.target.value })} /></Field>
-          </div><footer>{item.reservedAt && <span>Reservada há {daysSince(item.reservedAt)} dias</span>}{item.backOrderAt && <span>Em B.O. há {daysSince(item.backOrderAt)} dias</span>}{item.receivedAt && <span>Recebida em {shortDate(item.receivedAt)}</span>}</footer></article>)}</div>
-        </section>
-        <Field label="Comentários / observações gerais"><textarea value={draft.comments} onChange={(event) => setDraft({ ...draft, comments: event.target.value })} maxLength={1000} /></Field>
-      </div> : <div className="parts-history-list">{draft.history.length ? draft.history.map((entry) => <article key={entry.id}><span /><div><b>{entry.message}</b><small>{entry.createdBy} · {new Date(entry.createdAt).toLocaleString("pt-BR")}</small></div></article>) : <div className="module-empty">Nenhum histórico registrado.</div>}</div>}
-      <footer>{orders.some((item) => item.id === draft.id) ? <button type="button" className="danger-link" onClick={deleteDraft}>Excluir pedido</button> : <span />}<div><button type="button" className="outline" onClick={() => setDraft(null)}>Cancelar</button><button type="button" className="primary" onClick={saveDraft}>Salvar pedido</button></div></footer>
-    </aside></div>}
   </section>;
 }
 
@@ -6054,12 +6223,14 @@ function MasterCommercialPage({
   sessionAccessToken,
   onCreateCompany,
   onRefresh,
+  onOpenStore,
 }: {
   stores: Store[];
   currentStore: Store;
   sessionAccessToken: string;
   onCreateCompany: (input: MasterCompanyInput) => Promise<any>;
   onRefresh: () => Promise<void>;
+  onOpenStore: (storeId: string) => Promise<void>;
 }) {
   const supabase = useMemo(() => getSupabaseBrowserClient(), []);
   const [plans, setPlans] = useState<any[]>([]);
@@ -6083,7 +6254,7 @@ function MasterCommercialPage({
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState("");
   const [search, setSearch] = useState("");
-  const [activeTab, setActiveTab] = useState<"DATA" | "CONTRACT" | "MODULES" | "HISTORY">("DATA");
+  const [activeTab, setActiveTab] = useState<"DATA" | "CONTRACT" | "MODULES" | "REPLICATE" | "HISTORY">("DATA");
   const [plansOpen, setPlansOpen] = useState(false);
   const [planDrafts, setPlanDrafts] = useState<any[]>([]);
   const [savingPlanId, setSavingPlanId] = useState("");
@@ -6092,6 +6263,10 @@ function MasterCommercialPage({
   const [replicateSourceStoreId, setReplicateSourceStoreId] = useState("");
   const [replicateTargetStoreIds, setReplicateTargetStoreIds] = useState<string[]>([]);
   const [replicateSections, setReplicateSections] = useState<string[]>(["IDENTITY", "CHECKLIST", "PRICING", "MESSAGES"]);
+  const [createGroupOpen, setCreateGroupOpen] = useState(false);
+  const [newGroupName, setNewGroupName] = useState("");
+  const [createReplicationSourceStoreId, setCreateReplicationSourceStoreId] = useState("");
+  const [createReplicationSections, setCreateReplicationSections] = useState<string[]>(["IDENTITY", "CHECKLIST", "PRICING", "MESSAGES", "MODULES", "USERS"]);
 
   useEffect(() => {
     if (!notice) return;
@@ -6104,12 +6279,13 @@ function MasterCommercialPage({
       if (event.key !== "Escape" || saving) return;
       if (plansOpen) setPlansOpen(false);
       else if (replicateOpen) setReplicateOpen(false);
+      else if (createGroupOpen) setCreateGroupOpen(false);
       else if (editOpen) setEditOpen(false);
       else if (createOpen) setCreateOpen(false);
     };
     window.addEventListener("keydown", close);
     return () => window.removeEventListener("keydown", close);
-  }, [plansOpen, replicateOpen, editOpen, createOpen, saving]);
+  }, [plansOpen, replicateOpen, createGroupOpen, editOpen, createOpen, saving]);
 
   async function load() {
     const [plansResult, subscriptionsResult, groupsResult, historiesResult] = await Promise.all([
@@ -6132,9 +6308,17 @@ function MasterCommercialPage({
 
   useEffect(() => { void load(); }, []);
 
+  useEffect(() => {
+    const openPlans = () => openPlansEditor();
+    window.addEventListener("gerivo:master-open-plans", openPlans as EventListener);
+    return () => window.removeEventListener("gerivo:master-open-plans", openPlans as EventListener);
+  }, [plans]);
+
   function resetCreate() {
     const plan = plans[0];
     setGroupMode("NEW"); setGroupId(""); setGroupName(""); setCompanyName(""); setDocument(""); setStoreName(""); setStoreNameTouched(false); setSegment("OUTRO"); setCompanyStatus("ACTIVE");
+    setCreateReplicationSourceStoreId("");
+    setCreateReplicationSections(["IDENTITY", "CHECKLIST", "PRICING", "MESSAGES", "MODULES", "USERS"]);
     setContract(defaultContractDraft(plan)); setFormError(""); setActiveTab("DATA");
   }
 
@@ -6214,6 +6398,54 @@ function MasterCommercialPage({
     return apiPost("/api/master/subscriptions/upsert", { companyId, ...draft, status });
   }
 
+  function groupStoresFor(groupValue: string) {
+    const group = groups.find((item) => String(item.id) === String(groupValue));
+    return (group?.companies || []).flatMap((company: any) => (company.stores || []).map((store: any) => ({
+      ...store,
+      companyId: company.id,
+      companyName: company.name,
+    })));
+  }
+
+  function contractWithReplicatedModules(base: CompanyContractDraft) {
+    if (!createReplicationSections.includes("MODULES") || !createReplicationSourceStoreId) return base;
+    const sourceStore = groupStoresFor(groupId).find((store: any) => String(store.id) === String(createReplicationSourceStoreId));
+    if (!sourceStore) return base;
+    const sourceSubscription = subscriptions.find((item) => String(item.company_id) === String(sourceStore.companyId));
+    if (!sourceSubscription) return base;
+    const sourceDraft = populateContract(sourceSubscription);
+    return {
+      ...base,
+      planMode: "CUSTOM" as const,
+      customPlanName: `Base ${sourceStore.companyName || "do grupo"}`,
+      companyLimit: sourceDraft.companyLimit,
+      storeLimit: sourceDraft.storeLimit,
+      userLimit: sourceDraft.userLimit,
+      storageGb: sourceDraft.storageGb,
+      aiQueriesMonthly: sourceDraft.aiQueriesMonthly,
+      modules: { ...sourceDraft.modules },
+      justification: `Módulos e limites replicados de ${sourceStore.companyName || sourceStore.name} durante o cadastro.`,
+    };
+  }
+
+  async function createGroupOnly() {
+    const name = newGroupName.trim();
+    if (!name || saving) return;
+    setSaving(true);
+    setFormError("");
+    try {
+      await apiPost("/api/master/groups/create", { name });
+      setCreateGroupOpen(false);
+      setNewGroupName("");
+      await load();
+      setNotice({ text: `Grupo ${name} criado. Agora você pode adicionar empresas a ele.` });
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : "Não foi possível criar o grupo.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function createCompany() {
     if (!companyName.trim() || !storeName.trim() || saving) return;
     if (groupMode === "NEW" && !groupName.trim()) return setFormError("Informe o nome do novo grupo empresarial.");
@@ -6224,9 +6456,23 @@ function MasterCommercialPage({
     setSaving(true); setFormError("");
     try {
       const created = await onCreateCompany({ groupMode, groupId, groupName: groupName.trim(), companyName: companyName.trim(), document: document.trim(), storeName: storeName.trim(), segment });
-      await saveContract(created.company_id, contract, companyStatus);
+      const finalContract = groupMode === "EXISTING" ? contractWithReplicatedModules(contract) : contract;
+      await saveContract(created.company_id, finalContract, companyStatus);
+
+      if (groupMode === "EXISTING" && createReplicationSourceStoreId) {
+        const sections = createReplicationSections.filter((section) => section !== "MODULES");
+        if (sections.length) {
+          await apiPost("/api/master/groups/replicate", {
+            groupId,
+            sourceStoreId: createReplicationSourceStoreId,
+            targetStoreIds: [created.store_id],
+            sections,
+          });
+        }
+      }
+
       setCreateOpen(false); resetCreate(); await load(); await onRefresh();
-      setNotice({ text: "Empresa e contratação criadas com sucesso." });
+      setNotice({ text: groupMode === "EXISTING" && createReplicationSourceStoreId ? "Empresa criada e base do grupo replicada com sucesso." : "Empresa e contratação criadas com sucesso." });
     } catch (error) { setFormError(error instanceof Error ? error.message : "Não foi possível criar a empresa."); }
     finally { setSaving(false); }
   }
@@ -6290,7 +6536,7 @@ function MasterCommercialPage({
     setReplicateGroup({ ...group, availableStores: groupStores });
     setReplicateSourceStoreId(sourceId);
     setReplicateTargetStoreIds(groupStores.filter((store: any) => String(store.id) !== sourceId).map((store: any) => String(store.id)));
-    setReplicateSections(["IDENTITY", "CHECKLIST", "PRICING", "MESSAGES"]);
+    setReplicateSections(["IDENTITY", "CHECKLIST", "PRICING", "MESSAGES", "MODULES", "USERS"]);
     setReplicateOpen(true);
   }
 
@@ -6416,7 +6662,6 @@ function MasterCommercialPage({
 
   const normalizedSearch = normalizeAssistantText(search);
   const filteredGroups = groups.filter((group) => normalizeAssistantText(JSON.stringify(group)).includes(normalizedSearch));
-  const currentSubscription = subscriptions.find((item) => item.company_id === currentStore.companyId);
   const selectedHistory = selectedCompany ? histories.filter((item) => item.company_id === selectedCompany.id) : [];
 
   function renderContractForm() {
@@ -6444,11 +6689,26 @@ function MasterCommercialPage({
   }
 
   function renderModalBody(creating: boolean) {
-    return <><nav className="master-edit-tabs"><button type="button" className={activeTab === "DATA" ? "active" : ""} onClick={() => setActiveTab("DATA")}>Dados</button><button type="button" className={activeTab === "CONTRACT" ? "active" : ""} onClick={() => setActiveTab("CONTRACT")}>Plano e contratação</button><button type="button" className={activeTab === "MODULES" ? "active" : ""} onClick={() => setActiveTab("MODULES")}>Módulos e limites</button>{!creating && <button type="button" className={activeTab === "HISTORY" ? "active" : ""} onClick={() => setActiveTab("HISTORY")}>Histórico</button>}</nav>
+    const createGroupStores = creating && groupMode === "EXISTING" && groupId ? groupStoresFor(groupId) : [];
+    return <><nav className="master-edit-tabs"><button type="button" className={activeTab === "DATA" ? "active" : ""} onClick={() => setActiveTab("DATA")}>Dados</button><button type="button" className={activeTab === "CONTRACT" ? "active" : ""} onClick={() => setActiveTab("CONTRACT")}>Plano e contratação</button><button type="button" className={activeTab === "MODULES" ? "active" : ""} onClick={() => setActiveTab("MODULES")}>Módulos e limites</button>{creating && groupMode === "EXISTING" && <button type="button" className={activeTab === "REPLICATE" ? "active" : ""} onClick={() => setActiveTab("REPLICATE")}>Replicar base</button>}{!creating && <button type="button" className={activeTab === "HISTORY" ? "active" : ""} onClick={() => setActiveTab("HISTORY")}>Histórico</button>}</nav>
       <div className="master-company-modal-content">
         {activeTab === "DATA" && <div className="master-company-form master-company-data-form">
-          {creating && <Field label="Vínculo empresarial"><select name="groupMode" value={groupMode} onChange={(event) => setGroupMode(event.target.value as "NEW" | "EXISTING")}><option value="NEW">Novo grupo</option><option value="EXISTING">Grupo existente</option></select></Field>}
-          {creating && (groupMode === "NEW" ? <Field label="Nome do grupo empresarial"><input name="groupName" autoComplete="organization" value={groupName} onChange={(event) => setGroupName(event.target.value)} placeholder="Proprietário ou grupo econômico" /></Field> : <Field label="Grupo empresarial"><select name="groupId" value={groupId} onChange={(event) => setGroupId(event.target.value)}><option value="">Selecione</option>{groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</select></Field>)}
+          {creating && <Field label="Vínculo empresarial"><select name="groupMode" value={groupMode} onChange={(event) => {
+            const mode = event.target.value as "NEW" | "EXISTING";
+            setGroupMode(mode);
+            if (mode === "NEW") { setGroupId(""); setCreateReplicationSourceStoreId(""); }
+          }}><option value="NEW">Novo grupo</option><option value="EXISTING">Grupo existente</option></select></Field>}
+          {creating && (groupMode === "NEW" ? <Field label="Nome do grupo empresarial"><input name="groupName" autoComplete="organization" value={groupName} onChange={(event) => setGroupName(event.target.value)} placeholder="Proprietário ou grupo econômico" /></Field> : <Field label="Grupo empresarial"><select name="groupId" value={groupId} onChange={(event) => {
+            const nextGroupId = event.target.value;
+            setGroupId(nextGroupId);
+            const firstStore = groupStoresFor(nextGroupId)[0];
+            setCreateReplicationSourceStoreId(firstStore ? String(firstStore.id) : "");
+          }}><option value="">Selecione</option>{groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</select></Field>)}
+          {creating && groupMode === "EXISTING" && groupId && <div className="master-data-replication-card">
+            <PremiumIcon name="layers" size={19} />
+            <span><strong>Usar uma empresa do grupo como base</strong><small>Você pode copiar configurações, módulos, limites e usuários já neste cadastro.</small></span>
+            <button type="button" className="outline small" onClick={() => setActiveTab("REPLICATE")}>Configurar replicação</button>
+          </div>}
           <Field label="Empresa / razão exibida"><input name="companyName" autoComplete="organization" autoFocus value={companyName} onChange={(event) => { const value = event.target.value; setCompanyName(value); if (!storeNameTouched) setStoreName(value); }} placeholder="Nome comercial ou razão social" /></Field>
           <Field label="CNPJ"><input name="companyDocument" autoComplete="off" inputMode="numeric" maxLength={18} value={document} onChange={(event) => setDocument(formatCnpjInput(event.target.value))} placeholder="00.000.000/0000-00" /></Field>
           <Field label="Unidade principal"><input name="storeName" autoComplete="organization-title" value={storeName} onChange={(event) => { setStoreNameTouched(true); setStoreName(event.target.value); }} placeholder="Matriz, Centro, Loja 1..." /></Field>
@@ -6457,18 +6717,42 @@ function MasterCommercialPage({
         </div>}
         {activeTab === "CONTRACT" && renderContractForm()}
         {activeTab === "MODULES" && renderModulesForm()}
+        {activeTab === "REPLICATE" && creating && groupMode === "EXISTING" && <div className="master-create-replication">
+          <div className="master-create-replication-hero">
+            <PremiumIcon name="layers" size={22} />
+            <div><strong>Começar com a base de outra empresa do grupo</strong><small>Replica somente o que você marcar. Dados operacionais e históricos não são copiados.</small></div>
+          </div>
+          <Field label="Empresa / unidade de referência">
+            <select value={createReplicationSourceStoreId} onChange={(event) => setCreateReplicationSourceStoreId(event.target.value)}>
+              <option value="">Não replicar — iniciar em branco</option>
+              {createGroupStores.map((store: any) => <option key={store.id} value={store.id}>{store.companyName} · {store.name}</option>)}
+            </select>
+          </Field>
+          {createReplicationSourceStoreId && <div className="master-replicate-sections master-create-replication-grid">
+            {[
+              ["IDENTITY", "Identidade visual", "Logo, cores e aparência"],
+              ["CHECKLIST", "Checklist", "Etapas e itens configurados"],
+              ["PRICING", "Preços e condições", "Margens e padrões comerciais"],
+              ["MESSAGES", "Mensagens", "Modelos e padrão de envio"],
+              ["KNOWLEDGE", "Conhecimento da IA", "Base de conhecimento cadastrada"],
+              ["CATALOG", "Catálogo", "Peças, produtos e serviços"],
+              ["MODULES", "Módulos e limites", "Módulos, limites e configuração de Pedidos de peças"],
+              ["USERS", "Usuários e funções", "Vincula a equipe ativa à nova unidade"],
+            ].map(([key, label, description]) => <label key={key} className={createReplicationSections.includes(key) ? "active" : ""}>
+              <input type="checkbox" checked={createReplicationSections.includes(key)} onChange={(event) => setCreateReplicationSections((current) => event.target.checked ? Array.from(new Set([...current, key])) : current.filter((item) => item !== key))} />
+              <span><b>{label}</b><small>{description}</small></span>
+            </label>)}
+          </div>}
+          <aside className="master-replicate-warning"><b>Segurança</b><span>Clientes, orçamentos, O.S., pedidos de peças, estoque movimentado e históricos permanecem exclusivos de cada empresa.</span></aside>
+        </div>}
         {activeTab === "HISTORY" && <div className="master-history-list">{selectedHistory.length ? selectedHistory.map((item) => <article key={item.id}><strong>{item.action === "CONTRACT_CHANGED" ? "Contratação alterada" : "Contratação criada"}</strong><span>{new Date(item.changed_at).toLocaleString("pt-BR")}</span><p>{item.justification || "Sem justificativa informada."}</p></article>) : <div className="empty-inline">Nenhuma alteração contratual registrada.</div>}</div>}
         {formError && <div className="auth-error master-company-error" role="alert">{formError}</div>}
       </div></>;
   }
 
-  const currentMasterCompany = groups.flatMap((group) => group.companies || []).find((company: any) => String(company.id) === String(currentStore.companyId));
-  const currentCompanyStatus = String(currentMasterCompany?.status || "ACTIVE");
-
-  return <div className="master-page master-page-v177">
-    <section className="master-heading"><div><small>GERIVO MASTER</small><h2>Empresas, planos e contratações</h2><p>Crie, edite, ative, suspenda e personalize cada operação sem perder o histórico.</p></div><div className="master-heading-actions"><button type="button" className="outline" onClick={openPlansEditor}>Editar planos e valores</button><button type="button" className="primary" onClick={() => { resetCreate(); setCreateOpen(true); }}>+ Nova empresa</button></div></section>
+  return <div className="master-page master-page-v177 master-control-page">
+    <section className="master-heading master-control-hero"><div><small>PAINEL DE CONTROLE GERIVO</small><h2>Central de empresas</h2><p>Administre grupos, empresas, contratações, módulos, limites e acessos sem entrar na operação de cada cliente.</p></div><div className="master-heading-actions"><button type="button" className="outline master-neon-button" onClick={openPlansEditor}>Planos e valores</button><button type="button" className="outline master-neon-button" onClick={() => { setFormError(""); setNewGroupName(""); setCreateGroupOpen(true); }}>+ Novo grupo</button><button type="button" className="primary master-neon-primary" onClick={() => { resetCreate(); setCreateOpen(true); }}>+ Nova empresa</button></div></section>
     <section className="master-summary-grid"><Metric label="Empresas cadastradas" value={String(groups.reduce((sum, group) => sum + (group.companies?.length || 0), 0))} detail={`${groups.length} grupo(s) empresarial(is)`} /><Metric label="Contratos ativos" value={String(subscriptions.filter((item) => item.status === "ACTIVE").length)} detail="Assinaturas vigentes" /><Metric label="Próximos do vencimento" value={String(subscriptions.filter((item) => item.expires_at && new Date(item.expires_at).getTime() - Date.now() <= 10 * 86400000 && new Date(item.expires_at).getTime() >= Date.now()).length)} detail="Vencimento em até 10 dias" /><Metric label="Planos personalizados" value={String(subscriptions.filter((item) => item.plan_mode === "CUSTOM").length)} detail="Contratações sob medida" /></section>
-    <section className="panel subscription-current"><header><div><small>EMPRESA SELECIONADA</small><h3>{currentStore.companyName}</h3></div><span className={`company-status status-${currentCompanyStatus.toLowerCase()}`}>{companyStatusLabel(currentCompanyStatus)}</span></header>{currentSubscription ? <div className="subscription-detail subscription-detail-v177"><strong>{currentSubscription.plan_mode === "CUSTOM" ? currentSubscription.custom_plan_name || "Personalizado" : currentSubscription.subscription_plans?.name || "Plano"}</strong><span>Contrato: {companyStatusLabel(currentSubscription.status)}</span><span>Período: {formatDate(currentSubscription.contract_start || currentSubscription.activated_at)} a {formatDate(currentSubscription.contract_end || currentSubscription.expires_at)}</span><span>Valor: {money(currentSubscription.contracted_value)}</span></div> : <div className="empty-inline master-no-contract"><strong>{companyStatusLabel(currentCompanyStatus)}</strong><span>Empresa cadastrada e operacional, porém ainda sem plano contratado.</span></div>}</section>
     <section className="panel master-groups-panel">
       <header>
         <div><small>ESTRUTURA EMPRESARIAL</small><h3>{groups.length} grupo(s)</h3></div>
@@ -6493,8 +6777,9 @@ function MasterCommercialPage({
                   <section key={company.id} className="master-company-row-v177">
                     <div className="master-company-identity"><b>{company.name}</b><small>{company.document || "CNPJ não informado"} · {company.segment || "OUTRO"}</small><span className={`company-status status-${String(company.status || "ACTIVE").toLowerCase()}`}>{companyStatusLabel(company.status || "ACTIVE")}</span></div>
                     <div className="master-company-contract"><strong>{subscription?.plan_mode === "CUSTOM" ? subscription?.custom_plan_name || "Personalizado" : subscription?.subscription_plans?.name || "Sem plano"}</strong><small>{subscription?.contract_end || subscription?.expires_at ? `até ${formatDate(subscription.contract_end || subscription.expires_at)}` : "sem período definido"}</small></div>
-                    <ul>{(company.stores || []).map((store: any) => <li key={store.id}>{store.name}<span>ID {store.public_code}</span></li>)}</ul>
+                    <ul>{(company.stores || []).map((store: any) => <li key={store.id}><button type="button" className="master-store-open" onClick={() => void onOpenStore(String(store.id))}><span><b>{store.name}</b><small>ID {store.public_code}</small></span><PremiumIcon name="chevron" size={14} /></button></li>)}</ul>
                     <div className="master-company-actions">
+                      {company.stores?.[0]?.id && <button type="button" className="primary small master-open-operation" disabled={saving} onClick={() => void onOpenStore(String(company.stores[0].id))}>Abrir operação</button>}
                       <button type="button" className="outline small" disabled={saving} onClick={() => openEdit(company)}>Editar</button>
                       {company.status === "SUSPENDED" || company.status === "CANCELED" ? <button type="button" className="primary small" disabled={saving} onClick={() => void changeStatus(company, "ACTIVE")}>Reativar</button> : <button type="button" className="outline small" disabled={saving} onClick={() => void changeStatus(company, "SUSPENDED")}>Suspender</button>}
                       <button type="button" className="outline small" disabled={saving} onClick={() => void changeStatus(company, "CANCELED")}>Arquivar</button>
@@ -6509,8 +6794,8 @@ function MasterCommercialPage({
       </div>
     </section>
     {notice && <div className={notice.error ? "master-pop-toast error" : "master-pop-toast"}><span>{notice.error ? "!" : "✓"}</span><strong>{notice.text}</strong></div>}
-    {plansOpen && <div className="modal-backdrop"><section className="compact-modal master-plans-modal"><header><div><small>PLANOS GERIVO</small><h2>Valores e conteúdo do site de vendas</h2><p>As alterações publicadas aqui aparecem automaticamente na página comercial.</p></div><button type="button" onClick={() => setPlansOpen(false)}>×</button></header><div className="master-plan-editor-grid">{planDrafts.map((plan) => <article key={plan.id} className={plan.recommended ? "master-plan-editor recommended" : "master-plan-editor"}><header><div><small>{plan.code}</small><input value={plan.name} onChange={(event) => patchPlanDraft(plan.id, { name: event.target.value })} /></div><label><input type="checkbox" checked={plan.public_visible} onChange={(event) => patchPlanDraft(plan.id, { public_visible: event.target.checked })} /> Exibir no site</label></header><div className="master-plan-price-row"><Field label="Mensal"><CurrencyInput value={plan.monthly_price} onChange={(monthly_price) => patchPlanDraft(plan.id, { monthly_price })} /></Field><Field label="Anual"><CurrencyInput value={plan.annual_price} onChange={(annual_price) => patchPlanDraft(plan.id, { annual_price })} /></Field></div><div className="master-plan-limits"><Field label="Empresas"><input type="number" min="1" value={plan.company_limit} onChange={(event) => patchPlanDraft(plan.id, { company_limit: Number(event.target.value) })} /></Field><Field label="Unidades"><input type="number" min="1" value={plan.store_limit} onChange={(event) => patchPlanDraft(plan.id, { store_limit: Number(event.target.value) })} /></Field><Field label="Usuários"><input type="number" min="1" value={plan.user_limit} onChange={(event) => patchPlanDraft(plan.id, { user_limit: Number(event.target.value) })} /></Field><Field label="IA/mês"><input type="number" min="0" value={plan.ai_queries_monthly} onChange={(event) => patchPlanDraft(plan.id, { ai_queries_monthly: Number(event.target.value) })} /></Field></div><Field label="Descrição pública"><input value={plan.public_description} onChange={(event) => patchPlanDraft(plan.id, { public_description: event.target.value })} /></Field><Field label="Benefícios — um por linha"><textarea rows={4} value={plan.public_features_text} onChange={(event) => patchPlanDraft(plan.id, { public_features_text: event.target.value })} /></Field><div className="master-plan-publish"><label><input type="checkbox" checked={plan.recommended} onChange={(event) => patchPlanDraft(plan.id, { recommended: event.target.checked })} /> Mais indicado</label><Field label="Texto do botão"><input value={plan.public_cta_label} onChange={(event) => patchPlanDraft(plan.id, { public_cta_label: event.target.value })} /></Field><Field label="Ordem"><input type="number" value={plan.public_sort_order} onChange={(event) => patchPlanDraft(plan.id, { public_sort_order: Number(event.target.value) })} /></Field></div><button type="button" className="primary" disabled={Boolean(savingPlanId)} onClick={() => void savePlanDraft(plan)}>{savingPlanId === plan.id ? "Salvando..." : "Salvar este plano"}</button></article>)}</div><footer><button type="button" className="outline" onClick={() => setPlansOpen(false)}>Fechar</button></footer></section></div>}
-    {replicateOpen && replicateGroup && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setReplicateOpen(false); }}>
+    {plansOpen && <div className="modal-backdrop master-control-backdrop"><section className="compact-modal master-plans-modal"><header><div><small>PLANOS GERIVO</small><h2>Valores e conteúdo do site de vendas</h2><p>As alterações publicadas aqui aparecem automaticamente na página comercial.</p></div><button type="button" onClick={() => setPlansOpen(false)}>×</button></header><div className="master-plan-editor-grid">{planDrafts.map((plan) => <article key={plan.id} className={plan.recommended ? "master-plan-editor recommended" : "master-plan-editor"}><header><div><small>{plan.code}</small><input value={plan.name} onChange={(event) => patchPlanDraft(plan.id, { name: event.target.value })} /></div><label><input type="checkbox" checked={plan.public_visible} onChange={(event) => patchPlanDraft(plan.id, { public_visible: event.target.checked })} /> Exibir no site</label></header><div className="master-plan-price-row"><Field label="Mensal"><CurrencyInput value={plan.monthly_price} onChange={(monthly_price) => patchPlanDraft(plan.id, { monthly_price })} /></Field><Field label="Anual"><CurrencyInput value={plan.annual_price} onChange={(annual_price) => patchPlanDraft(plan.id, { annual_price })} /></Field></div><div className="master-plan-limits"><Field label="Empresas"><input type="number" min="1" value={plan.company_limit} onChange={(event) => patchPlanDraft(plan.id, { company_limit: Number(event.target.value) })} /></Field><Field label="Unidades"><input type="number" min="1" value={plan.store_limit} onChange={(event) => patchPlanDraft(plan.id, { store_limit: Number(event.target.value) })} /></Field><Field label="Usuários"><input type="number" min="1" value={plan.user_limit} onChange={(event) => patchPlanDraft(plan.id, { user_limit: Number(event.target.value) })} /></Field><Field label="IA/mês"><input type="number" min="0" value={plan.ai_queries_monthly} onChange={(event) => patchPlanDraft(plan.id, { ai_queries_monthly: Number(event.target.value) })} /></Field></div><Field label="Descrição pública"><input value={plan.public_description} onChange={(event) => patchPlanDraft(plan.id, { public_description: event.target.value })} /></Field><Field label="Benefícios — um por linha"><textarea rows={4} value={plan.public_features_text} onChange={(event) => patchPlanDraft(plan.id, { public_features_text: event.target.value })} /></Field><div className="master-plan-publish"><label><input type="checkbox" checked={plan.recommended} onChange={(event) => patchPlanDraft(plan.id, { recommended: event.target.checked })} /> Mais indicado</label><Field label="Texto do botão"><input value={plan.public_cta_label} onChange={(event) => patchPlanDraft(plan.id, { public_cta_label: event.target.value })} /></Field><Field label="Ordem"><input type="number" value={plan.public_sort_order} onChange={(event) => patchPlanDraft(plan.id, { public_sort_order: Number(event.target.value) })} /></Field></div><button type="button" className="primary" disabled={Boolean(savingPlanId)} onClick={() => void savePlanDraft(plan)}>{savingPlanId === plan.id ? "Salvando..." : "Salvar este plano"}</button></article>)}</div><footer><button type="button" className="outline" onClick={() => setPlansOpen(false)}>Fechar</button></footer></section></div>}
+    {replicateOpen && replicateGroup && <div className="modal-backdrop master-control-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setReplicateOpen(false); }}>
       <section role="dialog" aria-modal="true" className="compact-modal master-replicate-modal">
         <header>
           <div><small>REPLICAR CONFIGURAÇÕES</small><h2>{replicateGroup.name}</h2><p>Copie padrões administrativos entre unidades do mesmo grupo sem misturar orçamentos, clientes ou demais dados operacionais.</p></div>
@@ -6547,16 +6832,19 @@ function MasterCommercialPage({
                 ["MESSAGES", "Modelos de mensagens"],
                 ["KNOWLEDGE", "Conhecimento da IA"],
                 ["CATALOG", "Catálogo cadastrado"],
+                ["MODULES", "Módulos e limites"],
+                ["USERS", "Usuários, funções e acessos"],
               ].map(([key, label]) => <label key={key}><input type="checkbox" checked={replicateSections.includes(key)} onChange={(event) => setReplicateSections((current) => event.target.checked ? Array.from(new Set([...current, key])) : current.filter((item) => item !== key))} /> {label}</label>)}
             </div>
           </div>
-          <aside className="master-replicate-warning"><b>Importante</b><span>Esta ação substitui somente as configurações selecionadas nas unidades de destino. Orçamentos, O.S., clientes, usuários e movimentações permanecem intactos.</span></aside>
+          <aside className="master-replicate-warning"><b>Importante</b><span>Orçamentos, O.S., clientes e movimentações nunca são copiados. Usuários só são vinculados quando a opção correspondente estiver marcada.</span></aside>
         </div>
         <footer><button type="button" className="outline" disabled={saving} onClick={() => setReplicateOpen(false)}>Cancelar</button><button type="button" className="primary" disabled={saving || !replicateSourceStoreId || !replicateTargetStoreIds.length || !replicateSections.length} onClick={() => void replicateGroupSettings()}>{saving ? "Replicando..." : "Replicar configurações"}</button></footer>
       </section>
     </div>}
-    {createOpen && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setCreateOpen(false); }}><section role="dialog" aria-modal="true" className="compact-modal master-company-modal master-company-modal-v1792"><header><div><small>NOVA EMPRESA</small><h2>Cadastrar cliente e contratação</h2></div><button type="button" disabled={saving} onClick={() => { if (!saving) setCreateOpen(false); }}>×</button></header>{renderModalBody(true)}<footer><button type="button" className="outline" disabled={saving} onClick={() => setCreateOpen(false)}>Cancelar</button><button type="button" className="primary" disabled={saving || !companyName.trim() || !storeName.trim()} onClick={() => void createCompany()}>{saving ? "Criando e ativando..." : "Criar empresa"}</button></footer></section></div>}
-    {editOpen && selectedCompany && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setEditOpen(false); }}><section role="dialog" aria-modal="true" className="compact-modal master-company-modal master-company-modal-v1792"><header><div><small>EDITAR EMPRESA</small><h2>{selectedCompany.name}</h2></div><button type="button" disabled={saving} onClick={() => { if (!saving) setEditOpen(false); }}>×</button></header>{renderModalBody(false)}<footer><button type="button" className="outline" disabled={saving} onClick={() => setEditOpen(false)}>Cancelar</button><button type="button" className="primary" disabled={saving || !companyName.trim()} onClick={() => void saveCompany()}>{saving ? "Salvando alterações..." : "Salvar alterações"}</button></footer></section></div>}
+    {createGroupOpen && <div className="modal-backdrop master-control-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setCreateGroupOpen(false); }}><section role="dialog" aria-modal="true" className="compact-modal master-group-create-modal"><header><div><small>NOVO GRUPO</small><h2>Criar estrutura empresarial</h2><p>O grupo pode existir sem empresa. Depois você adiciona CNPJs e replica a base quando quiser.</p></div><button type="button" disabled={saving} onClick={() => setCreateGroupOpen(false)}>×</button></header><div className="master-group-create-body"><Field label="Nome do grupo empresarial"><input autoFocus value={newGroupName} onChange={(event) => setNewGroupName(event.target.value)} placeholder="Ex.: Grupo IESA" /></Field>{formError && <div className="auth-error" role="alert">{formError}</div>}</div><footer><button type="button" className="outline" disabled={saving} onClick={() => setCreateGroupOpen(false)}>Cancelar</button><button type="button" className="primary master-neon-primary" disabled={saving || newGroupName.trim().length < 2} onClick={() => void createGroupOnly()}>{saving ? "Criando..." : "Criar grupo"}</button></footer></section></div>}
+    {createOpen && <div className="modal-backdrop master-control-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setCreateOpen(false); }}><section role="dialog" aria-modal="true" className="compact-modal master-company-modal master-company-modal-v1792 master-company-modal-v1714"><header><div><small>NOVA EMPRESA</small><h2>Nova empresa / unidade</h2><p>Vincule ao grupo, configure a contratação e replique uma base existente em um único fluxo.</p></div><button type="button" disabled={saving} onClick={() => { if (!saving) setCreateOpen(false); }}>×</button></header>{renderModalBody(true)}<footer><button type="button" className="outline" disabled={saving} onClick={() => setCreateOpen(false)}>Cancelar</button><button type="button" className="primary master-neon-primary" disabled={saving || !companyName.trim() || !storeName.trim()} onClick={() => void createCompany()}>{saving ? "Criando e configurando..." : "Criar empresa"}</button></footer></section></div>}
+    {editOpen && selectedCompany && <div className="modal-backdrop master-control-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setEditOpen(false); }}><section role="dialog" aria-modal="true" className="compact-modal master-company-modal master-company-modal-v1792"><header><div><small>EDITAR EMPRESA</small><h2>{selectedCompany.name}</h2></div><button type="button" disabled={saving} onClick={() => { if (!saving) setEditOpen(false); }}>×</button></header>{renderModalBody(false)}<footer><button type="button" className="outline" disabled={saving} onClick={() => setEditOpen(false)}>Cancelar</button><button type="button" className="primary" disabled={saving || !companyName.trim()} onClick={() => void saveCompany()}>{saving ? "Salvando alterações..." : "Salvar alterações"}</button></footer></section></div>}
   </div>;
 }
 
@@ -7113,8 +7401,8 @@ function CompanySettingsModal({
   }
 
   return <div className="modal-backdrop"><section className="settings-modal company-settings-modal">
-    <header><div><small>CONFIGURAÇÃO POR EMPRESA</small><h2>{tab === "IDENTITY" ? "Identidade visual" : tab === "CHECKLIST" ? "Modelos de checklist" : tab === "QUOTES" ? "Orçamentos" : tab === "PRICING" ? "Formação de preço" : "Módulos contratados"}</h2></div><button onClick={onClose}>×</button></header>
-    <nav className="settings-tabs"><button className={tab === "IDENTITY" ? "active" : ""} onClick={() => setTab("IDENTITY")}>Identidade</button><button className={tab === "PRICING" ? "active" : ""} onClick={() => setTab("PRICING")}>Preços</button>{isPlatformMaster && <button className={tab === "MODULES" ? "active" : ""} onClick={() => setTab("MODULES")}>Módulos</button>}<button disabled={!companyDraft.modules.CHECKLIST} className={tab === "CHECKLIST" ? "active" : ""} onClick={() => setTab("CHECKLIST")}>Checklist</button><button disabled={!companyDraft.modules.QUOTES} className={tab === "QUOTES" ? "active" : ""} onClick={() => setTab("QUOTES")}>Orçamentos</button></nav>
+    <header><div><small>CONFIGURAÇÃO POR EMPRESA</small><h2>{tab === "IDENTITY" ? "Identidade visual" : tab === "CHECKLIST" ? "Modelos de checklist" : tab === "QUOTES" ? "Orçamentos" : tab === "PRICING" ? "Formação de preço" : tab === "PARTS_ORDERS" ? "Pedidos de peças" : "Módulos contratados"}</h2></div><button onClick={onClose}>×</button></header>
+    <nav className="settings-tabs"><button className={tab === "IDENTITY" ? "active" : ""} onClick={() => setTab("IDENTITY")}>Identidade</button><button className={tab === "PRICING" ? "active" : ""} onClick={() => setTab("PRICING")}>Preços</button>{isPlatformMaster && <button className={tab === "MODULES" ? "active" : ""} onClick={() => setTab("MODULES")}>Módulos</button>}<button disabled={!companyDraft.modules.CHECKLIST} className={tab === "CHECKLIST" ? "active" : ""} onClick={() => setTab("CHECKLIST")}>Checklist</button><button disabled={!companyDraft.modules.QUOTES} className={tab === "QUOTES" ? "active" : ""} onClick={() => setTab("QUOTES")}>Orçamentos</button><button disabled={!companyDraft.modules.PARTS_ORDERS} className={tab === "PARTS_ORDERS" ? "active" : ""} onClick={() => setTab("PARTS_ORDERS")}>Pedidos de peças</button></nav>
 
     {tab === "IDENTITY" && <div className="company-settings-content identity-settings-content">
       <section className="identity-editor-grid">
@@ -7168,6 +7456,19 @@ function CompanySettingsModal({
           ))}
         </div>
       </div>
+    </div>}
+
+    {tab === "PARTS_ORDERS" && <div className="company-settings-content parts-order-settings-content">
+      <section className="parts-order-settings-hero"><small>CAMPOS DO CADASTRO</small><h3>Defina o que esta empresa utiliza em Pedidos de peças</h3><p>Cliente, número do pedido, data, TAG, tipo de pedido e responsável permanecem padrão. Os campos abaixo podem ser ativados e definidos como obrigatórios.</p></section>
+      <div className="parts-order-field-settings">{([
+        ["contact", "Contato do cliente", "Telefone ou outro contato para acompanhamento"],
+        ["plate", "Placa", "Útil para concessionárias e oficinas"],
+        ["quoteNumber", "Orçamento vinculado", "Número do orçamento relacionado ao pedido"],
+        ["productive", "Produtivo / oficina", "Responsável técnico ou setor da oficina"],
+      ] as [PartOrderOptionalField, string, string][]).map(([key, label, description]) => {
+        const rule = companyDraft.partOrderSettings.fields[key];
+        return <article key={key} className={rule.enabled ? "active" : ""}><div><strong>{label}</strong><small>{description}</small></div><label><input type="checkbox" checked={rule.enabled} onChange={(event) => setCompanyDraft({ ...companyDraft, partOrderSettings: { fields: { ...companyDraft.partOrderSettings.fields, [key]: { enabled: event.target.checked, required: event.target.checked ? rule.required : false } } } })} /> Usar campo</label><label className={!rule.enabled ? "disabled" : ""}><input type="checkbox" disabled={!rule.enabled} checked={rule.required} onChange={(event) => setCompanyDraft({ ...companyDraft, partOrderSettings: { fields: { ...companyDraft.partOrderSettings.fields, [key]: { ...rule, required: event.target.checked } } } })} /> Obrigatório</label></article>;
+      })}</div>
     </div>}
 
     {tab === "CHECKLIST" && <div className="checklist-settings-content">
@@ -7350,6 +7651,13 @@ function QuotesPage({
     onChange(quotes.map((quote) => quote.id === updated.id ? updated : quote));
   }
 
+  function deleteQuote(quote: Quote) {
+    const customer = quote.customer ? ` de ${quote.customer}` : "";
+    if (!window.confirm(`Excluir definitivamente ${quote.code}${customer}?`)) return;
+    if (messageQuoteId === quote.id) setMessageQuoteId(null);
+    onChange(quotes.filter((item) => item.id !== quote.id));
+  }
+
   return (
     <section className="module-list-page quotes-list-v179">
       <FilterToolbar
@@ -7380,8 +7688,11 @@ function QuotesPage({
             <div className="document-main"><strong>{quote.customer || "Cliente não informado"}</strong><small>{quote.vehicle || "Veículo não informado"} · {quote.plate || "Sem placa"}{attendance ? ` · ${attendance.code}` : ""}</small></div>
             <label className="inline-status-select quote-status-select"><span>Status</span><select value={quote.status} onChange={(event) => updateStatus(quote.id, event.target.value as QuoteStatus)}><QuoteStatusOptions /></select></label>
             <strong className="document-total">{money(quote.total)}</strong>
-            <button className="quote-message-bubble" title="Mensagens do orçamento" aria-label={`Mensagens de ${quote.code}`} onClick={() => setMessageQuoteId(quote.id)}><span>💬</span>{quote.messageHistory.length > 0 && <b>{quote.messageHistory.length}</b>}</button>
-            <button className="outline small" onClick={() => onOpen(quote.id)}>Abrir</button>
+            <div className="quote-row-actions">
+              <button className="quote-message-bubble" title="Mensagens do orçamento" aria-label={`Mensagens de ${quote.code}`} onClick={() => setMessageQuoteId(quote.id)}><span>💬</span>{quote.messageHistory.length > 0 && <b>{quote.messageHistory.length}</b>}</button>
+              <button className="quote-delete-button" type="button" title={`Excluir ${quote.code}`} aria-label={`Excluir ${quote.code}`} onClick={() => deleteQuote(quote)}><PremiumIcon name="trash" size={16} /></button>
+              <button className="outline small" onClick={() => onOpen(quote.id)}>Abrir</button>
+            </div>
           </article>;
         })}</div>}
       </section>
@@ -7531,7 +7842,7 @@ function BudgetImportModal({ context, onClose, onImport }: { context: BudgetImpo
           <div className="budget-import-source"><Field label="Origem do documento"><select value={source} onChange={(event) => setSource(event.target.value)}><option value="AUTO">Identificar automaticamente</option><option value="MOBATO">Mobato</option><option value="NBS">NBS</option></select></Field></div>
           <button type="button" className="budget-file-picker" onClick={() => fileInputRef.current?.click()}><PremiumIcon name="file" size={24} /><span><strong>{file ? file.name : "Selecionar PDF ou imagem"}</strong><small>PDF, PNG, JPG ou WEBP · até 4 MB para PDF</small></span></button>
           <input ref={fileInputRef} className="budget-import-file-input" type="file" accept="application/pdf,image/png,image/jpeg,image/webp" onChange={(event) => { setFile(event.target.files?.[0] || null); setLines([]); setIgnoredCount(0); setError(""); }} />
-          <div className="budget-import-rules"><span>✓ Quantidades decimais preservadas</span><span>✓ Linhas riscadas ignoradas</span><span>✓ Prévia obrigatória antes de adicionar</span></div>
+          <div className="budget-import-rules"><span>✓ Prioriza itens grifados em amarelo</span><span>✓ Importa descrição, quantidade e valor</span><span>✓ Linhas riscadas são ignoradas</span></div>
           <button type="button" className="primary" disabled={!file || processing} onClick={() => void recognize()}>{processing ? "Reconhecendo documento..." : "Reconhecer peças e mão de obra"}</button>
         </section>
         {error && <div className="budget-import-error">{error}</div>}
@@ -7759,6 +8070,7 @@ function QuoteEditor({
   assistantEnabled,
   consultants,
   onChange,
+  onDelete,
   onBack,
   onSaved,
 }: {
@@ -7773,6 +8085,7 @@ function QuoteEditor({
   assistantEnabled: boolean;
   consultants: ConsultantOption[];
   onChange: (quote: Quote) => void;
+  onDelete: () => void;
   onBack: () => void;
   onSaved: () => void;
 }) {
@@ -7802,7 +8115,7 @@ function QuoteEditor({
   function downloadQuote() { const html = buildQuoteDocumentHtml({ ...quote, total }, companyIdentity, customer); const blob = new Blob([html], { type: "text/html;charset=utf-8" }); const url = URL.createObjectURL(blob); const anchor = document.createElement("a"); anchor.href = url; anchor.download = `${quote.code}-${quote.plate || "orcamento"}.html`; document.body.appendChild(anchor); anchor.click(); anchor.remove(); URL.revokeObjectURL(url); }
 
   return <section className="document-editor-page quote-editor-professional">
-    <header className="document-editor-header quote-editor-header-v179"><div><small>ORÇAMENTO · {companyName}</small><h2>{quote.code}</h2><p>{quote.customer} · {quote.vehicle} · {quote.plate}</p></div><div className="quote-header-actions"><button className="outline" onClick={onBack}>← Lista</button><button className="outline" onClick={downloadQuote}>Baixar</button><button className="outline" onClick={printQuote}>Imprimir / PDF</button><button className="primary" onClick={onSaved}>Salvar</button></div></header>
+    <header className="document-editor-header quote-editor-header-v179"><div><small>ORÇAMENTO · {companyName}</small><h2>{quote.code}</h2><p>{quote.customer} · {quote.vehicle} · {quote.plate}</p></div><div className="quote-header-actions"><button className="outline" onClick={onBack}>← Lista</button><button className="quote-delete-header" type="button" onClick={onDelete}>Excluir</button><button className="outline" onClick={downloadQuote}>Baixar</button><button className="outline" onClick={printQuote}>Imprimir / PDF</button><button className="primary" onClick={onSaved}>Salvar</button></div></header>
     <section className="quote-overview-strip"><div><small>STATUS</small><strong>{quoteStatusLabel(quote.status)}</strong></div><div><small>ITENS</small><strong>{quote.items.filter((item) => item.name.trim()).length}</strong></div><div><small>SUBTOTAL</small><strong>{money(subtotal)}</strong></div><div className="quote-overview-total"><small>TOTAL FINAL</small><strong>{money(total)}</strong></div></section>
     <section className="document-editor-grid quote-editor-grid quote-editor-grid-v179">
       <article className="document-editor-card quote-commercial-card"><header><div><small>CONDIÇÕES</small><h3>Condições comerciais</h3></div></header><div className="document-form-grid"><Field label="Status"><select value={quote.status} onChange={(event) => update({ status: event.target.value as QuoteStatus })}><QuoteStatusOptions /></select></Field><Field label="Consultor de Serviços"><select value={quote.consultantUserId || ""} onChange={(event) => { const selected = consultants.find((item) => item.id === event.target.value); update({ consultantUserId: selected?.id || "", consultantNameSnapshot: selected?.name || "", responsible: selected?.name || quote.responsible }); }}><option value="">Selecione o consultor</option>{consultants.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field><Field label="Validade"><div className="validity-field"><div className="input-suffix"><input type="number" min="0" value={quote.validityDays} onChange={(event) => update({ validityDays: Math.max(0, Number(event.target.value) || 0) })} /><span>dias</span></div><small>Use 0 para ocultar.</small></div></Field><Field label="Forma de pagamento"><select value={quote.paymentMethod} onChange={(event) => update({ paymentMethod: event.target.value as PaymentMethod })}><option value="PIX">Pix</option><option value="DEBITO">Débito</option><option value="CREDITO">Crédito</option><option value="DINHEIRO">Dinheiro</option><option value="OUTRO">Outro</option></select></Field>{quote.paymentMethod === "CREDITO" && <Field label="Parcelamento em até"><select value={quote.installments} onChange={(event) => update({ installments: Number(event.target.value) })}>{Array.from({ length: 12 }, (_, index) => index + 1).map((value) => <option key={value} value={value}>{value}x</option>)}</select></Field>}<Field label="Desconto em reais"><CurrencyInput value={quote.discountAmount} onChange={(discountAmount) => update({ discountAmount })} /></Field><Field label="Desconto %"><input inputMode="decimal" type="text" value={String(quote.discountPercent).replace(".", ",")} onChange={(event) => update({ discountPercent: Math.max(0, Math.min(100, Number(event.target.value.replace(",", ".")) || 0)) })} /></Field></div>{quote.status === "NAO_APROVADO" && <div className="quote-rejection-fields"><Field label="Motivo da não aprovação"><select value={quote.rejectionReason} onChange={(event) => update({ rejectionReason: event.target.value })}><option value="PRECO">Preço</option><option value="PRAZO">Prazo</option><option value="DESISTENCIA">Cliente desistiu</option><option value="OUTRO_LOCAL">Executado em outro local</option><option value="SEM_RETORNO">Sem retorno</option><option value="ADIADO">Serviço adiado</option><option value="OUTRO">Outro</option></select></Field><Field label="Observação"><textarea rows={2} value={quote.rejectionNotes} onChange={(event) => update({ rejectionNotes: event.target.value })} placeholder="Detalhe opcional para o histórico." /></Field></div>}<label className="quote-combine-toggle"><input type="checkbox" checked={quote.combinePartsLabor} onChange={(event) => update({ combinePartsLabor: event.target.checked })} /><span><strong>Unir peça + mão de obra por categoria</strong><small>Somente itens da mesma categoria são agrupados.</small></span></label></article>

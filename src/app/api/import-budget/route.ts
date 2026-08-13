@@ -94,6 +94,183 @@ function detectSourceFromText(text: string, requestedSource: string) {
 
 type PdfTable = string[][];
 
+
+type HighlightRect = { x1: number; y1: number; x2: number; y2: number };
+type HighlightFragment = { page: number; x: number; y: number; text: string };
+
+function numericWholeCell(value: string) {
+  return /^-?(?:R\$\s*)?\d+(?:\.\d{3})*(?:[.,]\d+)?$/.test(value.trim());
+}
+
+function annotationRects(annotation: any): HighlightRect[] {
+  const rects: HighlightRect[] = [];
+  const addRect = (x1: number, y1: number, x2: number, y2: number) => {
+    const values = [x1, y1, x2, y2];
+    if (!values.every(Number.isFinite)) return;
+    rects.push({ x1: Math.min(x1, x2), y1: Math.min(y1, y2), x2: Math.max(x1, x2), y2: Math.max(y1, y2) });
+  };
+  const quads = annotation?.quadPoints;
+  if (quads && !Array.isArray(quads) && typeof quads.length === "number" && quads.length >= 8) {
+    const flat = Array.from(quads as ArrayLike<number>).map(Number);
+    for (let index = 0; index + 7 < flat.length; index += 8) {
+      const xs = [flat[index], flat[index + 2], flat[index + 4], flat[index + 6]];
+      const ys = [flat[index + 1], flat[index + 3], flat[index + 5], flat[index + 7]];
+      if (xs.every(Number.isFinite) && ys.every(Number.isFinite)) addRect(Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys));
+    }
+  }
+  if (Array.isArray(quads)) {
+    for (const quad of quads) {
+      if (Array.isArray(quad) && quad.length >= 4 && typeof quad[0] === "object") {
+        const xs = quad.map((point: any) => Number(point?.x)).filter(Number.isFinite);
+        const ys = quad.map((point: any) => Number(point?.y)).filter(Number.isFinite);
+        if (xs.length && ys.length) addRect(Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys));
+      } else if (Array.isArray(quad) && quad.length >= 8) {
+        const xs = [Number(quad[0]), Number(quad[2]), Number(quad[4]), Number(quad[6])];
+        const ys = [Number(quad[1]), Number(quad[3]), Number(quad[5]), Number(quad[7])];
+        if (xs.every(Number.isFinite) && ys.every(Number.isFinite)) addRect(Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys));
+      }
+    }
+  }
+  if (!rects.length && Array.isArray(annotation?.rect) && annotation.rect.length >= 4) {
+    addRect(Number(annotation.rect[0]), Number(annotation.rect[1]), Number(annotation.rect[2]), Number(annotation.rect[3]));
+  }
+  return rects;
+}
+
+function isYellowHighlight(annotation: any) {
+  if (String(annotation?.subtype || "").toLowerCase() !== "highlight" && Number(annotation?.annotationType) !== 9) return false;
+  const color = annotation?.color;
+  if (!color || typeof color.length !== "number" || color.length < 3) return true;
+  const raw = [Number(color[0]), Number(color[1]), Number(color[2])];
+  const scale = Math.max(...raw) <= 1 ? 255 : 1;
+  const [r, g, b] = raw.map((value) => value * scale);
+  return r >= 180 && g >= 150 && b <= 130;
+}
+
+function intersects(a: HighlightRect, b: HighlightRect, tolerance = 1.5) {
+  return a.x1 <= b.x2 + tolerance && a.x2 + tolerance >= b.x1 && a.y1 <= b.y2 + tolerance && a.y2 + tolerance >= b.y1;
+}
+
+function yellowPixelRatio(data: Uint8ClampedArray, imageWidth: number, imageHeight: number, x1: number, y1: number, x2: number, y2: number) {
+  const left = Math.max(0, Math.floor(Math.min(x1, x2)));
+  const right = Math.min(imageWidth - 1, Math.ceil(Math.max(x1, x2)));
+  const top = Math.max(0, Math.floor(Math.min(y1, y2)));
+  const bottom = Math.min(imageHeight - 1, Math.ceil(Math.max(y1, y2)));
+  if (right <= left || bottom <= top) return 0;
+  let yellow = 0;
+  let sampled = 0;
+  for (let y = top; y <= bottom; y += 2) {
+    for (let x = left; x <= right; x += 2) {
+      const offset = (y * imageWidth + x) * 4;
+      const r = data[offset];
+      const g = data[offset + 1];
+      const b = data[offset + 2];
+      sampled += 1;
+      if (r >= 190 && g >= 165 && b <= 155 && r >= g - 20) yellow += 1;
+    }
+  }
+  return sampled ? yellow / sampled : 0;
+}
+
+function parseHighlightedFragments(fragments: HighlightFragment[], source: string) {
+  const groups: HighlightFragment[][] = [];
+  const sorted = [...fragments].sort((a, b) => a.page - b.page || b.y - a.y || a.x - b.x);
+  for (const fragment of sorted) {
+    const current = groups[groups.length - 1];
+    if (!current || current[0].page !== fragment.page || Math.abs(current[0].y - fragment.y) > 4.2) groups.push([fragment]);
+    else current.push(fragment);
+  }
+
+  const items: ImportedItem[] = [];
+  for (const group of groups) {
+    const rawParts = group.sort((a, b) => a.x - b.x).map((item) => compactLine(item.text)).filter(Boolean);
+    const parts = rawParts.flatMap((part) => {
+      const tokens = part.split(/\s+/).filter(Boolean);
+      return tokens.length > 1 && tokens.every(numericWholeCell) ? tokens : [part];
+    });
+    const numeric = parts.filter(numericWholeCell);
+    const words = parts.filter((part) => !numericWholeCell(part));
+    if (numeric.length < 2 || !words.length) continue;
+    const name = compactLine(words.join(" "));
+    if (!name || isHeaderOrSummary(name)) continue;
+    const quantity = normalizeNumber(numeric[0]);
+    const highlightedValue = normalizeNumber(numeric[1]);
+    if (!(quantity > 0) || highlightedValue < 0) continue;
+    const kind = inferItemKind("", name, null);
+    let unitPrice = highlightedValue;
+    let total = quantity * unitPrice;
+    if (source === "MOBATO" && kind === "SERVICO") {
+      total = highlightedValue;
+      unitPrice = quantity > 0 ? total / quantity : 0;
+    }
+    addUniqueItem(items, createLocalItem(kind, "", name, quantity, unitPrice, total, 0.99, "Item grifado no PDF. Revise descrição, quantidade e valor antes de adicionar."));
+  }
+  return items;
+}
+
+async function extractHighlightedPdfItems(fileData: string, requestedSource: string) {
+  const bytes = new Uint8Array(decodeDataUrl(fileData));
+  const pdfjs: any = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const loadingTask = pdfjs.getDocument({ data: bytes, useSystemFonts: true });
+  const document = await loadingTask.promise;
+  const fragments: HighlightFragment[] = [];
+  let fullText = "";
+  try {
+    for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
+      const page = await document.getPage(pageNumber);
+      const [annotations, textContent] = await Promise.all([page.getAnnotations({ intent: "display" }), page.getTextContent()]);
+      const highlights = (Array.isArray(annotations) ? annotations : []).filter(isYellowHighlight).flatMap(annotationRects);
+      const textItems = Array.isArray(textContent?.items) ? textContent.items : [];
+      fullText += "\n" + textItems.map((item: any) => typeof item?.str === "string" ? item.str : "").join(" " );
+
+      const pageFragments: HighlightFragment[] = [];
+      for (const item of textItems) {
+        if (!item || typeof item.str !== "string" || !item.str.trim() || !Array.isArray(item.transform)) continue;
+        const x = Number(item.transform[4]);
+        const y = Number(item.transform[5]);
+        const height = Math.max(5, Math.abs(Number(item.height) || Number(item.transform[3]) || 0));
+        const width = Math.max(1, Math.abs(Number(item.width) || 0));
+        const box: HighlightRect = { x1: x, y1: y - height * 0.35, x2: x + width, y2: y + height * 0.95 };
+        if (highlights.some((highlight) => intersects(highlight, box))) pageFragments.push({ page: pageNumber, x, y, text: item.str });
+      }
+
+      // Alguns PDFs do Mobato/NBS gravam o marca-texto amarelo diretamente no desenho da página,
+      // sem criar uma anotação PDF. Neste caso renderizamos a página e cruzamos os pixels amarelos
+      // com as coordenadas da camada de texto, mantendo a leitura local e sem IA.
+      if (!pageFragments.length) {
+        try {
+          const canvasModule: any = await import("@napi-rs/canvas");
+          const scale = 1.6;
+          const viewport = page.getViewport({ scale });
+          const canvas = canvasModule.createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height));
+          const context2d = canvas.getContext("2d");
+          const renderTask = page.render({ canvas, canvasContext: context2d, viewport });
+          await renderTask.promise;
+          const image = context2d.getImageData(0, 0, canvas.width, canvas.height);
+          for (const item of textItems) {
+            if (!item || typeof item.str !== "string" || !item.str.trim() || !Array.isArray(item.transform)) continue;
+            const transformed = pdfjs.Util.transform(viewport.transform, item.transform);
+            const screenX = Number(transformed[4]);
+            const baselineY = Number(transformed[5]);
+            const screenHeight = Math.max(7, Math.hypot(Number(transformed[2]) || 0, Number(transformed[3]) || 0));
+            const screenWidth = Math.max(3, Math.abs(Number(item.width) || 0) * scale);
+            const ratio = yellowPixelRatio(image.data, canvas.width, canvas.height, screenX - 2, baselineY - screenHeight * 1.15, screenX + screenWidth + 2, baselineY + screenHeight * 0.28);
+            if (ratio >= 0.055) pageFragments.push({ page: pageNumber, x: Number(item.transform[4]), y: Number(item.transform[5]), text: item.str });
+          }
+        } catch (renderError) {
+          console.error("Gerivo rendered highlight detection:", renderError);
+        }
+      }
+
+      fragments.push(...pageFragments);
+    }
+  } finally {
+    await loadingTask.destroy().catch(() => undefined);
+  }
+  const source = detectSourceFromText(fullText, requestedSource);
+  return { source, items: parseHighlightedFragments(fragments, source), highlightedFragments: fragments.length };
+}
+
 function isNumericCell(value: string) {
   return /^-?(?:R\$\s*)?\d+(?:\.\d{3})*(?:,\d+)?$/.test(value.trim())
     || /^-?\d+(?:\.\d+)?$/.test(value.trim());
@@ -272,6 +449,85 @@ function parseLocalPdfText(text: string, requestedSource: string) {
   return { source, ignoredCount, items };
 }
 
+async function extractPdfCoordinateText(fileData: string) {
+  const bytes = new Uint8Array(decodeDataUrl(fileData));
+  const pdfjs: any = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const loadingTask = pdfjs.getDocument({ data: bytes, useSystemFonts: true });
+  const document = await loadingTask.promise;
+  const lines: string[] = [];
+  try {
+    for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
+      const page = await document.getPage(pageNumber);
+      const textContent = await page.getTextContent();
+      type CoordinateItem = { text: string; x: number; y: number; width: number; transform: number[] };
+      const items: CoordinateItem[] = (Array.isArray(textContent?.items) ? textContent.items : [])
+        .filter((item: any) => item && typeof item.str === "string" && item.str.trim() && Array.isArray(item.transform))
+        .map((item: any): CoordinateItem => ({
+          text: compactLine(item.str),
+          x: Number(item.transform[4]) || 0,
+          y: Number(item.transform[5]) || 0,
+          width: Math.max(1, Number(item.width) || 1),
+          transform: item.transform.map((value: unknown) => Number(value) || 0),
+        }));
+      const groups: CoordinateItem[][] = [];
+      for (const item of [...items].sort((a: CoordinateItem, b: CoordinateItem) => b.y - a.y || a.x - b.x)) {
+        const group = groups.find((row: CoordinateItem[]) => Math.abs(row[0].y - item.y) <= 2.8);
+        if (group) group.push(item);
+        else groups.push([item]);
+      }
+
+      let rendered: { data: Uint8ClampedArray; width: number; height: number; viewport: any } | null = null;
+      try {
+        const canvasModule: any = await import("@napi-rs/canvas");
+        const viewport = page.getViewport({ scale: 1.55 });
+        const canvas = canvasModule.createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height));
+        const context2d = canvas.getContext("2d");
+        await page.render({ canvas, canvasContext: context2d, viewport }).promise;
+        const image = context2d.getImageData(0, 0, canvas.width, canvas.height);
+        rendered = { data: image.data, width: canvas.width, height: canvas.height, viewport };
+      } catch (renderError) {
+        console.error("Gerivo PDF strike detection render:", renderError);
+      }
+
+      const rowHasStrike = (group: CoordinateItem[]) => {
+        if (!rendered || !group.length) return false;
+        const screen = group.map((item: CoordinateItem) => {
+          const transformed = pdfjs.Util.transform(rendered!.viewport.transform, item.transform);
+          const height = Math.max(7, Math.hypot(Number(transformed[2]) || 0, Number(transformed[3]) || 0));
+          return { x: Number(transformed[4]), baselineY: Number(transformed[5]), width: Math.max(2, item.width * 1.55), height };
+        });
+        const left = Math.max(0, Math.floor(Math.min(...screen.map((item: { x: number }) => item.x)) - 3));
+        const right = Math.min(rendered.width - 1, Math.ceil(Math.max(...screen.map((item: { x: number; width: number }) => item.x + item.width)) + 3));
+        const centerY = Math.round(screen.reduce((sum: number, item: { baselineY: number; height: number }) => sum + (item.baselineY - item.height * 0.48), 0) / screen.length);
+        if (right - left < 45 || centerY < 2 || centerY >= rendered.height - 2) return false;
+        let hitColumns = 0;
+        let sampled = 0;
+        for (let x = left; x <= right; x += 2) {
+          sampled += 1;
+          let dark = false;
+          for (let y = centerY - 2; y <= centerY + 2; y += 1) {
+            const offset = (y * rendered.width + x) * 4;
+            const r = rendered.data[offset];
+            const g = rendered.data[offset + 1];
+            const b = rendered.data[offset + 2];
+            if (r < 115 && g < 115 && b < 115) { dark = true; break; }
+          }
+          if (dark) hitColumns += 1;
+        }
+        return sampled > 0 && hitColumns / sampled >= 0.38;
+      };
+
+      for (const group of groups.sort((a: CoordinateItem[], b: CoordinateItem[]) => b[0].y - a[0].y)) {
+        const line = compactLine(group.sort((a: CoordinateItem, b: CoordinateItem) => a.x - b.x).map((item: CoordinateItem) => item.text).join(" "));
+        if (line) lines.push(rowHasStrike(group) ? `RISCADO ${line}` : line);
+      }
+    }
+  } finally {
+    await loadingTask.destroy().catch(() => undefined);
+  }
+  return lines.join("\n");
+}
+
 async function extractPdfDocument(fileData: string) {
   const { PDFParse } = await import("pdf-parse");
   const parser = new PDFParse({ data: new Uint8Array(decodeDataUrl(fileData)) });
@@ -325,8 +581,10 @@ async function recognizeWithVision(apiKey: string, model: string, fileData: stri
     "Analise o orçamento automotivo anexado, normalmente emitido pelo Mobato ou NBS.",
     `Origem informada pelo usuário: ${requestedSource}.`,
     "Extraia EXCLUSIVAMENTE peças/produtos e serviços/mão de obra.",
+    "O documento pode ou não conter marca-texto/grifo. NÃO use cor ou destaque como critério de seleção.",
+    "Importe todas as linhas ativas de peças/produtos e serviços/mão de obra. Priorize descrição, quantidade/tempo e valor. Código é opcional.",
     "NÃO extraia cliente, veículo, placa, endereço, pagamentos, subtotais, totais gerais, descontos, impostos, cabeçalhos, observações ou diagnósticos.",
-    "IGNORE completamente linhas riscadas, tachadas, canceladas, com traço atravessando o texto ou marcadas como não autorizadas.",
+    "IGNORE completamente linhas riscadas, tachadas, canceladas, com traço atravessando o texto ou marcadas como não autorizadas, mesmo que estejam próximas de linhas grifadas.",
     "Preserve quantidades e tempos decimais, por exemplo 0,5; 0,8; 1,1; 1,6; 4,3.",
     "Não duplique uma peça ou serviço repetido em seções de resumo.",
     "Retorne SOMENTE JSON válido no formato:",
@@ -396,6 +654,20 @@ export async function POST(request: Request) {
             engine = "local-pdf-table";
           }
         }
+        if (!result) {
+          try {
+            const coordinateText = await extractPdfCoordinateText(fileData);
+            if (coordinateText.length >= 40) {
+              const coordinateResult = parseLocalPdfText(coordinateText, requestedSource);
+              if (coordinateResult.items.length > 0) {
+                result = coordinateResult;
+                engine = "local-pdf-coordinate-lines";
+              }
+            }
+          } catch (coordinateError) {
+            console.error("Gerivo PDF coordinate extraction:", coordinateError);
+          }
+        }
         if (!result && pdfDocument.text.length >= 40) {
           const localResult = parseLocalPdfText(pdfDocument.text, requestedSource);
           if (localResult.items.length > 0) {
@@ -415,8 +687,8 @@ export async function POST(request: Request) {
 
     if (!result) {
       const error = mimeType === "application/pdf"
-        ? "Não foi possível identificar as linhas deste PDF automaticamente. Tente o PDF original exportado pelo Mobato/NBS. Documentos digitalizados precisam do reconhecimento visual configurado pela empresa."
-        : "Esta imagem precisa do reconhecimento visual configurado pela empresa. Envie um PDF original do Mobato/NBS ou solicite a ativação do reconhecimento visual.";
+        ? "Não foi possível identificar automaticamente as linhas de peças e mão de obra deste PDF. O importador não depende de grifo: ele procura descrição, quantidade/tempo e valor e ignora linhas riscadas. Tente o PDF original exportado pelo Mobato/NBS."
+        : "Esta imagem precisa do reconhecimento visual configurado pela empresa. O reconhecimento considera as linhas ativas e ignora itens riscados; grifos não são obrigatórios.";
       return NextResponse.json({ error }, { status: 422 });
     }
 
