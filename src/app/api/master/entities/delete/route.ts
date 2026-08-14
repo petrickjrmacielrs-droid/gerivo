@@ -33,6 +33,22 @@ export async function POST(request: Request) {
       const { data: company } = await admin.from("companies").select("id, name, group_id").eq("id", entityId).maybeSingle();
       if (!company) return NextResponse.json({ error: "Empresa não encontrada." }, { status: 404 });
       if (confirmation !== normalize(company.name)) return NextResponse.json({ error: `Digite exatamente o nome da empresa: ${company.name}` }, { status: 400 });
+      // A contratação GROUP fica tecnicamente ancorada em uma empresa por compatibilidade
+      // com o modelo histórico. Antes de excluir esse CNPJ, movemos a âncora para um irmão
+      // do mesmo grupo para que o plano compartilhado não seja apagado por ON DELETE CASCADE.
+      if (company.group_id) {
+        const { data: sibling, error: siblingError } = await admin.from("companies").select("id").eq("group_id", company.group_id).neq("id", company.id).limit(1).maybeSingle();
+        if (siblingError) throw siblingError;
+        if (sibling?.id) {
+          const { error: reanchorError } = await admin.from("company_subscriptions")
+            .update({ company_id: sibling.id, updated_by: userId, updated_at: new Date().toISOString() })
+            .eq("group_id", company.group_id)
+            .eq("contract_scope", "GROUP")
+            .eq("company_id", company.id);
+          if (reanchorError) throw reanchorError;
+        }
+      }
+
       await admin.from("audit_logs").insert({ company_id: company.id, user_id: userId, action: "COMPANY_PERMANENTLY_DELETED", entity: "company", entity_id: company.id, old_value: company });
       const { error } = await admin.from("companies").delete().eq("id", company.id);
       if (error) throw error;

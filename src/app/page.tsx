@@ -1913,6 +1913,7 @@ function companyStatusLabel(status: string) {
   return ({
     DRAFT: "Rascunho",
     AWAITING_ACTIVATION: "Aguardando ativação",
+    PENDING_PAYMENT: "Pendente de pagamento",
     ACTIVE: "Ativa",
     GRACE: "Carência",
     READ_ONLY: "Somente leitura",
@@ -2859,7 +2860,7 @@ export default function Home() {
     await supabase.auth.signOut();
   }
 
-  async function bootstrapCompany(companyName: string, storeName: string, segment: string, groupId = "", groupName = "", document = "") {
+  async function bootstrapCompany(companyName: string, storeName: string, segment: string, groupId = "", groupName = "", document = "", planScope: "GROUP" | "COMPANY" = "GROUP") {
     setAuthError("");
     if (!session?.access_token || !session.user) {
       const message = "Sua sessão expirou. Entre novamente no Gerivo.";
@@ -2884,6 +2885,7 @@ export default function Home() {
           groupId,
           groupName,
           document,
+          planScope,
         }),
         signal: controller.signal,
       });
@@ -3169,7 +3171,7 @@ export default function Home() {
               stores={stores}
               currentStore={brandedStore}
               sessionAccessToken={session?.access_token || ""}
-              onCreateCompany={(input) => bootstrapCompany(input.companyName, input.storeName, input.segment, input.groupId, input.groupName, input.document)}
+              onCreateCompany={(input) => bootstrapCompany(input.companyName, input.storeName, input.segment, input.groupId, input.groupName, input.document, input.planScope)}
               onRefresh={() => loadAccessContext(session.user.id)}
               onOpenStore={async (targetStoreId) => { await changeStore(targetStoreId); setPage("dashboard"); }}
             />
@@ -6147,6 +6149,7 @@ type MasterCompanyInput = {
   groupMode: "NEW" | "EXISTING";
   groupId: string;
   groupName: string;
+  planScope: "GROUP" | "COMPANY";
   companyName: string;
   document: string;
   storeName: string;
@@ -6232,7 +6235,6 @@ function MasterCommercialPage({
   onRefresh: () => Promise<void>;
   onOpenStore: (storeId: string) => Promise<void>;
 }) {
-  const supabase = useMemo(() => getSupabaseBrowserClient(), []);
   const [plans, setPlans] = useState<any[]>([]);
   const [subscriptions, setSubscriptions] = useState<any[]>([]);
   const [groups, setGroups] = useState<any[]>([]);
@@ -6241,6 +6243,10 @@ function MasterCommercialPage({
   const [createOpen, setCreateOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [selectedCompany, setSelectedCompany] = useState<any>(null);
+  const [groupEditOpen, setGroupEditOpen] = useState(false);
+  const [selectedGroup, setSelectedGroup] = useState<any>(null);
+  const [groupEditName, setGroupEditName] = useState("");
+  const [groupEditTab, setGroupEditTab] = useState<"OVERVIEW" | "CONTRACT" | "MODULES" | "COMPANIES" | "HISTORY">("OVERVIEW");
   const [groupMode, setGroupMode] = useState<"NEW" | "EXISTING">("NEW");
   const [groupId, setGroupId] = useState("");
   const [groupName, setGroupName] = useState("");
@@ -6250,10 +6256,15 @@ function MasterCommercialPage({
   const [storeNameTouched, setStoreNameTouched] = useState(false);
   const [segment, setSegment] = useState("OUTRO");
   const [companyStatus, setCompanyStatus] = useState("ACTIVE");
+  const [contractScope, setContractScope] = useState<"GROUP" | "COMPANY">("GROUP");
   const [contract, setContract] = useState<CompanyContractDraft>(() => defaultContractDraft());
+  const [initialContractSignature, setInitialContractSignature] = useState("");
+  const [initialContractScope, setInitialContractScope] = useState<"GROUP" | "COMPANY">("GROUP");
+  const [initialCompanyStatus, setInitialCompanyStatus] = useState("ACTIVE");
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState("");
   const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"ALL" | "ACTIVE" | "INACTIVE" | "DEMO" | "PENDING_PAYMENT" | "AWAITING_ACTIVATION">("ALL");
   const [activeTab, setActiveTab] = useState<"DATA" | "CONTRACT" | "MODULES" | "REPLICATE" | "HISTORY">("DATA");
   const [plansOpen, setPlansOpen] = useState(false);
   const [planDrafts, setPlanDrafts] = useState<any[]>([]);
@@ -6265,6 +6276,7 @@ function MasterCommercialPage({
   const [replicateSections, setReplicateSections] = useState<string[]>(["IDENTITY", "CHECKLIST", "PRICING", "MESSAGES"]);
   const [createGroupOpen, setCreateGroupOpen] = useState(false);
   const [newGroupName, setNewGroupName] = useState("");
+  const [newGroupPlanScope, setNewGroupPlanScope] = useState<"GROUP" | "COMPANY">("GROUP");
   const [createReplicationSourceStoreId, setCreateReplicationSourceStoreId] = useState("");
   const [createReplicationSections, setCreateReplicationSections] = useState<string[]>(["IDENTITY", "CHECKLIST", "PRICING", "MESSAGES", "MODULES", "USERS"]);
 
@@ -6280,30 +6292,31 @@ function MasterCommercialPage({
       if (plansOpen) setPlansOpen(false);
       else if (replicateOpen) setReplicateOpen(false);
       else if (createGroupOpen) setCreateGroupOpen(false);
+      else if (groupEditOpen) setGroupEditOpen(false);
       else if (editOpen) setEditOpen(false);
       else if (createOpen) setCreateOpen(false);
     };
     window.addEventListener("keydown", close);
     return () => window.removeEventListener("keydown", close);
-  }, [plansOpen, replicateOpen, createGroupOpen, editOpen, createOpen, saving]);
+  }, [plansOpen, replicateOpen, createGroupOpen, groupEditOpen, editOpen, createOpen, saving]);
 
   async function load() {
-    const [plansResult, subscriptionsResult, groupsResult, historiesResult] = await Promise.all([
-      supabase.from("subscription_plans").select("*").eq("active", true).order("sort_order"),
-      supabase.from("company_subscriptions").select("*, companies(name, group_id), subscription_plans(name, code)").order("created_at", { ascending: false }),
-      supabase.from("business_groups").select("id, name, status, active, companies(id, name, document, segment, status, active, stores(id, name, public_code, active))").order("name"),
-      supabase.from("company_subscription_history").select("*").order("changed_at", { ascending: false }).limit(200),
-    ]);
-    const nextPlans = plansResult.data || [];
-    setPlans(nextPlans);
-    setSubscriptions(subscriptionsResult.data || []);
-    if (!groupsResult.error) setGroups(groupsResult.data || []);
-    else {
-      const fallback = Array.from(new Map(stores.map((store) => [store.companyId, { id: store.companyId, name: store.companyName, companies: [{ id: store.companyId, name: store.companyName, document: "", segment: store.segment, status: "ACTIVE", active: true, stores: [{ id: store.id, name: store.name, public_code: store.publicCode, active: true }] }] }])).values());
+    try {
+      const payload = await apiGet("/api/master/control-center");
+      const nextPlans = Array.isArray(payload.plans) ? payload.plans : [];
+      const nextSubscriptions = Array.isArray(payload.subscriptions) ? payload.subscriptions : [];
+      const nextGroups = Array.isArray(payload.groups) ? payload.groups : [];
+      const nextHistories = Array.isArray(payload.histories) ? payload.histories : [];
+      setPlans(nextPlans);
+      setSubscriptions(nextSubscriptions);
+      setGroups(nextGroups);
+      setHistories(nextHistories);
+      if (!contract.planId && nextPlans[0]) setContract(defaultContractDraft(nextPlans[0]));
+    } catch (error) {
+      const fallback = Array.from(new Map(stores.map((store) => [store.companyId, { id: store.companyId, name: store.companyName, plan_scope: "COMPANY", status: "ACTIVE", active: true, companies: [{ id: store.companyId, name: store.companyName, document: "", segment: store.segment, status: "ACTIVE", active: true, stores: [{ id: store.id, name: store.name, public_code: store.publicCode, active: true }] }] }])).values());
       setGroups(fallback);
+      setNotice({ text: error instanceof Error ? error.message : "Não foi possível carregar os contratos do MASTER.", error: true });
     }
-    if (!historiesResult.error) setHistories(historiesResult.data || []);
-    if (!contract.planId && nextPlans[0]) setContract(defaultContractDraft(nextPlans[0]));
   }
 
   useEffect(() => { void load(); }, []);
@@ -6314,12 +6327,64 @@ function MasterCommercialPage({
     return () => window.removeEventListener("gerivo:master-open-plans", openPlans as EventListener);
   }, [plans]);
 
+  function contractSignature(value: CompanyContractDraft) {
+    return JSON.stringify({
+      planMode: value.planMode,
+      planId: value.planId,
+      customPlanName: value.customPlanName,
+      billingCycle: value.billingCycle,
+      contractStart: value.contractStart,
+      contractEnd: value.contractEnd,
+      contractedValue: Number(value.contractedValue) || 0,
+      billingDueDay: Number(value.billingDueDay) || 0,
+      autoRenew: Boolean(value.autoRenew),
+      gracePeriodDays: Number(value.gracePeriodDays) || 0,
+      companyLimit: Number(value.companyLimit) || 0,
+      storeLimit: Number(value.storeLimit) || 0,
+      userLimit: Number(value.userLimit) || 0,
+      storageGb: Number(value.storageGb) || 0,
+      aiQueriesMonthly: Number(value.aiQueriesMonthly) || 0,
+      modules: value.modules,
+      status: value.status,
+      commercialNotes: value.commercialNotes,
+    });
+  }
+
+  function groupForCompany(companyId: string) {
+    return groups.find((group) => (group.companies || []).some((company: any) => String(company.id) === String(companyId))) || null;
+  }
+
+  function groupSubscription(groupValue: string) {
+    const matches = subscriptions.filter((item) => String(item.group_id || "") === String(groupValue) && item.contract_scope === "GROUP");
+    return matches.find((item) => String(item.status || "").toUpperCase() !== "EXPIRED") || matches[0] || null;
+  }
+
+  function companySubscription(companyValue: string) {
+    const matches = subscriptions.filter((item) => String(item.company_id) === String(companyValue) && item.contract_scope !== "GROUP");
+    return matches.find((item) => String(item.status || "").toUpperCase() !== "EXPIRED") || matches[0] || null;
+  }
+
+  function subscriptionPlanName(subscription: any) {
+    if (!subscription) return "Sem plano";
+    if (subscription.plan_mode === "CUSTOM") return subscription.custom_plan_name || "Plano personalizado";
+    return plans.find((plan) => String(plan.id) === String(subscription.plan_id))?.name || subscription.subscription_plans?.name || "Plano Gerivo";
+  }
+
+  function effectiveSubscription(company: any) {
+    const group = groupForCompany(String(company.id));
+    const scope = group?.plan_scope === "GROUP" ? "GROUP" : "COMPANY";
+    if (scope === "GROUP" && group) return groupSubscription(String(group.id)) || companySubscription(String(company.id)) || subscriptions.find((item) => String(item.company_id) === String(company.id)) || null;
+    return companySubscription(String(company.id)) || subscriptions.find((item) => String(item.company_id) === String(company.id)) || null;
+  }
+
   function resetCreate() {
     const plan = plans[0];
+    const nextContract = defaultContractDraft(plan);
     setGroupMode("NEW"); setGroupId(""); setGroupName(""); setCompanyName(""); setDocument(""); setStoreName(""); setStoreNameTouched(false); setSegment("OUTRO"); setCompanyStatus("ACTIVE");
+    setContractScope("GROUP"); setInitialContractScope("GROUP"); setInitialCompanyStatus("ACTIVE"); setInitialContractSignature(contractSignature(nextContract));
     setCreateReplicationSourceStoreId("");
     setCreateReplicationSections(["IDENTITY", "CHECKLIST", "PRICING", "MESSAGES", "MODULES", "USERS"]);
-    setContract(defaultContractDraft(plan)); setFormError(""); setActiveTab("DATA");
+    setContract(nextContract); setFormError(""); setActiveTab("DATA");
   }
 
   function applyCycle(cycle: CompanyContractDraft["billingCycle"], base = contract) {
@@ -6381,10 +6446,22 @@ function MasterCommercialPage({
 
   function openEdit(company: any) {
     const store = company.stores?.[0];
-    const subscription = subscriptions.find((item) => item.company_id === company.id);
-    setSelectedCompany({ ...company, store });
-    setCompanyName(company.name || ""); setDocument(formatCnpjInput(company.document || "")); setStoreName(store?.name || company.name || ""); setStoreNameTouched(true); setSegment(company.segment || "OUTRO"); setCompanyStatus(company.status || "ACTIVE");
-    setContract(populateContract(subscription)); setFormError(""); setActiveTab("DATA"); setEditOpen(true);
+    const group = groupForCompany(String(company.id));
+    const scope: "GROUP" | "COMPANY" = group?.plan_scope === "GROUP" ? "GROUP" : "COMPANY";
+    const subscription = effectiveSubscription(company);
+    const nextContract = populateContract(subscription);
+    const nextStatus = subscription?.status || company.status || "ACTIVE";
+    setSelectedCompany({ ...company, store, group });
+    setCompanyName(company.name || ""); setDocument(formatCnpjInput(company.document || "")); setStoreName(store?.name || company.name || ""); setStoreNameTouched(true); setSegment(company.segment || "OUTRO"); setCompanyStatus(nextStatus);
+    setContractScope(scope); setInitialContractScope(scope); setInitialCompanyStatus(nextStatus); setInitialContractSignature(contractSignature(nextContract));
+    setContract(nextContract); setFormError(""); setActiveTab("DATA"); setEditOpen(true);
+  }
+
+  async function apiGet(url: string) {
+    const response = await fetch(url, { method: "GET", headers: { Authorization: `Bearer ${sessionAccessToken}` }, cache: "no-store" });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || "Não foi possível carregar os dados do MASTER.");
+    return payload;
   }
 
   async function apiPost(url: string, body: unknown) {
@@ -6394,8 +6471,8 @@ function MasterCommercialPage({
     return payload;
   }
 
-  async function saveContract(companyId: string, draft: CompanyContractDraft, status = draft.status) {
-    return apiPost("/api/master/subscriptions/upsert", { companyId, ...draft, status });
+  async function saveContract(companyId: string, draft: CompanyContractDraft, status = draft.status, scope: "GROUP" | "COMPANY" = contractScope) {
+    return apiPost("/api/master/subscriptions/upsert", { companyId, contractScope: scope, ...draft, status });
   }
 
   function groupStoresFor(groupValue: string) {
@@ -6408,10 +6485,11 @@ function MasterCommercialPage({
   }
 
   function contractWithReplicatedModules(base: CompanyContractDraft) {
+    if (contractScope === "GROUP") return base;
     if (!createReplicationSections.includes("MODULES") || !createReplicationSourceStoreId) return base;
     const sourceStore = groupStoresFor(groupId).find((store: any) => String(store.id) === String(createReplicationSourceStoreId));
     if (!sourceStore) return base;
-    const sourceSubscription = subscriptions.find((item) => String(item.company_id) === String(sourceStore.companyId));
+    const sourceSubscription = companySubscription(String(sourceStore.companyId));
     if (!sourceSubscription) return base;
     const sourceDraft = populateContract(sourceSubscription);
     return {
@@ -6434,7 +6512,7 @@ function MasterCommercialPage({
     setSaving(true);
     setFormError("");
     try {
-      await apiPost("/api/master/groups/create", { name });
+      await apiPost("/api/master/groups/create", { name, planScope: newGroupPlanScope });
       setCreateGroupOpen(false);
       setNewGroupName("");
       await load();
@@ -6455,9 +6533,13 @@ function MasterCommercialPage({
     if (contract.planMode === "STANDARD" && !contract.planId) return setFormError("Selecione um plano Gerivo.");
     setSaving(true); setFormError("");
     try {
-      const created = await onCreateCompany({ groupMode, groupId, groupName: groupName.trim(), companyName: companyName.trim(), document: document.trim(), storeName: storeName.trim(), segment });
+      const created = await onCreateCompany({ groupMode, groupId, groupName: groupName.trim(), planScope: contractScope, companyName: companyName.trim(), document: document.trim(), storeName: storeName.trim(), segment });
       const finalContract = groupMode === "EXISTING" ? contractWithReplicatedModules(contract) : contract;
-      await saveContract(created.company_id, finalContract, companyStatus);
+      const existingGroupContract = groupMode === "EXISTING" && contractScope === "GROUP" ? groupSubscription(groupId) : null;
+      const inheritedUnchanged = Boolean(existingGroupContract)
+        && contractSignature(finalContract) === contractSignature(populateContract(existingGroupContract))
+        && companyStatus === String(existingGroupContract.status || "ACTIVE");
+      if (!inheritedUnchanged) await saveContract(created.company_id, finalContract, companyStatus, contractScope);
 
       if (groupMode === "EXISTING" && createReplicationSourceStoreId) {
         const sections = createReplicationSections.filter((section) => section !== "MODULES");
@@ -6484,43 +6566,110 @@ function MasterCommercialPage({
     if (documentDigits(document).length > 0 && documentDigits(document).length !== 14) return setFormError("Informe um CNPJ completo com 14 dígitos ou deixe o campo vazio.");
     setSaving(true); setFormError("");
     try {
-      await apiPost("/api/master/companies/update", { companyId: selectedCompany.id, storeId: selectedCompany.store?.id, name: companyName.trim(), document: document.trim(), storeName: storeName.trim(), segment, status: companyStatus });
-      await saveContract(selectedCompany.id, contract, companyStatus);
+      const contractChanged = contractSignature(contract) !== initialContractSignature || contractScope !== initialContractScope || companyStatus !== initialCompanyStatus;
+      // Dados cadastrais e contratação são persistidos separadamente. Se contrato/status mudou,
+      // o endpoint comercial é o único responsável por sincronizar situação, módulos e grupo.
+      await apiPost("/api/master/companies/update", { companyId: selectedCompany.id, storeId: selectedCompany.store?.id, name: companyName.trim(), document: document.trim(), storeName: storeName.trim(), segment });
+      if (contractChanged) await saveContract(selectedCompany.id, contract, companyStatus, contractScope);
       setEditOpen(false); setSelectedCompany(null); await load(); await onRefresh();
-      setNotice({ text: "Empresa, plano e contratação atualizados." });
+      setNotice({ text: contractChanged ? (contractScope === "GROUP" ? "Empresa atualizada e contratação do grupo sincronizada." : "Empresa e contratação atualizadas.") : "Dados da empresa atualizados sem alterar a contratação." });
     } catch (error) { setFormError(error instanceof Error ? error.message : "Não foi possível editar a empresa."); }
     finally { setSaving(false); }
   }
 
   async function changeStatus(company: any, status: string) {
     if (saving) return;
+    const group = groupForCompany(String(company.id));
+    const scope: "GROUP" | "COMPANY" = group?.plan_scope === "GROUP" ? "GROUP" : "COMPANY";
+    const groupScope = scope === "GROUP" && group;
     const label = status === "SUSPENDED" ? "suspender" : status === "ACTIVE" ? "reativar" : "cancelar e arquivar";
-    if (!window.confirm(`Confirma ${label} a empresa ${company.name}?`)) return;
+    const target = groupScope ? `o grupo ${group.name} e suas ${(group.companies || []).length} empresa(s)` : `a empresa ${company.name}`;
+    if (!window.confirm(`Confirma ${label} ${target}?${groupScope ? " A situação do plano é compartilhada e será aplicada a todos os CNPJs do grupo." : ""}`)) return;
     setSaving(true);
     try {
       const store = company.stores?.[0];
-      const subscription = subscriptions.find((item) => item.company_id === company.id);
-      await apiPost("/api/master/companies/update", { companyId: company.id, storeId: store?.id, name: company.name, document: company.document || "", storeName: store?.name || company.name, segment: company.segment || "OUTRO", status });
-      if (subscription) await saveContract(company.id, { ...populateContract(subscription), status, justification: `Situação alterada para ${status} pelo MASTER` }, status);
-      await load(); await onRefresh(); setNotice({ text: `Empresa ${status === "ACTIVE" ? "reativada" : status === "SUSPENDED" ? "suspensa" : "arquivada"}.` });
+      const subscription = effectiveSubscription(company);
+      if (!subscription && groupScope) throw new Error("Este grupo ainda não possui uma contratação. Defina o plano e a situação em Editar > Plano e contratação.");
+      if (subscription) {
+        await saveContract(company.id, { ...populateContract(subscription), status, justification: `Situação alterada para ${status} pelo MASTER` }, status, scope);
+      } else {
+        await apiPost("/api/master/companies/update", { companyId: company.id, storeId: store?.id, name: company.name, document: company.document || "", storeName: store?.name || company.name, segment: company.segment || "OUTRO", status });
+      }
+      await load(); await onRefresh();
+      const result = status === "ACTIVE" ? "reativado" : status === "SUSPENDED" ? "suspenso" : "arquivado";
+      setNotice({ text: groupScope ? `Grupo ${result}; todas as empresas herdaram a situação.` : `Empresa ${status === "ACTIVE" ? "reativada" : status === "SUSPENDED" ? "suspensa" : "arquivada"}.` });
     } catch (error) { setNotice({ text: error instanceof Error ? error.message : "Falha ao alterar situação.", error: true }); }
     finally { setSaving(false); }
   }
 
-  async function editGroupName(group: any) {
+  function openGroupEditor(group: any) {
     if (saving) return;
-    const nextName = window.prompt("Novo nome do grupo empresarial:", String(group.name || ""));
-    if (nextName === null) return;
-    const name = nextName.trim();
-    if (!name || name === group.name) return;
+    const scope: "GROUP" | "COMPANY" = group?.plan_scope === "GROUP" ? "GROUP" : "COMPANY";
+    const representative = (group?.companies || [])[0] || null;
+    const subscription = scope === "GROUP"
+      ? groupSubscription(String(group.id))
+      : representative ? effectiveSubscription(representative) : null;
+    const nextContract = populateContract(subscription);
+    const nextStatus = subscription?.status || group?.status || "ACTIVE";
+    setSelectedGroup(group);
+    setGroupEditName(String(group?.name || ""));
+    setContractScope(scope);
+    setInitialContractScope(scope);
+    setContract(nextContract);
+    setInitialContractSignature(contractSignature(nextContract));
+    setCompanyStatus(nextStatus);
+    setInitialCompanyStatus(nextStatus);
+    setGroupEditTab("OVERVIEW");
+    setFormError("");
+    setGroupEditOpen(true);
+  }
+
+  function changeGroupContractScope(nextScope: "GROUP" | "COMPANY") {
+    if (!selectedGroup || nextScope === contractScope) return;
+    const representative = (selectedGroup.companies || [])[0] || null;
+    const sourceSubscription = nextScope === "COMPANY"
+      ? groupSubscription(String(selectedGroup.id)) || (representative ? effectiveSubscription(representative) : null)
+      : representative ? effectiveSubscription(representative) : null;
+    if (sourceSubscription) {
+      const nextContract = populateContract(sourceSubscription);
+      setContract(nextContract);
+      setCompanyStatus(sourceSubscription.status || nextContract.status);
+    }
+    setContractScope(nextScope);
+  }
+
+  async function saveGroupEditor() {
+    if (!selectedGroup || saving) return;
+    const name = groupEditName.trim();
+    if (name.length < 2) return setFormError("Informe um nome válido para o grupo empresarial.");
+    const companies = selectedGroup.companies || [];
+    const representative = companies[0] || null;
+    const nameChanged = name !== String(selectedGroup.name || "");
+    const contractChanged = contractScope !== initialContractScope
+      || contractSignature(contract) !== initialContractSignature
+      || companyStatus !== initialCompanyStatus;
+
+    if (contractScope === "GROUP" && !representative) {
+      return setFormError("Cadastre pelo menos uma empresa no grupo antes de configurar uma contratação compartilhada.");
+    }
+    if (contractChanged && !representative) {
+      return setFormError("O grupo ainda não possui empresa para ancorar a contratação.");
+    }
+
     setSaving(true);
+    setFormError("");
     try {
-      await apiPost("/api/master/groups/update", { groupId: group.id, name });
+      if (nameChanged) await apiPost("/api/master/groups/update", { groupId: selectedGroup.id, name });
+      if (contractChanged && representative) {
+        await saveContract(String(representative.id), contract, companyStatus, contractScope);
+      }
+      setGroupEditOpen(false);
+      setSelectedGroup(null);
       await load();
       await onRefresh();
-      setNotice({ text: `Grupo atualizado para ${name}.` });
+      setNotice({ text: contractChanged ? `Grupo ${name} e contratação atualizados.` : `Grupo ${name} atualizado.` });
     } catch (error) {
-      setNotice({ text: error instanceof Error ? error.message : "Não foi possível renomear o grupo.", error: true });
+      setFormError(error instanceof Error ? error.message : "Não foi possível atualizar o grupo.");
     } finally {
       setSaving(false);
     }
@@ -6536,7 +6685,7 @@ function MasterCommercialPage({
     setReplicateGroup({ ...group, availableStores: groupStores });
     setReplicateSourceStoreId(sourceId);
     setReplicateTargetStoreIds(groupStores.filter((store: any) => String(store.id) !== sourceId).map((store: any) => String(store.id)));
-    setReplicateSections(["IDENTITY", "CHECKLIST", "PRICING", "MESSAGES", "MODULES", "USERS"]);
+    setReplicateSections(group.plan_scope === "GROUP" ? ["IDENTITY", "CHECKLIST", "PRICING", "MESSAGES", "USERS"] : ["IDENTITY", "CHECKLIST", "PRICING", "MESSAGES", "MODULES", "USERS"]);
     setReplicateOpen(true);
   }
 
@@ -6660,12 +6809,75 @@ function MasterCommercialPage({
     }
   }
 
-  const normalizedSearch = normalizeAssistantText(search);
-  const filteredGroups = groups.filter((group) => normalizeAssistantText(JSON.stringify(group)).includes(normalizedSearch));
-  const selectedHistory = selectedCompany ? histories.filter((item) => item.company_id === selectedCompany.id) : [];
+  function effectiveGroupStatus(group: any) {
+    if (group?.plan_scope === "GROUP") return String(groupSubscription(String(group.id))?.status || group.status || "AWAITING_ACTIVATION");
+    return String(group?.status || "ACTIVE");
+  }
 
-  function renderContractForm() {
+  function contractDraftPlanName() {
+    if (contract.planMode === "CUSTOM") return contract.customPlanName || "Plano personalizado";
+    return plans.find((plan) => String(plan.id) === String(contract.planId))?.name || "Plano Gerivo";
+  }
+
+  const normalizedSearch = normalizeAssistantText(search);
+  function companyMatchesStatus(company: any) {
+    if (statusFilter === "ALL") return true;
+    const subscription = effectiveSubscription(company);
+    const status = String(subscription?.status || company.status || "AWAITING_ACTIVATION").toUpperCase();
+    if (statusFilter === "ACTIVE") return ["ACTIVE", "GRACE", "READ_ONLY"].includes(status) && Boolean(company.active);
+    if (statusFilter === "DEMO") return status === "DEMO";
+    if (statusFilter === "PENDING_PAYMENT") return status === "PENDING_PAYMENT";
+    if (statusFilter === "AWAITING_ACTIVATION") return status === "AWAITING_ACTIVATION" || status === "DRAFT";
+    return !Boolean(company.active) && !["DEMO", "PENDING_PAYMENT", "AWAITING_ACTIVATION", "DRAFT"].includes(status);
+  }
+  const filteredGroups = groups.map((group) => {
+    const groupMatchesSearch = !normalizedSearch || normalizeAssistantText(`${group.name}`).includes(normalizedSearch);
+    const companies = (group.companies || []).filter((company: any) => {
+      const searchMatches = groupMatchesSearch || !normalizedSearch || normalizeAssistantText(JSON.stringify(company)).includes(normalizedSearch);
+      return searchMatches && companyMatchesStatus(company);
+    });
+    if (!companies.length && (group.companies || []).length) return null;
+    if (!companies.length && (statusFilter !== "ALL" || (!groupMatchesSearch && normalizedSearch))) return null;
+    return { ...group, companies };
+  }).filter(Boolean) as any[];
+  const effectiveContracts = groups.flatMap((group) => {
+    if (group.plan_scope === "GROUP") {
+      const subscription = groupSubscription(String(group.id)) || ((group.companies || [])[0] ? effectiveSubscription((group.companies || [])[0]) : null);
+      return subscription ? [subscription] : [];
+    }
+    return (group.companies || []).map((company: any) => effectiveSubscription(company)).filter(Boolean);
+  });
+  const selectedHistory = selectedCompany ? histories.filter((item) => item.company_id === selectedCompany.id || (contractScope === "GROUP" && item.group_id && item.group_id === selectedCompany.group?.id)) : [];
+  const selectedGroupHistory = selectedGroup ? histories.filter((item) => String(item.group_id || "") === String(selectedGroup.id)) : [];
+
+  function renderContractForm(context: "CREATE" | "COMPANY" | "GROUP" = "COMPANY") {
+    const scopeGroup = context === "GROUP" ? selectedGroup : selectedCompany?.group || (groupId ? groups.find((item) => String(item.id) === String(groupId)) : null);
+    const scopeName = scopeGroup?.name || groupName || "novo grupo";
+    const scopeCompanies = Number(scopeGroup?.companies?.length || (selectedCompany ? 1 : 0));
+    const isInheritedCompany = context === "COMPANY" && Boolean(selectedCompany?.group?.plan_scope === "GROUP");
+    const allowScopeChange = context === "GROUP" || (context === "CREATE" && groupMode === "NEW");
+
+    if (isInheritedCompany) {
+      return <div className="master-contract-form master-inherited-contract">
+        <div className="master-contract-scope inherited-lock">
+          <div><small>CONTRATAÇÃO HERDADA</small><strong>Plano controlado pelo grupo {scopeName}</strong><p>Esta empresa não possui uma contratação paralela. Plano, situação, módulos e limites são definidos uma única vez no grupo e herdados por todos os CNPJs.</p></div>
+          <button type="button" className="primary small" onClick={() => { const targetGroup = selectedCompany?.group; setEditOpen(false); setSelectedCompany(null); if (targetGroup) window.setTimeout(() => openGroupEditor(targetGroup), 0); }}>Gerenciar no grupo</button>
+        </div>
+        <div className="master-contract-readonly-grid">
+          <article><small>Plano efetivo</small><strong>{subscriptionPlanName(effectiveSubscription(selectedCompany))}</strong></article>
+          <article><small>Situação</small><strong>{companyStatusLabel(companyStatus)}</strong></article>
+          <article><small>Período</small><strong>{contract.contractStart ? formatDate(contract.contractStart) : "—"} → {contract.contractEnd ? formatDate(contract.contractEnd) : "—"}</strong></article>
+          <article><small>Empresas atendidas</small><strong>{scopeCompanies}</strong></article>
+        </div>
+        <p className="master-plan-help inherited">Para mudar plano, cobrança, módulos ou limites, use <b>Editar grupo</b>. Alterar os dados cadastrais desta empresa não modifica a contratação.</p>
+      </div>;
+    }
+
     return <div className="master-contract-form">
+      <div className="master-contract-scope">
+        <div><small>ESCOPO DA CONTRATAÇÃO</small><strong>{contractScope === "GROUP" ? `Plano do grupo ${scopeName}` : context === "GROUP" ? "Planos administrados por empresa" : "Plano exclusivo desta empresa"}</strong><p>{contractScope === "GROUP" ? `Uma única contratação controla módulos, limites e situação de todas as empresas do grupo${scopeCompanies ? ` (${scopeCompanies} cadastrada(s))` : ""}.` : context === "GROUP" ? "Cada CNPJ mantém sua própria contratação. O grupo organiza as empresas, mas não sobrescreve os planos individuais." : "Esta empresa mantém seu próprio plano, módulos e limites."}</p></div>
+        {allowScopeChange ? <div className="master-contract-scope-actions"><button type="button" className={contractScope === "GROUP" ? "active" : ""} onClick={() => context === "GROUP" ? changeGroupContractScope("GROUP") : setContractScope("GROUP")}>Plano do grupo</button><button type="button" className={contractScope === "COMPANY" ? "active" : ""} onClick={() => context === "GROUP" ? changeGroupContractScope("COMPANY") : setContractScope("COMPANY")}>Plano por empresa</button></div> : <span className="master-scope-locked">Escopo definido no grupo</span>}
+      </div>
       <div className="contract-mode-switch"><button type="button" className={contract.planMode === "STANDARD" ? "active" : ""} onClick={() => { const plan = plans.find((item) => item.id === contract.planId) || plans[0]; setContract({ ...populateContract({ ...contract, plan_id: plan?.id, plan_mode: "STANDARD" }), contractStart: contract.contractStart, contractEnd: contract.contractEnd, billingCycle: contract.billingCycle }); }}>Plano Gerivo</button><button type="button" className={contract.planMode === "CUSTOM" ? "active" : ""} onClick={() => setContract({ ...contract, planMode: "CUSTOM" })}>Plano personalizado</button></div>
       <div className="master-company-form">
         {contract.planMode === "STANDARD" ? <Field label="Plano"><select value={contract.planId} onChange={(event) => selectPlan(event.target.value)}><option value="">Selecione</option>{plans.map((plan) => <option key={plan.id} value={plan.id}>{plan.name} · {money(plan.monthly_price)}/mês</option>)}</select></Field> : <Field label="Nome do plano personalizado"><input value={contract.customPlanName} onChange={(event) => setContract({ ...contract, customPlanName: event.target.value })} /></Field>}
@@ -6675,7 +6887,7 @@ function MasterCommercialPage({
         <Field label="Valor contratado"><CurrencyInput value={contract.contractedValue} onChange={(contractedValue) => setContract({ ...contract, contractedValue })} /></Field>
         <Field label="Dia do vencimento"><input type="number" min="1" max="31" value={contract.billingDueDay} onChange={(event) => setContract({ ...contract, billingDueDay: Math.min(31, Math.max(1, Number(event.target.value) || 1)) })} /></Field>
         <Field label="Tolerância após vencimento"><div className="input-suffix"><input type="number" min="0" max="365" value={contract.gracePeriodDays} onChange={(event) => setContract({ ...contract, gracePeriodDays: Math.max(0, Number(event.target.value) || 0) })} /><span>dias</span></div></Field>
-        <Field label="Situação da contratação"><select value={companyStatus} onChange={(event) => { setCompanyStatus(event.target.value); setContract({ ...contract, status: event.target.value }); }}><option value="AWAITING_ACTIVATION">Aguardando ativação</option><option value="DEMO">Período de teste</option><option value="ACTIVE">Ativa</option><option value="GRACE">Em tolerância</option><option value="READ_ONLY">Somente consulta</option><option value="SUSPENDED">Suspensa</option><option value="CANCELED">Cancelada / arquivada</option><option value="EXPIRED">Vencida</option></select></Field>
+        <Field label="Situação da contratação"><select value={companyStatus} onChange={(event) => { setCompanyStatus(event.target.value); setContract({ ...contract, status: event.target.value }); }}><option value="AWAITING_ACTIVATION">Aguardando ativação</option><option value="PENDING_PAYMENT">Pendente de pagamento</option><option value="DEMO">Período de teste</option><option value="ACTIVE">Ativa</option><option value="GRACE">Em tolerância</option><option value="READ_ONLY">Somente consulta</option><option value="SUSPENDED">Suspensa</option><option value="CANCELED">Cancelada / arquivada</option><option value="EXPIRED">Vencida</option></select></Field>
         <label className="master-auto-renew"><input type="checkbox" checked={contract.autoRenew} onChange={(event) => setContract({ ...contract, autoRenew: event.target.checked })} /><span><strong>Renovação automática</strong><small>Mantém a contratação ativa no encerramento do período.</small></span></label>
         <Field label="Observações comerciais"><textarea rows={3} value={contract.commercialNotes} onChange={(event) => setContract({ ...contract, commercialNotes: event.target.value })} /></Field>
         <Field label="Justificativa da alteração"><input value={contract.justification} onChange={(event) => setContract({ ...contract, justification: event.target.value })} /></Field>
@@ -6683,9 +6895,10 @@ function MasterCommercialPage({
     </div>;
   }
 
-  function renderModulesForm() {
-    const editable = contract.planMode === "CUSTOM";
-    return <div className="master-modules-contract"><div className="master-limits-grid"><Field label="Empresas / CNPJs"><input disabled={!editable} type="number" min="1" value={contract.companyLimit} onChange={(event) => setContract({ ...contract, companyLimit: Math.max(1, Number(event.target.value) || 1) })} /></Field><Field label="Unidades"><input disabled={!editable} type="number" min="1" value={contract.storeLimit} onChange={(event) => setContract({ ...contract, storeLimit: Math.max(1, Number(event.target.value) || 1) })} /></Field><Field label="Usuários"><input disabled={!editable} type="number" min="1" value={contract.userLimit} onChange={(event) => setContract({ ...contract, userLimit: Math.max(1, Number(event.target.value) || 1) })} /></Field><Field label="Armazenamento"><div className="input-suffix"><input disabled={!editable} type="number" min="1" value={contract.storageGb} onChange={(event) => setContract({ ...contract, storageGb: Math.max(1, Number(event.target.value) || 1) })} /><span>GB</span></div></Field><Field label="Consultas de IA / mês"><input disabled={!editable} type="number" min="0" value={contract.aiQueriesMonthly} onChange={(event) => setContract({ ...contract, aiQueriesMonthly: Math.max(0, Number(event.target.value) || 0) })} /></Field></div><div className="module-grid master-module-grid">{MASTER_MODULES.map((module) => <button type="button" disabled={!editable} key={module} className={contract.modules[module] ? "module-card active" : "module-card"} onClick={() => setContract({ ...contract, modules: { ...contract.modules, [module]: !contract.modules[module] } })}><PremiumIcon name={module === "APPOINTMENTS" ? "calendar" : module === "INVENTORY" ? "box" : module === "ASSISTANT" ? "sparkle" : module === "BI" ? "chart" : module === "MESSAGES" ? "file" : module === "QUOTES" ? "file" : module === "ORDERS" ? "wrench" : module === "PARTS_ORDERS" ? "box" : "modules"} size={20} /><span><strong>{MODULE_INFO[module].label}</strong><small>{MODULE_INFO[module].description}</small></span><b>{contract.modules[module] ? "Ativo" : "Bloqueado"}</b></button>)}</div>{!editable && <p className="master-plan-help">Os limites e módulos seguem o plano Gerivo escolhido. Selecione Plano personalizado para editá-los.</p>}</div>;
+  function renderModulesForm(context: "CREATE" | "COMPANY" | "GROUP" = "COMPANY") {
+    const inheritedCompany = context === "COMPANY" && Boolean(selectedCompany?.group?.plan_scope === "GROUP");
+    const editable = contract.planMode === "CUSTOM" && !inheritedCompany;
+    return <div className="master-modules-contract"><div className="master-limits-grid"><Field label="Empresas / CNPJs"><input disabled={!editable} type="number" min="1" value={contract.companyLimit} onChange={(event) => setContract({ ...contract, companyLimit: Math.max(1, Number(event.target.value) || 1) })} /></Field><Field label="Unidades"><input disabled={!editable} type="number" min="1" value={contract.storeLimit} onChange={(event) => setContract({ ...contract, storeLimit: Math.max(1, Number(event.target.value) || 1) })} /></Field><Field label="Usuários"><input disabled={!editable} type="number" min="1" value={contract.userLimit} onChange={(event) => setContract({ ...contract, userLimit: Math.max(1, Number(event.target.value) || 1) })} /></Field><Field label="Armazenamento"><div className="input-suffix"><input disabled={!editable} type="number" min="1" value={contract.storageGb} onChange={(event) => setContract({ ...contract, storageGb: Math.max(1, Number(event.target.value) || 1) })} /><span>GB</span></div></Field><Field label="Consultas de IA / mês"><input disabled={!editable} type="number" min="0" value={contract.aiQueriesMonthly} onChange={(event) => setContract({ ...contract, aiQueriesMonthly: Math.max(0, Number(event.target.value) || 0) })} /></Field></div><div className="module-grid master-module-grid">{MASTER_MODULES.map((module) => <button type="button" disabled={!editable} key={module} className={contract.modules[module] ? "module-card active" : "module-card"} onClick={() => setContract({ ...contract, modules: { ...contract.modules, [module]: !contract.modules[module] } })}><PremiumIcon name={module === "APPOINTMENTS" ? "calendar" : module === "INVENTORY" ? "box" : module === "ASSISTANT" ? "sparkle" : module === "BI" ? "chart" : module === "MESSAGES" ? "file" : module === "QUOTES" ? "file" : module === "ORDERS" ? "wrench" : module === "PARTS_ORDERS" ? "box" : "modules"} size={20} /><span><strong>{MODULE_INFO[module].label}</strong><small>{MODULE_INFO[module].description}</small></span><b>{contract.modules[module] ? "Ativo" : "Bloqueado"}</b></button>)}</div>{!editable && <p className="master-plan-help">{inheritedCompany ? "Módulos e limites são somente leitura nesta empresa porque pertencem à contratação do grupo." : "Os limites e módulos seguem o plano Gerivo escolhido. Selecione Plano personalizado para editá-los."}</p>}{contractScope === "GROUP" && <p className="master-plan-help inherited">Esta configuração é herdada por todas as empresas e unidades do grupo. Não é necessário replicar módulos entre elas.</p>}</div>;
   }
 
   function renderModalBody(creating: boolean) {
@@ -6696,14 +6909,23 @@ function MasterCommercialPage({
           {creating && <Field label="Vínculo empresarial"><select name="groupMode" value={groupMode} onChange={(event) => {
             const mode = event.target.value as "NEW" | "EXISTING";
             setGroupMode(mode);
-            if (mode === "NEW") { setGroupId(""); setCreateReplicationSourceStoreId(""); }
+            if (mode === "NEW") {
+              setGroupId(""); setCreateReplicationSourceStoreId(""); setContractScope("GROUP");
+              const nextContract = defaultContractDraft(plans[0]); setContract(nextContract); setCompanyStatus(nextContract.status);
+            }
           }}><option value="NEW">Novo grupo</option><option value="EXISTING">Grupo existente</option></select></Field>}
           {creating && (groupMode === "NEW" ? <Field label="Nome do grupo empresarial"><input name="groupName" autoComplete="organization" value={groupName} onChange={(event) => setGroupName(event.target.value)} placeholder="Proprietário ou grupo econômico" /></Field> : <Field label="Grupo empresarial"><select name="groupId" value={groupId} onChange={(event) => {
             const nextGroupId = event.target.value;
             setGroupId(nextGroupId);
+            const selectedGroup = groups.find((item) => String(item.id) === String(nextGroupId));
+            const nextScope: "GROUP" | "COMPANY" = selectedGroup?.plan_scope === "GROUP" ? "GROUP" : "COMPANY";
+            setContractScope(nextScope);
+            const inherited = nextScope === "GROUP" ? groupSubscription(nextGroupId) : null;
+            const nextContract = inherited ? populateContract(inherited) : defaultContractDraft(plans[0]);
+            setContract(nextContract); setCompanyStatus(inherited?.status || nextContract.status);
             const firstStore = groupStoresFor(nextGroupId)[0];
             setCreateReplicationSourceStoreId(firstStore ? String(firstStore.id) : "");
-          }}><option value="">Selecione</option>{groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</select></Field>)}
+          }}><option value="">Selecione</option>{groups.map((group) => <option key={group.id} value={group.id}>{group.name} · {group.plan_scope === "GROUP" ? "plano do grupo" : "plano por empresa"}</option>)}</select></Field>)}
           {creating && groupMode === "EXISTING" && groupId && <div className="master-data-replication-card">
             <PremiumIcon name="layers" size={19} />
             <span><strong>Usar uma empresa do grupo como base</strong><small>Você pode copiar configurações, módulos, limites e usuários já neste cadastro.</small></span>
@@ -6715,8 +6937,8 @@ function MasterCommercialPage({
           <Field label="Segmento"><select name="segment" value={segment} onChange={(event) => setSegment(event.target.value)}><option value="OFICINA">Oficina e centro automotivo</option><option value="CONCESSIONARIA">Concessionária</option><option value="VAREJO">Comércio varejista</option><option value="CONFEITARIA">Confeitaria</option><option value="SALAO_BELEZA">Salão de beleza</option><option value="ESTETICA_AUTOMOTIVA">Lavagem e estética</option><option value="DELIVERY">Delivery de comida</option><option value="SERVICOS">Prestação de serviços</option><option value="OUTRO">Outro</option></select></Field>
           <div className="master-company-data-note"><PremiumIcon name="shield" size={18} /><span><strong>Dados isolados por empresa</strong><small>O CNPJ e a unidade são gravados separadamente e não alteram o nome da empresa.</small></span></div>
         </div>}
-        {activeTab === "CONTRACT" && renderContractForm()}
-        {activeTab === "MODULES" && renderModulesForm()}
+        {activeTab === "CONTRACT" && renderContractForm(creating ? "CREATE" : "COMPANY")}
+        {activeTab === "MODULES" && renderModulesForm(creating ? "CREATE" : "COMPANY")}
         {activeTab === "REPLICATE" && creating && groupMode === "EXISTING" && <div className="master-create-replication">
           <div className="master-create-replication-hero">
             <PremiumIcon name="layers" size={22} />
@@ -6738,10 +6960,13 @@ function MasterCommercialPage({
               ["CATALOG", "Catálogo", "Peças, produtos e serviços"],
               ["MODULES", "Módulos e limites", "Módulos, limites e configuração de Pedidos de peças"],
               ["USERS", "Usuários e funções", "Vincula a equipe ativa à nova unidade"],
-            ].map(([key, label, description]) => <label key={key} className={createReplicationSections.includes(key) ? "active" : ""}>
-              <input type="checkbox" checked={createReplicationSections.includes(key)} onChange={(event) => setCreateReplicationSections((current) => event.target.checked ? Array.from(new Set([...current, key])) : current.filter((item) => item !== key))} />
-              <span><b>{label}</b><small>{description}</small></span>
-            </label>)}
+            ].map(([key, label, description]) => {
+              const inheritedModules = key === "MODULES" && contractScope === "GROUP";
+              return <label key={key} className={`${createReplicationSections.includes(key) ? "active" : ""}${inheritedModules ? " disabled" : ""}`.trim()}>
+                <input type="checkbox" disabled={inheritedModules} checked={!inheritedModules && createReplicationSections.includes(key)} onChange={(event) => setCreateReplicationSections((current) => event.target.checked ? Array.from(new Set([...current, key])) : current.filter((item) => item !== key))} />
+                <span><b>{label}</b><small>{inheritedModules ? "Herdado automaticamente do plano do grupo" : description}</small></span>
+              </label>;
+            })}
           </div>}
           <aside className="master-replicate-warning"><b>Segurança</b><span>Clientes, orçamentos, O.S., pedidos de peças, estoque movimentado e históricos permanecem exclusivos de cada empresa.</span></aside>
         </div>}
@@ -6751,38 +6976,55 @@ function MasterCommercialPage({
   }
 
   return <div className="master-page master-page-v177 master-control-page">
-    <section className="master-heading master-control-hero"><div><small>PAINEL DE CONTROLE GERIVO</small><h2>Central de empresas</h2><p>Administre grupos, empresas, contratações, módulos, limites e acessos sem entrar na operação de cada cliente.</p></div><div className="master-heading-actions"><button type="button" className="outline master-neon-button" onClick={openPlansEditor}>Planos e valores</button><button type="button" className="outline master-neon-button" onClick={() => { setFormError(""); setNewGroupName(""); setCreateGroupOpen(true); }}>+ Novo grupo</button><button type="button" className="primary master-neon-primary" onClick={() => { resetCreate(); setCreateOpen(true); }}>+ Nova empresa</button></div></section>
-    <section className="master-summary-grid"><Metric label="Empresas cadastradas" value={String(groups.reduce((sum, group) => sum + (group.companies?.length || 0), 0))} detail={`${groups.length} grupo(s) empresarial(is)`} /><Metric label="Contratos ativos" value={String(subscriptions.filter((item) => item.status === "ACTIVE").length)} detail="Assinaturas vigentes" /><Metric label="Próximos do vencimento" value={String(subscriptions.filter((item) => item.expires_at && new Date(item.expires_at).getTime() - Date.now() <= 10 * 86400000 && new Date(item.expires_at).getTime() >= Date.now()).length)} detail="Vencimento em até 10 dias" /><Metric label="Planos personalizados" value={String(subscriptions.filter((item) => item.plan_mode === "CUSTOM").length)} detail="Contratações sob medida" /></section>
+    <section className="master-heading master-control-hero"><div><small>PAINEL DE CONTROLE GERIVO</small><h2>Central de empresas</h2><p>Administre grupos, empresas, contratações, módulos, limites e acessos sem entrar na operação de cada cliente.</p></div><div className="master-heading-actions"><button type="button" className="outline master-neon-button" onClick={openPlansEditor}>Planos e valores</button><button type="button" className="outline master-neon-button" onClick={() => { setFormError(""); setNewGroupName(""); setNewGroupPlanScope("GROUP"); setCreateGroupOpen(true); }}>+ Novo grupo</button><button type="button" className="primary master-neon-primary" onClick={() => { resetCreate(); setCreateOpen(true); }}>+ Nova empresa</button></div></section>
+    <section className="master-summary-grid"><Metric label="Empresas cadastradas" value={String(groups.reduce((sum, group) => sum + (group.companies?.length || 0), 0))} detail={`${groups.length} grupo(s) empresarial(is)`} /><Metric label="Contratos ativos" value={String(effectiveContracts.filter((item) => ["ACTIVE", "GRACE", "READ_ONLY", "DEMO"].includes(String(item.status))).length)} detail="Contratações efetivas vigentes" /><Metric label="Próximos do vencimento" value={String(effectiveContracts.filter((item) => item.expires_at && new Date(item.expires_at).getTime() - Date.now() <= 10 * 86400000 && new Date(item.expires_at).getTime() >= Date.now()).length)} detail="Vencimento em até 10 dias" /><Metric label="Planos personalizados" value={String(effectiveContracts.filter((item) => item.plan_mode === "CUSTOM").length)} detail="Contratações sob medida" /></section>
     <section className="panel master-groups-panel">
-      <header>
-        <div><small>ESTRUTURA EMPRESARIAL</small><h3>{groups.length} grupo(s)</h3></div>
-        <input className="master-company-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar grupo, CNPJ, empresa ou unidade" />
+      <header className="master-groups-toolbar">
+        <div><small>ESTRUTURA EMPRESARIAL</small><h3>{filteredGroups.length} de {groups.length} grupo(s)</h3></div>
+        <div className="master-groups-tools">
+          <input className="master-company-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar grupo, CNPJ, empresa ou unidade" />
+          <div className="master-status-filters" role="group" aria-label="Filtrar empresas por situação">
+            {[
+              ["ALL", "Todas"],
+              ["ACTIVE", "Ativas"],
+              ["INACTIVE", "Inativas"],
+              ["DEMO", "Demonstração"],
+              ["PENDING_PAYMENT", "Pendente pagamento"],
+              ["AWAITING_ACTIVATION", "Aguardando ativação"],
+            ].map(([value, label]) => <button type="button" key={value} className={statusFilter === value ? "active" : ""} onClick={() => setStatusFilter(value as typeof statusFilter)}>{label}</button>)}
+          </div>
+        </div>
       </header>
       <div className="master-group-list master-group-list-v177">
-        {filteredGroups.map((group) => (
+        {filteredGroups.length ? filteredGroups.map((group) => (
           <article key={group.id}>
             <header className="master-group-header-v1711">
               <div><strong>{group.name}</strong><small>{group.companies?.length || 0} empresa(s)</small></div>
               <div className="master-group-header-actions">
-                <span>{companyStatusLabel(group.status || "ACTIVE")}</span>
-                <button type="button" className="outline small" disabled={saving} onClick={() => void editGroupName(group)}>Editar grupo</button>
+                <span className={`master-plan-scope-badge ${group.plan_scope === "GROUP" ? "group" : "company"}`}>{group.plan_scope === "GROUP" ? "Plano do grupo" : "Plano por empresa"}</span>
+                <span>{companyStatusLabel(effectiveGroupStatus(group))}</span>
+                <button type="button" className="outline small" disabled={saving} onClick={() => openGroupEditor(group)}>Editar grupo</button>
+                {group.plan_scope === "GROUP" && group.companies?.[0] && (['SUSPENDED','CANCELED','EXPIRED'].includes(effectiveGroupStatus(group)) ? <button type="button" className="primary small" disabled={saving} onClick={() => void changeStatus(group.companies[0], "ACTIVE")}>Reativar grupo</button> : <button type="button" className="outline small" disabled={saving} onClick={() => void changeStatus(group.companies[0], "SUSPENDED")}>Suspender grupo</button>)}
+                {group.plan_scope === "GROUP" && group.companies?.[0] && <button type="button" className="outline small" disabled={saving} onClick={() => void changeStatus(group.companies[0], "CANCELED")}>Arquivar grupo</button>}
                 <button type="button" className="outline small" disabled={saving} onClick={() => openReplication(group)}>Replicar configurações</button>
                 <button type="button" className="danger small" disabled={saving} onClick={() => void deleteGroupPermanently(group)}>Excluir grupo</button>
               </div>
             </header>
             <div>
               {(group.companies || []).map((company: any) => {
-                const subscription = subscriptions.find((item) => item.company_id === company.id);
+                const subscription = effectiveSubscription(company);
+                const effectiveStatus = String(subscription?.status || company.status || "AWAITING_ACTIVATION");
+                const sharedGroupContract = group.plan_scope === "GROUP";
                 return (
                   <section key={company.id} className="master-company-row-v177">
-                    <div className="master-company-identity"><b>{company.name}</b><small>{company.document || "CNPJ não informado"} · {company.segment || "OUTRO"}</small><span className={`company-status status-${String(company.status || "ACTIVE").toLowerCase()}`}>{companyStatusLabel(company.status || "ACTIVE")}</span></div>
-                    <div className="master-company-contract"><strong>{subscription?.plan_mode === "CUSTOM" ? subscription?.custom_plan_name || "Personalizado" : subscription?.subscription_plans?.name || "Sem plano"}</strong><small>{subscription?.contract_end || subscription?.expires_at ? `até ${formatDate(subscription.contract_end || subscription.expires_at)}` : "sem período definido"}</small></div>
+                    <div className="master-company-identity"><b>{company.name}</b><small>{company.document || "CNPJ não informado"} · {company.segment || "OUTRO"}</small><span className={`company-status status-${effectiveStatus.toLowerCase()}`}>{companyStatusLabel(effectiveStatus)}</span></div>
+                    <div className="master-company-contract"><strong>{subscriptionPlanName(subscription)}</strong><small>{subscription ? `${group.plan_scope === "GROUP" ? "herdado do grupo" : "contratação própria"}${subscription?.contract_end || subscription?.expires_at ? ` · até ${formatDate(subscription.contract_end || subscription.expires_at)}` : ""}` : "sem período definido"}</small></div>
                     <ul>{(company.stores || []).map((store: any) => <li key={store.id}><button type="button" className="master-store-open" onClick={() => void onOpenStore(String(store.id))}><span><b>{store.name}</b><small>ID {store.public_code}</small></span><PremiumIcon name="chevron" size={14} /></button></li>)}</ul>
                     <div className="master-company-actions">
                       {company.stores?.[0]?.id && <button type="button" className="primary small master-open-operation" disabled={saving} onClick={() => void onOpenStore(String(company.stores[0].id))}>Abrir operação</button>}
                       <button type="button" className="outline small" disabled={saving} onClick={() => openEdit(company)}>Editar</button>
-                      {company.status === "SUSPENDED" || company.status === "CANCELED" ? <button type="button" className="primary small" disabled={saving} onClick={() => void changeStatus(company, "ACTIVE")}>Reativar</button> : <button type="button" className="outline small" disabled={saving} onClick={() => void changeStatus(company, "SUSPENDED")}>Suspender</button>}
-                      <button type="button" className="outline small" disabled={saving} onClick={() => void changeStatus(company, "CANCELED")}>Arquivar</button>
+                      {!sharedGroupContract && (effectiveStatus === "SUSPENDED" || effectiveStatus === "CANCELED" || effectiveStatus === "EXPIRED" ? <button type="button" className="primary small" disabled={saving} onClick={() => void changeStatus(company, "ACTIVE")}>Reativar</button> : <button type="button" className="outline small" disabled={saving} onClick={() => void changeStatus(company, "SUSPENDED")}>Suspender</button>)}
+                      {!sharedGroupContract && <button type="button" className="outline small" disabled={saving} onClick={() => void changeStatus(company, "CANCELED")}>Arquivar</button>}
                       <button type="button" className="danger small" disabled={saving} onClick={() => void deleteCompanyPermanently(company)}>Excluir definitivamente</button>
                     </div>
                   </section>
@@ -6790,10 +7032,46 @@ function MasterCommercialPage({
               })}
             </div>
           </article>
-        ))}
+        )) : <div className="master-filter-empty"><PremiumIcon name="modules" size={22} /><strong>Nenhuma empresa encontrada</strong><span>Ajuste a busca ou escolha outro filtro de situação.</span></div>}
       </div>
     </section>
     {notice && <div className={notice.error ? "master-pop-toast error" : "master-pop-toast"}><span>{notice.error ? "!" : "✓"}</span><strong>{notice.text}</strong></div>}
+    {groupEditOpen && selectedGroup && <div className="modal-backdrop master-control-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setGroupEditOpen(false); }}>
+      <section role="dialog" aria-modal="true" className="compact-modal master-company-modal master-company-modal-v1792 master-group-editor-modal">
+        <header><div><small>EDITAR GRUPO EMPRESARIAL</small><h2>{selectedGroup.name}</h2><p>{selectedGroup.companies?.length || 0} empresa(s) vinculada(s) · {contractScope === "GROUP" ? "contratação compartilhada" : "contratações individuais"}</p></div><button type="button" disabled={saving} onClick={() => setGroupEditOpen(false)}>×</button></header>
+        <nav className="master-edit-tabs master-group-edit-tabs">
+          <button type="button" className={groupEditTab === "OVERVIEW" ? "active" : ""} onClick={() => setGroupEditTab("OVERVIEW")}>Grupo</button>
+          <button type="button" className={groupEditTab === "CONTRACT" ? "active" : ""} onClick={() => setGroupEditTab("CONTRACT")}>Plano e contratação</button>
+          <button type="button" className={groupEditTab === "MODULES" ? "active" : ""} onClick={() => setGroupEditTab("MODULES")}>Módulos e limites</button>
+          <button type="button" className={groupEditTab === "COMPANIES" ? "active" : ""} onClick={() => setGroupEditTab("COMPANIES")}>Empresas</button>
+          <button type="button" className={groupEditTab === "HISTORY" ? "active" : ""} onClick={() => setGroupEditTab("HISTORY")}>Histórico</button>
+        </nav>
+        <div className="master-company-modal-content master-group-editor-content">
+          {groupEditTab === "OVERVIEW" && <div className="master-group-editor-overview">
+            <div className="master-group-editor-main-grid">
+              <Field label="Nome do grupo empresarial"><input autoFocus value={groupEditName} onChange={(event) => setGroupEditName(event.target.value)} /></Field>
+              <div className="master-group-current-status"><small>SITUAÇÃO EFETIVA</small><span className={`company-status status-${String(companyStatus || selectedGroup.status || "ACTIVE").toLowerCase()}`}>{companyStatusLabel(companyStatus || selectedGroup.status || "ACTIVE")}</span></div>
+            </div>
+            <div className="master-group-scope-choice master-group-scope-editor"><small>COMO O PLANO DESTE GRUPO É CONTROLADO?</small><div>
+              <button type="button" className={contractScope === "GROUP" ? "active" : ""} onClick={() => changeGroupContractScope("GROUP")}><b>Plano do grupo</b><span>Uma única contratação define plano, módulos, limites e situação para todos os CNPJs.</span></button>
+              <button type="button" className={contractScope === "COMPANY" ? "active" : ""} onClick={() => changeGroupContractScope("COMPANY")}><b>Plano por empresa</b><span>Cada CNPJ mantém contrato próprio. Use quando cada empresa deve ser faturada/configurada separadamente.</span></button>
+            </div></div>
+            <div className="master-group-summary-cards">
+              <article><small>PLANO ATUAL</small><strong>{contractScope === "GROUP" ? contractDraftPlanName() : "Por empresa"}</strong><span>{contractScope === "GROUP" ? `${contract.companyLimit} empresa(s) · ${contract.storeLimit} unidade(s) · ${contract.userLimit} usuário(s)` : `${selectedGroup.companies?.length || 0} contratação(ões) administrada(s) individualmente`}</span></article>
+              <article><small>EMPRESAS</small><strong>{selectedGroup.companies?.length || 0}</strong><span>{(selectedGroup.companies || []).reduce((total: number, company: any) => total + (company.stores?.length || 0), 0)} unidade(s) cadastrada(s)</span></article>
+              <article><small>RENOVAÇÃO</small><strong>{contractScope === "GROUP" ? (contract.autoRenew ? "Automática" : "Manual") : "Individual"}</strong><span>{contractScope === "GROUP" && contract.contractEnd ? `Término ${formatDate(contract.contractEnd)}` : "Conforme cada contrato"}</span></article>
+            </div>
+            {initialContractScope !== contractScope && <div className="master-group-scope-warning"><PremiumIcon name="shield" size={18} /><span><strong>Mudança estrutural de contratação</strong><small>{contractScope === "GROUP" ? "Ao salvar, o contrato escolhido será consolidado no grupo e os contratos individuais anteriores serão encerrados como histórico." : "Ao salvar, o contrato compartilhado será separado em contratos individuais para que nenhum CNPJ perca plano ou módulos."}</small></span></div>}
+          </div>}
+          {groupEditTab === "CONTRACT" && (contractScope === "GROUP" ? renderContractForm("GROUP") : <div className="master-group-individual-management"><PremiumIcon name="layers" size={28} /><strong>Este grupo usa planos por empresa</strong><p>Não existe um contrato único para editar aqui. Abra a empresa desejada para alterar plano, cobrança ou situação. Para voltar a uma contratação compartilhada, selecione <b>Plano do grupo</b> na aba Grupo.</p><div>{(selectedGroup.companies || []).map((company: any) => { const item = effectiveSubscription(company); return <article key={company.id}><span><b>{company.name}</b><small>{subscriptionPlanName(item)} · {companyStatusLabel(item?.status || company.status || "ACTIVE")}</small></span><button type="button" className="outline small" onClick={() => { setGroupEditOpen(false); window.setTimeout(() => openEdit(company), 0); }}>Editar empresa</button></article>; })}</div></div>)}
+          {groupEditTab === "MODULES" && (contractScope === "GROUP" ? renderModulesForm("GROUP") : <div className="master-group-individual-management"><PremiumIcon name="modules" size={28} /><strong>Módulos definidos por empresa</strong><p>Como o escopo está em plano por empresa, os módulos e limites não são sobrescritos pelo grupo.</p><div>{(selectedGroup.companies || []).map((company: any) => { const item = effectiveSubscription(company); return <article key={company.id}><span><b>{company.name}</b><small>{subscriptionPlanName(item)}</small></span><button type="button" className="outline small" onClick={() => { setGroupEditOpen(false); window.setTimeout(() => { openEdit(company); setActiveTab("MODULES"); }, 0); }}>Ver módulos</button></article>; })}</div></div>)}
+          {groupEditTab === "COMPANIES" && <div className="master-group-companies-list">{(selectedGroup.companies || []).length ? (selectedGroup.companies || []).map((company: any) => { const item = effectiveSubscription(company); const status = item?.status || company.status || "ACTIVE"; return <article key={company.id}><div><strong>{company.name}</strong><small>{company.document || "CNPJ não informado"} · {company.stores?.length || 0} unidade(s)</small></div><div><b>{subscriptionPlanName(item)}</b><span className={`company-status status-${String(status).toLowerCase()}`}>{companyStatusLabel(status)}</span></div><button type="button" className="outline small" onClick={() => { setGroupEditOpen(false); window.setTimeout(() => openEdit(company), 0); }}>Editar empresa</button></article>; }) : <div className="empty-inline">Nenhuma empresa vinculada a este grupo.</div>}</div>}
+          {groupEditTab === "HISTORY" && <div className="master-history-list">{selectedGroupHistory.length ? selectedGroupHistory.map((item) => <article key={item.id}><strong>{item.action === "CONTRACT_CHANGED" ? "Contratação alterada" : item.action === "CONTRACT_CREATED" ? "Contratação criada" : String(item.action || "Alteração")}</strong><span>{new Date(item.changed_at).toLocaleString("pt-BR")}</span><p>{item.justification || "Sem justificativa informada."}</p></article>) : <div className="empty-inline">Nenhuma alteração contratual registrada para este grupo.</div>}</div>}
+          {formError && <div className="auth-error master-company-error" role="alert">{formError}</div>}
+        </div>
+        <footer><button type="button" className="outline" disabled={saving} onClick={() => setGroupEditOpen(false)}>Cancelar</button><button type="button" className="primary" disabled={saving || groupEditName.trim().length < 2} onClick={() => void saveGroupEditor()}>{saving ? "Salvando grupo..." : "Salvar grupo"}</button></footer>
+      </section>
+    </div>}
     {plansOpen && <div className="modal-backdrop master-control-backdrop"><section className="compact-modal master-plans-modal"><header><div><small>PLANOS GERIVO</small><h2>Valores e conteúdo do site de vendas</h2><p>As alterações publicadas aqui aparecem automaticamente na página comercial.</p></div><button type="button" onClick={() => setPlansOpen(false)}>×</button></header><div className="master-plan-editor-grid">{planDrafts.map((plan) => <article key={plan.id} className={plan.recommended ? "master-plan-editor recommended" : "master-plan-editor"}><header><div><small>{plan.code}</small><input value={plan.name} onChange={(event) => patchPlanDraft(plan.id, { name: event.target.value })} /></div><label><input type="checkbox" checked={plan.public_visible} onChange={(event) => patchPlanDraft(plan.id, { public_visible: event.target.checked })} /> Exibir no site</label></header><div className="master-plan-price-row"><Field label="Mensal"><CurrencyInput value={plan.monthly_price} onChange={(monthly_price) => patchPlanDraft(plan.id, { monthly_price })} /></Field><Field label="Anual"><CurrencyInput value={plan.annual_price} onChange={(annual_price) => patchPlanDraft(plan.id, { annual_price })} /></Field></div><div className="master-plan-limits"><Field label="Empresas"><input type="number" min="1" value={plan.company_limit} onChange={(event) => patchPlanDraft(plan.id, { company_limit: Number(event.target.value) })} /></Field><Field label="Unidades"><input type="number" min="1" value={plan.store_limit} onChange={(event) => patchPlanDraft(plan.id, { store_limit: Number(event.target.value) })} /></Field><Field label="Usuários"><input type="number" min="1" value={plan.user_limit} onChange={(event) => patchPlanDraft(plan.id, { user_limit: Number(event.target.value) })} /></Field><Field label="IA/mês"><input type="number" min="0" value={plan.ai_queries_monthly} onChange={(event) => patchPlanDraft(plan.id, { ai_queries_monthly: Number(event.target.value) })} /></Field></div><Field label="Descrição pública"><input value={plan.public_description} onChange={(event) => patchPlanDraft(plan.id, { public_description: event.target.value })} /></Field><Field label="Benefícios — um por linha"><textarea rows={4} value={plan.public_features_text} onChange={(event) => patchPlanDraft(plan.id, { public_features_text: event.target.value })} /></Field><div className="master-plan-publish"><label><input type="checkbox" checked={plan.recommended} onChange={(event) => patchPlanDraft(plan.id, { recommended: event.target.checked })} /> Mais indicado</label><Field label="Texto do botão"><input value={plan.public_cta_label} onChange={(event) => patchPlanDraft(plan.id, { public_cta_label: event.target.value })} /></Field><Field label="Ordem"><input type="number" value={plan.public_sort_order} onChange={(event) => patchPlanDraft(plan.id, { public_sort_order: Number(event.target.value) })} /></Field></div><button type="button" className="primary" disabled={Boolean(savingPlanId)} onClick={() => void savePlanDraft(plan)}>{savingPlanId === plan.id ? "Salvando..." : "Salvar este plano"}</button></article>)}</div><footer><button type="button" className="outline" onClick={() => setPlansOpen(false)}>Fechar</button></footer></section></div>}
     {replicateOpen && replicateGroup && <div className="modal-backdrop master-control-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setReplicateOpen(false); }}>
       <section role="dialog" aria-modal="true" className="compact-modal master-replicate-modal">
@@ -6834,15 +7112,18 @@ function MasterCommercialPage({
                 ["CATALOG", "Catálogo cadastrado"],
                 ["MODULES", "Módulos e limites"],
                 ["USERS", "Usuários, funções e acessos"],
-              ].map(([key, label]) => <label key={key}><input type="checkbox" checked={replicateSections.includes(key)} onChange={(event) => setReplicateSections((current) => event.target.checked ? Array.from(new Set([...current, key])) : current.filter((item) => item !== key))} /> {label}</label>)}
+              ].map(([key, label]) => {
+                const inheritedModules = key === "MODULES" && replicateGroup.plan_scope === "GROUP";
+                return <label key={key} className={inheritedModules ? "disabled" : ""}><input type="checkbox" disabled={inheritedModules} checked={!inheritedModules && replicateSections.includes(key)} onChange={(event) => setReplicateSections((current) => event.target.checked ? Array.from(new Set([...current, key])) : current.filter((item) => item !== key))} /> {label}{inheritedModules ? " · herdado do plano" : ""}</label>;
+              })}
             </div>
           </div>
-          <aside className="master-replicate-warning"><b>Importante</b><span>Orçamentos, O.S., clientes e movimentações nunca são copiados. Usuários só são vinculados quando a opção correspondente estiver marcada.</span></aside>
+          <aside className="master-replicate-warning"><b>Importante</b><span>{replicateGroup.plan_scope === "GROUP" ? "Módulos e limites já são herdados pela contratação do grupo e não precisam ser replicados. " : ""}Orçamentos, O.S., clientes e movimentações nunca são copiados. Usuários só são vinculados quando a opção correspondente estiver marcada.</span></aside>
         </div>
         <footer><button type="button" className="outline" disabled={saving} onClick={() => setReplicateOpen(false)}>Cancelar</button><button type="button" className="primary" disabled={saving || !replicateSourceStoreId || !replicateTargetStoreIds.length || !replicateSections.length} onClick={() => void replicateGroupSettings()}>{saving ? "Replicando..." : "Replicar configurações"}</button></footer>
       </section>
     </div>}
-    {createGroupOpen && <div className="modal-backdrop master-control-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setCreateGroupOpen(false); }}><section role="dialog" aria-modal="true" className="compact-modal master-group-create-modal"><header><div><small>NOVO GRUPO</small><h2>Criar estrutura empresarial</h2><p>O grupo pode existir sem empresa. Depois você adiciona CNPJs e replica a base quando quiser.</p></div><button type="button" disabled={saving} onClick={() => setCreateGroupOpen(false)}>×</button></header><div className="master-group-create-body"><Field label="Nome do grupo empresarial"><input autoFocus value={newGroupName} onChange={(event) => setNewGroupName(event.target.value)} placeholder="Ex.: Grupo IESA" /></Field>{formError && <div className="auth-error" role="alert">{formError}</div>}</div><footer><button type="button" className="outline" disabled={saving} onClick={() => setCreateGroupOpen(false)}>Cancelar</button><button type="button" className="primary master-neon-primary" disabled={saving || newGroupName.trim().length < 2} onClick={() => void createGroupOnly()}>{saving ? "Criando..." : "Criar grupo"}</button></footer></section></div>}
+    {createGroupOpen && <div className="modal-backdrop master-control-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setCreateGroupOpen(false); }}><section role="dialog" aria-modal="true" className="compact-modal master-group-create-modal"><header><div><small>NOVO GRUPO</small><h2>Criar estrutura empresarial</h2><p>O grupo pode existir sem empresa. Depois você adiciona CNPJs e replica a base quando quiser.</p></div><button type="button" disabled={saving} onClick={() => setCreateGroupOpen(false)}>×</button></header><div className="master-group-create-body"><Field label="Nome do grupo empresarial"><input autoFocus value={newGroupName} onChange={(event) => setNewGroupName(event.target.value)} placeholder="Ex.: Grupo IESA" /></Field><div className="master-group-scope-choice"><small>COMO O PLANO SERÁ CONTROLADO?</small><div><button type="button" className={newGroupPlanScope === "GROUP" ? "active" : ""} onClick={() => setNewGroupPlanScope("GROUP")}><b>Plano do grupo</b><span>Uma contratação para todos os CNPJs e unidades.</span></button><button type="button" className={newGroupPlanScope === "COMPANY" ? "active" : ""} onClick={() => setNewGroupPlanScope("COMPANY")}><b>Plano por empresa</b><span>Cada CNPJ possui contratação e módulos próprios.</span></button></div></div>{formError && <div className="auth-error" role="alert">{formError}</div>}</div><footer><button type="button" className="outline" disabled={saving} onClick={() => setCreateGroupOpen(false)}>Cancelar</button><button type="button" className="primary master-neon-primary" disabled={saving || newGroupName.trim().length < 2} onClick={() => void createGroupOnly()}>{saving ? "Criando..." : "Criar grupo"}</button></footer></section></div>}
     {createOpen && <div className="modal-backdrop master-control-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setCreateOpen(false); }}><section role="dialog" aria-modal="true" className="compact-modal master-company-modal master-company-modal-v1792 master-company-modal-v1714"><header><div><small>NOVA EMPRESA</small><h2>Nova empresa / unidade</h2><p>Vincule ao grupo, configure a contratação e replique uma base existente em um único fluxo.</p></div><button type="button" disabled={saving} onClick={() => { if (!saving) setCreateOpen(false); }}>×</button></header>{renderModalBody(true)}<footer><button type="button" className="outline" disabled={saving} onClick={() => setCreateOpen(false)}>Cancelar</button><button type="button" className="primary master-neon-primary" disabled={saving || !companyName.trim() || !storeName.trim()} onClick={() => void createCompany()}>{saving ? "Criando e configurando..." : "Criar empresa"}</button></footer></section></div>}
     {editOpen && selectedCompany && <div className="modal-backdrop master-control-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setEditOpen(false); }}><section role="dialog" aria-modal="true" className="compact-modal master-company-modal master-company-modal-v1792"><header><div><small>EDITAR EMPRESA</small><h2>{selectedCompany.name}</h2></div><button type="button" disabled={saving} onClick={() => { if (!saving) setEditOpen(false); }}>×</button></header>{renderModalBody(false)}<footer><button type="button" className="outline" disabled={saving} onClick={() => setEditOpen(false)}>Cancelar</button><button type="button" className="primary" disabled={saving || !companyName.trim()} onClick={() => void saveCompany()}>{saving ? "Salvando alterações..." : "Salvar alterações"}</button></footer></section></div>}
   </div>;
@@ -7634,6 +7915,12 @@ function QuotesPage({
     return statusMatches && (!normalizedSearch || text.includes(normalizedSearch));
   });
   const messageQuote = quotes.find((quote) => quote.id === messageQuoteId) ?? null;
+  const quoteOverview = {
+    open: quotes.filter((quote) => !quoteIsTerminal(quote.status)).length,
+    awaiting: quotes.filter((quote) => quote.status === "AGUARDANDO_APROVACAO" || quote.status === "AGUARDANDO_RETORNO_CLIENTE").length,
+    approved: quotes.filter((quote) => quoteIsApproved(quote.status)).length,
+    openValue: quotes.filter((quote) => !quoteIsTerminal(quote.status)).reduce((sum, quote) => sum + Number(quote.total || 0), 0),
+  };
 
   function updateStatus(id: string, status: QuoteStatus) {
     const now = new Date().toISOString();
@@ -7659,7 +7946,13 @@ function QuotesPage({
   }
 
   return (
-    <section className="module-list-page quotes-list-v179">
+    <section className="module-list-page quotes-list-v179 quotes-list-v1715">
+      <section className="quotes-overview-v1715">
+        <article><small>EM ANDAMENTO</small><strong>{quoteOverview.open}</strong><span>orçamentos em negociação</span></article>
+        <article><small>AGUARDANDO CLIENTE</small><strong>{quoteOverview.awaiting}</strong><span>aprovação ou retorno</span></article>
+        <article><small>APROVADOS</small><strong>{quoteOverview.approved}</strong><span>negócios confirmados</span></article>
+        <article className="value"><small>VALOR EM ABERTO</small><strong>{money(quoteOverview.openValue)}</strong><span>potencial comercial atual</span></article>
+      </section>
       <FilterToolbar
         search={search}
         onSearch={setSearch}
@@ -7842,8 +8135,8 @@ function BudgetImportModal({ context, onClose, onImport }: { context: BudgetImpo
           <div className="budget-import-source"><Field label="Origem do documento"><select value={source} onChange={(event) => setSource(event.target.value)}><option value="AUTO">Identificar automaticamente</option><option value="MOBATO">Mobato</option><option value="NBS">NBS</option></select></Field></div>
           <button type="button" className="budget-file-picker" onClick={() => fileInputRef.current?.click()}><PremiumIcon name="file" size={24} /><span><strong>{file ? file.name : "Selecionar PDF ou imagem"}</strong><small>PDF, PNG, JPG ou WEBP · até 4 MB para PDF</small></span></button>
           <input ref={fileInputRef} className="budget-import-file-input" type="file" accept="application/pdf,image/png,image/jpeg,image/webp" onChange={(event) => { setFile(event.target.files?.[0] || null); setLines([]); setIgnoredCount(0); setError(""); }} />
-          <div className="budget-import-rules"><span>✓ Prioriza itens grifados em amarelo</span><span>✓ Importa descrição, quantidade e valor</span><span>✓ Linhas riscadas são ignoradas</span></div>
-          <button type="button" className="primary" disabled={!file || processing} onClick={() => void recognize()}>{processing ? "Reconhecendo documento..." : "Reconhecer peças e mão de obra"}</button>
+          <div className="budget-import-rules"><span>✓ Não depende de grifo ou marca-texto</span><span>✓ Lê descrição, quantidade/tempo e valor</span><span>✓ Linhas riscadas ou canceladas são ignoradas</span></div>
+          <button type="button" className="primary" disabled={!file || processing} onClick={() => void recognize()}>{processing ? "Lendo estrutura do documento..." : "Ler peças e mão de obra"}</button>
         </section>
         {error && <div className="budget-import-error">{error}</div>}
         {lines.length > 0 && <section className="budget-import-preview"><header><div><small>PRÉVIA EDITÁVEL</small><h3>{lines.length} item(ns) reconhecido(s)</h3></div><div><span>{selectedCount} selecionado(s)</span>{ignoredCount > 0 && <span>{ignoredCount} riscado(s) ignorado(s)</span>}</div></header><div className="budget-import-lines">{lines.map((line, index) => <article key={line.id} className={!line.selected ? "disabled" : ""}>

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdminClient, normalizeUsername } from "../../../../lib/supabase-admin";
 import { apiErrorMessage, isMissingColumnError } from "../../../../lib/api-error";
+import { getEffectiveSubscription } from "../../../../lib/effective-subscription";
 
 export const runtime = "nodejs";
 
@@ -62,24 +63,28 @@ export async function POST(request: Request) {
       if (storeIds.some((id: string) => !allowed.has(id))) return NextResponse.json({ error: "O gestor só pode criar usuários nas unidades em que possui acesso." }, { status: 403 });
     }
 
-    const [{ count: usernameCount, error: usernameError }, { data: subscription, error: subscriptionError }] = await Promise.all([
-      admin.from("profiles").select("id", { count: "exact", head: true }).eq("username_normalized", username),
-      admin.from("company_subscriptions").select("user_limit, status").eq("company_id", companyId).in("status", ["ACTIVE", "GRACE", "READ_ONLY"]).order("created_at", { ascending: false }).limit(1).maybeSingle(),
-    ]);
+    const { count: usernameCount, error: usernameError } = await admin.from("profiles").select("id", { count: "exact", head: true }).eq("username_normalized", username);
     if (usernameError) throw usernameError;
-    if (subscriptionError) throw subscriptionError;
+    const { subscription, planScope, group } = await getEffectiveSubscription(admin, companyId);
     if ((usernameCount || 0) > 0) return NextResponse.json({ error: "Este usuário já está em uso." }, { status: 409 });
-    if (!platformMaster && !subscription) return NextResponse.json({ error: "A assinatura da empresa não está ativa." }, { status: 403 });
+    if (!platformMaster && (!subscription || !["ACTIVE", "GRACE", "READ_ONLY", "DEMO"].includes(String(subscription.status || "")))) return NextResponse.json({ error: "A assinatura da empresa não está ativa." }, { status: 403 });
 
     if (!platformMaster && subscription?.user_limit) {
-      const { count: activeUsers, error: activeUsersError } = await admin
+      let limitCompanyIds = [companyId];
+      if (planScope === "GROUP" && group?.id) {
+        const { data: groupCompanies, error: groupCompaniesError } = await admin.from("companies").select("id").eq("group_id", group.id);
+        if (groupCompaniesError) throw groupCompaniesError;
+        limitCompanyIds = (groupCompanies || []).map((item: { id: string }) => String(item.id));
+      }
+      const { data: activeMembers, error: activeUsersError } = await admin
         .from("company_members")
-        .select("user_id", { count: "exact", head: true })
-        .eq("company_id", companyId)
+        .select("user_id")
+        .in("company_id", limitCompanyIds)
         .eq("active", true);
       if (activeUsersError) throw activeUsersError;
-      if ((activeUsers || 0) >= Number(subscription.user_limit)) {
-        return NextResponse.json({ error: `O limite de ${subscription.user_limit} usuário(s) do plano foi atingido.` }, { status: 409 });
+      const activeUsers = new Set((activeMembers || []).map((item: { user_id: string }) => String(item.user_id))).size;
+      if (activeUsers >= Number(subscription.user_limit)) {
+        return NextResponse.json({ error: `O limite de ${subscription.user_limit} usuário(s) ${planScope === "GROUP" ? "do grupo" : "do plano"} foi atingido.` }, { status: 409 });
       }
     }
 

@@ -23,6 +23,7 @@ export async function POST(request: Request) {
 
     const body = await request.json();
     const name = String(body.name || "").trim();
+    const planScope = body.planScope === "COMPANY" ? "COMPANY" : "GROUP";
     if (name.length < 2) return NextResponse.json({ error: "Informe o nome do grupo empresarial." }, { status: 400 });
     if (name.length > 120) return NextResponse.json({ error: "O nome do grupo deve ter no máximo 120 caracteres." }, { status: 400 });
 
@@ -33,10 +34,11 @@ export async function POST(request: Request) {
     const { data: group, error } = await admin.from("business_groups").insert({
       name,
       slug,
+      plan_scope: planScope,
       status: "AWAITING_ACTIVATION",
       active: false,
       created_by: authData.user.id,
-    }).select("id, name, status, active").single();
+    }).select("id, name, status, active, plan_scope").single();
     if (error || !group) throw new Error(error?.message || "Não foi possível criar o grupo empresarial.");
 
     await admin.from("audit_logs").insert({
@@ -44,7 +46,7 @@ export async function POST(request: Request) {
       action: "BUSINESS_GROUP_CREATED",
       entity: "business_group",
       entity_id: group.id,
-      new_value: { name, status: group.status },
+      new_value: { name, status: group.status, plan_scope: planScope },
     });
 
     return NextResponse.json({ success: true, group });

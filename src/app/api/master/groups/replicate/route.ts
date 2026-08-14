@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdminClient } from "../../../../../lib/supabase-admin";
+import { getEffectiveSubscription } from "../../../../../lib/effective-subscription";
 
 export const runtime = "nodejs";
 const ALLOWED = new Set(["IDENTITY", "CHECKLIST", "PRICING", "MESSAGES", "KNOWLEDGE", "CATALOG", "MODULES", "USERS"]);
@@ -41,18 +42,19 @@ export async function POST(request: Request) {
     });
     if (validTargets.length !== targetStoreIds.filter((id: string) => id !== sourceStoreId).length) return NextResponse.json({ error: "Todos os destinos precisam pertencer ao mesmo grupo empresarial." }, { status: 400 });
 
-    const [settingsResult, snapshotResult, subscriptionResult, membersResult] = await Promise.all([
+    const [settingsResult, snapshotResult, membersResult, groupResult] = await Promise.all([
       admin.from("store_settings").select("*").eq("store_id", sourceStoreId).maybeSingle(),
       admin.from("store_data_snapshots").select("payload").eq("store_id", sourceStoreId).maybeSingle(),
-      admin.from("company_subscriptions").select("*").eq("company_id", (sourceStore as any).company_id).order("created_at", { ascending: false }).limit(1).maybeSingle(),
       sections.includes("USERS")
         ? admin.from("store_members").select("user_id, role, active, job_function, custom_job_function, available_as_consultant").eq("store_id", sourceStoreId).eq("active", true)
         : Promise.resolve({ data: [], error: null } as any),
+      admin.from("business_groups").select("plan_scope").eq("id", groupId).maybeSingle(),
     ]);
+    const { subscription: sourceSubscription } = await getEffectiveSubscription(admin, String((sourceStore as any).company_id));
 
     const sourceSettings: any = settingsResult.data;
     const sourceSnapshot: any = snapshotResult.data;
-    const sourceSubscription: any = subscriptionResult.data;
+    const groupPlanScope = groupResult.data?.plan_scope === "GROUP" ? "GROUP" : "COMPANY";
     const sourceMembers: any[] = membersResult.data || [];
     if (!sourceSettings) return NextResponse.json({ error: "Configurações da unidade de origem não encontradas." }, { status: 404 });
 
@@ -69,8 +71,16 @@ export async function POST(request: Request) {
       }
       await admin.from("store_settings").update(settingsPatch).eq("store_id", target.id);
 
-      if (sections.includes("MODULES") && sourceSubscription) {
-        const { data: targetSubscription } = await admin.from("company_subscriptions").select("id").eq("company_id", target.company_id).order("created_at", { ascending: false }).limit(1).maybeSingle();
+      // Em grupos com plano no escopo GROUP, módulos e limites pertencem ao contrato do grupo.
+      // Replicar configurações nunca cria ou transforma contratos das empresas-filhas.
+      if (sections.includes("MODULES") && sourceSubscription && groupPlanScope === "COMPANY") {
+        const { data: targetSubscription } = await admin.from("company_subscriptions")
+          .select("id")
+          .eq("company_id", target.company_id)
+          .eq("contract_scope", "COMPANY")
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
         if (targetSubscription?.id) {
           const limits = {
             company_limit: Number(sourceSubscription.company_limit) || 1,
@@ -79,10 +89,10 @@ export async function POST(request: Request) {
             storage_gb: Number(sourceSubscription.storage_gb) || 5,
             ai_queries_monthly: Number(sourceSubscription.ai_queries_monthly) || 0,
           };
-          await admin.from("company_subscriptions").update({
+          const { error: subscriptionUpdateError } = await admin.from("company_subscriptions").update({
             plan_mode: "CUSTOM",
             plan_id: null,
-            custom_plan_name: `Base replicada do grupo`,
+            custom_plan_name: "Base replicada do grupo",
             company_limit: limits.company_limit,
             store_limit: limits.store_limit,
             user_limit: limits.user_limit,
@@ -94,6 +104,7 @@ export async function POST(request: Request) {
             updated_by: userId,
             updated_at: new Date().toISOString(),
           }).eq("id", targetSubscription.id);
+          if (subscriptionUpdateError) throw subscriptionUpdateError;
         }
       }
 

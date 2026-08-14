@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdminClient } from "../../../lib/supabase-admin";
+import { getEffectiveSubscription } from "../../../lib/effective-subscription";
 
 export const runtime = "nodejs";
 
@@ -62,14 +63,7 @@ async function authorizeAi(request: Request, companyId: string, storeId: string)
     throw new Error("A empresa ou unidade está suspensa.");
   }
 
-  const { data: subscription, error: subscriptionError } = await admin
-    .from("company_subscriptions")
-    .select("id, status, modules, ai_queries_monthly, contract_end, grace_until")
-    .eq("company_id", companyId)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (subscriptionError) throw new Error(`Não foi possível validar a contratação: ${subscriptionError.message}`);
+  const { subscription, planScope, group } = await getEffectiveSubscription(admin, companyId);
 
   if (!platformMaster) {
     if (!subscription || !ACTIVE_SUBSCRIPTION_STATUS.has(String(subscription.status || ""))) {
@@ -88,10 +82,16 @@ async function authorizeAi(request: Request, companyId: string, storeId: string)
   const startOfMonth = new Date();
   startOfMonth.setUTCDate(1);
   startOfMonth.setUTCHours(0, 0, 0, 0);
+  let quotaCompanyIds = [companyId];
+  if (!platformMaster && planScope === "GROUP" && group?.id) {
+    const { data: groupCompanies, error: groupCompaniesError } = await admin.from("companies").select("id").eq("group_id", group.id);
+    if (groupCompaniesError) throw new Error(`Não foi possível verificar as empresas do grupo: ${groupCompaniesError.message}`);
+    quotaCompanyIds = (groupCompanies || []).map((item: { id: string }) => String(item.id));
+  }
   const { count, error: countError } = await admin
     .from("audit_logs")
     .select("id", { count: "exact", head: true })
-    .eq("company_id", companyId)
+    .in("company_id", quotaCompanyIds)
     .eq("action", "AI_ONLINE_QUERY")
     .gte("created_at", startOfMonth.toISOString());
   if (countError) throw new Error(`Não foi possível verificar a franquia da IA: ${countError.message}`);

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdminClient } from "../../../lib/supabase-admin";
+import { getEffectiveSubscription } from "../../../lib/effective-subscription";
 import { apiErrorMessage } from "../../../lib/api-error";
 
 export const runtime = "nodejs";
@@ -279,7 +280,10 @@ function isNumericCell(value: string) {
 function looksLikeCode(value: string) {
   const clean = value.trim().toUpperCase();
   if (!clean || clean.length < 2 || clean.length > 50 || /\s/.test(clean)) return false;
-  return /[A-Z]/.test(clean) && /^[A-Z0-9./_-]+$/.test(clean);
+  if (!/^[A-Z0-9./_-]+$/.test(clean)) return false;
+  // Mobato/NBS usam tanto códigos alfanuméricos quanto códigos totalmente numéricos.
+  // Índices simples de linha (1, 2, 3...) ficam de fora pelo tamanho.
+  return /[A-Z]/.test(clean) || /^\d{3,}$/.test(clean);
 }
 
 function inferItemKind(code: string, name: string, forced: "SERVICO" | "PECA" | null) {
@@ -316,6 +320,39 @@ function addUniqueItem(items: ImportedItem[], candidate: ImportedItem | null) {
   const key = `${candidate.kind}|${candidate.code}|${candidate.name}|${candidate.quantity}|${candidate.total}`.toUpperCase();
   const duplicate = items.some((item) => `${item.kind}|${item.code}|${item.name}|${item.quantity}|${item.total}`.toUpperCase() === key);
   if (!duplicate) items.push(candidate);
+}
+
+function flexibleBudgetLine(line: string, section: "SERVICO" | "PECA" | null, source: string) {
+  const prepared = compactLine(line.replace(/R\$\s+/gi, "R$"));
+  if (!prepared || isHeaderOrSummary(prepared) || looksStruckOrCancelled(prepared)) return null;
+  const tokens = prepared.split(/\s+/).filter(Boolean);
+  if (tokens.length < 4) return null;
+
+  const numberToken = (value: string) => /^(?:R\$)?-?\d+(?:\.\d{3})*(?:[.,]\d+)?%?$/.test(value);
+  const numericTail: string[] = [];
+  while (tokens.length && numberToken(tokens[tokens.length - 1])) numericTail.unshift((tokens.pop() || "").replace(/%$/, ""));
+  if (numericTail.length < 2 || tokens.length < 1) return null;
+
+  // Remove número sequencial do item apenas quando há outro candidato claro a código/descrição.
+  if (/^\d{1,2}$/.test(tokens[0]) && tokens.length >= 2) tokens.shift();
+
+  let code = "";
+  if (tokens.length >= 2 && looksLikeCode(tokens[0])) code = tokens.shift() || "";
+  const unitIndex = tokens.findIndex((token) => /^(UN|UND|PC|PÇ|PCA|DL|LT|L|H|HR|HS|SV|MO|M[0-9A-Z]?|D[0-9A-Z]?|Z[0-9A-Z]?)$/i.test(token));
+  if (unitIndex >= 0 && unitIndex >= tokens.length - 2) tokens.splice(unitIndex, 1);
+
+  const name = compactLine(tokens.join(" "));
+  if (!name || name.length < 3 || !/[A-ZÀ-Ú]/i.test(name)) return null;
+  if (!section && !code) return null;
+
+  const numbers = numericTail.map(normalizeNumber);
+  const quantity = numbers[0];
+  const total = numbers[numbers.length - 1];
+  let unitPrice = numbers.length >= 3 ? numbers[1] : 0;
+  if (!(quantity > 0) || quantity > 100000 || total < 0) return null;
+  if (!unitPrice && quantity > 0 && total > 0) unitPrice = total / quantity;
+  const kind = inferItemKind(code, name, section);
+  return createLocalItem(kind, code, name, quantity, unitPrice, total, section ? 0.79 : 0.68, `Leitura flexível ${source === "DESCONHECIDO" ? "do PDF" : source}. Confirme quantidade e valor na prévia.`);
 }
 
 function detectTableKind(rows: string[][]) {
@@ -428,6 +465,12 @@ function parseLocalPdfText(text: string, requestedSource: string) {
     if (simple && (section || /^(REV|PCT|BRPRT)/i.test(simple[1]))) {
       const kind = inferItemKind(simple[1], simple[2], section);
       addUniqueItem(items, createLocalItem(kind, simple[1], simple[2], simple[3], simple[4], simple[5], 0.7, "Leitura local do PDF. Confirme descrição e valores."));
+      return true;
+    }
+
+    const flexible = flexibleBudgetLine(originalLine, section, source);
+    if (flexible) {
+      addUniqueItem(items, flexible);
       return true;
     }
     return false;
@@ -558,14 +601,14 @@ async function authorize(request: Request, companyId: string, storeId: string) {
   const { data: authData, error: authError } = await admin.auth.getUser(token);
   if (authError || !authData.user) throw new Error("Sessão expirada. Entre novamente no Gerivo.");
   const userId = authData.user.id;
-  const [{ data: profile }, { data: company }, { data: store }, { data: companyMember }, { data: storeMember }, { data: subscription }] = await Promise.all([
+  const [{ data: profile }, { data: company }, { data: store }, { data: companyMember }, { data: storeMember }] = await Promise.all([
     admin.from("profiles").select("platform_role, active").eq("id", userId).maybeSingle(),
     admin.from("companies").select("id, name, active, status").eq("id", companyId).maybeSingle(),
     admin.from("stores").select("id, name, company_id, active").eq("id", storeId).eq("company_id", companyId).maybeSingle(),
     admin.from("company_members").select("active, role").eq("company_id", companyId).eq("user_id", userId).maybeSingle(),
     admin.from("store_members").select("active, role").eq("company_id", companyId).eq("store_id", storeId).eq("user_id", userId).maybeSingle(),
-    admin.from("company_subscriptions").select("id, status, modules").eq("company_id", companyId).order("created_at", { ascending: false }).limit(1).maybeSingle(),
   ]);
+  const { subscription } = await getEffectiveSubscription(admin, companyId);
   if (!profile?.active) throw new Error("Seu usuário está inativo.");
   const platformMaster = profile.platform_role === "MASTER";
   if (!company || !store) throw new Error("Empresa ou unidade não encontrada.");

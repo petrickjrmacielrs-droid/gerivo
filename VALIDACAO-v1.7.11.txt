@@ -1,7 +1,0 @@
-GERIVO v1.7.11 — VALIDAÇÃO
-
-- Sintaxe TypeScript/TSX dos arquivos alterados: aprovada por transpileModule.
-- Auditoria estática sem dependências: nenhum erro estrutural adicional encontrado além das tipagens que dependem dos pacotes React/Next ausentes no ambiente.
-- npm install no ambiente de geração: não concluído porque o registro interno retornou 404 para pacotes públicos.
-- npm run build completo: deve ser executado no Windows do projeto antes da publicação.
-- Nenhum .env.local, .git, .next ou node_modules deve ser distribuído no ZIP.
