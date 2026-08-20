@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { inflateSync } from "node:zlib";
 import { getSupabaseAdminClient } from "../../../lib/supabase-admin";
 import { getEffectiveSubscription } from "../../../lib/effective-subscription";
 import { apiErrorMessage } from "../../../lib/api-error";
@@ -50,10 +51,22 @@ function parseJsonPayload(text: string) {
 
 function normalizeNumber(value: unknown) {
   if (typeof value === "number") return Number.isFinite(value) ? value : 0;
-  let raw = String(value || "").trim().replace(/R\$\s?/gi, "").replace(/\s/g, "");
+  let raw = String(value || "").trim().replace(/R\$\s?/gi, "").replace(/%/g, "").replace(/\s/g, "");
   if (!raw) return 0;
-  if (/^-?\d{1,3}(?:\.\d{3})*,\d+$/.test(raw)) raw = raw.replace(/\./g, "").replace(",", ".");
-  else if (/^-?\d+,\d+$/.test(raw)) raw = raw.replace(",", ".");
+
+  // Mobato/NBS podem exportar números em pt-BR (1.039,00) ou no padrão
+  // utilizado pelo NBS deste cliente (1,039.00). O separador decimal é o
+  // último separador quando vírgula e ponto aparecem juntos.
+  const comma = raw.lastIndexOf(",");
+  const dot = raw.lastIndexOf(".");
+  if (comma >= 0 && dot >= 0) {
+    if (dot > comma) raw = raw.replace(/,/g, "");
+    else raw = raw.replace(/\./g, "").replace(",", ".");
+  } else if (comma >= 0) {
+    const decimals = raw.length - comma - 1;
+    raw = decimals === 3 && /^-?\d{1,3}(?:,\d{3})+$/.test(raw) ? raw.replace(/,/g, "") : raw.replace(",", ".");
+  }
+
   const parsed = Number(raw);
   return Number.isFinite(parsed) ? parsed : 0;
 }
@@ -87,8 +100,23 @@ function isHeaderOrSummary(line: string) {
 function detectSourceFromText(text: string, requestedSource: string) {
   if (requestedSource === "MOBATO" || requestedSource === "NBS") return requestedSource;
   const upper = text.toUpperCase();
-  if (upper.includes("ORÇAMENTO INTERNO") || upper.includes("ORCAMENTO INTERNO") || upper.includes("MOBATO")) return "MOBATO";
-  if (upper.includes("ORÇAMENTO:") || upper.includes("ORCAMENTO:") || upper.includes("RECOMENDADOS")) return "NBS";
+
+  // NBS real: a identificação é feita pela estrutura do documento, e NÃO pela
+  // palavra "MOBATO". Alguns relatórios NBS trazem "Observação MOBATO" no
+  // rodapé, embora o documento seja do NBS.
+  const nbsServiceTable = /IT\s+SERVI[CÇ]O[\s\S]{0,120}DESCRI[CÇ][ÃA]O\s+DO\s+SERVI[CÇ]O[\s\S]{0,80}VALOR\s+FINAL/.test(upper);
+  const nbsPartTable = /OR[CÇ]AMENTO\s+ITEM[\s\S]{0,120}DESCRI[CÇ][ÃA]O\s+DO\s+ITEM[\s\S]{0,120}PRE[CÇ]O\s+UNIT[ÁA]RIO[\s\S]{0,60}VALOR\s+FINAL/.test(upper);
+  const nbsAdministrative = /N[ºO]\s*CONTR\.\/PACOTE\s+TMAC|N\.\s*PR[ÉE]\s*O\.S\.|TIPO\s+F[ÁA]B\.:/.test(upper);
+  if ((nbsServiceTable && nbsPartTable) || (nbsAdministrative && (nbsServiceTable || nbsPartTable))) return "NBS";
+
+  // Mobato/Jasper utilizado pela IESA: uma única tabela com Qtde/Tempo,
+  // Valor Unitário, desconto e total. "MOBATO" isolado não é prova de origem.
+  const mobatoTable = /OR[CÇ]AMENTO\s+INICIAL/.test(upper)
+    && /QTDE\s*\/\s*TEMPO/.test(upper)
+    && /VAL\.?\s*UNIT\.?|VALOR\s+UNIT[ÁA]RIO/.test(upper);
+  if (mobatoTable) return "MOBATO";
+
+  if (/\bNBS\b/.test(upper) || upper.includes("RECOMENDADOS NBS")) return "NBS";
   return "DESCONHECIDO";
 }
 
@@ -291,7 +319,7 @@ function inferItemKind(code: string, name: string, forced: "SERVICO" | "PECA" | 
   const normalizedCode = code.toUpperCase();
   const normalizedName = name.toUpperCase();
   if (/^(REV|PCT|MO|SERV|99LAV|LAVCAR)/.test(normalizedCode)) return "SERVICO";
-  if (/\b(REVIS[ÃA]O|HIGIENIZA[CÇ][ÃA]O|LAVAGEM|M[ÃA]O DE OBRA|SERVI[CÇ]O)\b/.test(normalizedName)) return "SERVICO";
+  if (/\b(REVIS[ÃA]O|HIGIENIZA[CÇ][ÃA]O|LAVAGEM|M[ÃA]O DE OBRA|SERVI[CÇ]O|SUBST(?:ITUI[CÇ][ÃA]O)?|SUBS\.?|TROCA|ALINHAMENTO|BALANCEAMENTO|MONTAGEM|DESMONTAGEM|REPARO|DIAGN[ÓO]STICO|REGULAGEM|LIMPEZA|INSTALA[CÇ][ÃA]O|VERIFICA[CÇ][ÃA]O)\b/.test(normalizedName)) return "SERVICO";
   return "PECA";
 }
 
@@ -426,6 +454,82 @@ function parseLocalPdfTables(tables: PdfTable[], text: string, requestedSource: 
   return { source, ignoredCount, items };
 }
 
+
+function parseNbsRealText(text: string, requestedSource: string) {
+  const detected = detectSourceFromText(text, requestedSource);
+  if (requestedSource !== "NBS" && detected !== "NBS") {
+    return { source: detected, ignoredCount: 0, items: [] as ImportedItem[] };
+  }
+
+  const lines = text.split(/\r?\n/).map(compactLine).filter(Boolean);
+  const items: ImportedItem[] = [];
+  let ignoredCount = 0;
+  let section: "SERVICO" | "PECA" | null = null;
+
+  for (const line of lines) {
+    const upper = line.toUpperCase();
+
+    if (/^IT\s+SERVI[CÇ]O\b/.test(upper) && /DESCRI[CÇ][ÃA]O\s+DO\s+SERVI[CÇ]O/.test(upper) && /VALOR\s+FINAL/.test(upper)) {
+      section = "SERVICO";
+      continue;
+    }
+    if (/^OR[CÇ]AMENTO\s+ITEM\b/.test(upper) && /DESCRI[CÇ][ÃA]O\s+DO\s+ITEM/.test(upper) && /PRE[CÇ]O\s+UNIT[ÁA]RIO/.test(upper)) {
+      section = "PECA";
+      continue;
+    }
+    if (/^FECHAMENTO\b|^OBSERVA[CÇ][ÃA]O\b|^DIAGN[ÓO]STICO\b/.test(upper)) {
+      section = null;
+      continue;
+    }
+    if (!section) continue;
+    if (looksStruckOrCancelled(line)) {
+      ignoredCount += 1;
+      continue;
+    }
+
+    if (section === "SERVICO") {
+      // Ex.: 01 MA43A1 SUBS.BALANCA - DOIS LADOS 2,20 987,80
+      const match = line.match(/^\d{1,3}\s+([A-Z0-9][A-Z0-9./_-]{1,39})\s+(.+?)\s+(-?\d+(?:[.,]\d+)?)\s+(-?\d+(?:[.,]\d+)?)$/i);
+      if (!match) continue;
+      const quantity = normalizeNumber(match[3]);
+      const total = normalizeNumber(match[4]);
+      if (!(quantity > 0) || !(total > 0)) continue;
+      addUniqueItem(items, createLocalItem(
+        "SERVICO",
+        match[1],
+        match[2],
+        quantity,
+        total / quantity,
+        total,
+        0.999,
+        "NBS: linha da tabela de serviços; tempo e valor final lidos diretamente do documento.",
+      ));
+      continue;
+    }
+
+    // NBS peças:
+    // BRPNEU0331 PNEU ... UN D3 2 1039,000000 2078,00
+    const part = line.match(/^([A-Z0-9][A-Z0-9./_-]{1,39})\s+(.+?)\s+(UN|UND|PC|P[CÇ]A?|PÇ|JG|KIT|LT|L)\s+([A-Z0-9./_-]+)\s+(-?\d+(?:[.,]\d+)?)\s+(-?\d+(?:[.,]\d+)?)\s+(-?\d+(?:[.,]\d+)?)$/i);
+    if (!part) continue;
+    const quantity = normalizeNumber(part[5]);
+    const unitPrice = normalizeNumber(part[6]);
+    const total = normalizeNumber(part[7]);
+    if (!(quantity > 0) || (!(unitPrice > 0) && !(total > 0))) continue;
+    addUniqueItem(items, createLocalItem(
+      "PECA",
+      part[1],
+      part[2],
+      quantity,
+      unitPrice,
+      total,
+      0.999,
+      "NBS: linha da tabela de itens; quantidade, preço unitário e valor final lidos diretamente do documento.",
+    ));
+  }
+
+  return { source: "NBS", ignoredCount, items };
+}
+
 function parseLocalPdfText(text: string, requestedSource: string) {
   const rawLines = text.split(/\r?\n/).map(compactLine).filter(Boolean);
   const source = detectSourceFromText(text, requestedSource);
@@ -490,6 +594,650 @@ function parseLocalPdfText(text: string, requestedSource: string) {
   }
 
   return { source, ignoredCount, items };
+}
+
+
+
+type RawPdfTextFragment = {
+  text: string;
+  x: number;
+  y: number;
+  fontKey: string;
+  bold: boolean;
+};
+
+function decodePdfLiteral(raw: string) {
+  const bytes: number[] = [];
+  for (let index = 0; index < raw.length; index += 1) {
+    const code = raw.charCodeAt(index);
+    if (code !== 0x5c) {
+      bytes.push(code & 0xff);
+      continue;
+    }
+
+    index += 1;
+    if (index >= raw.length) break;
+    const escaped = raw[index];
+
+    if (escaped === "\r") {
+      if (raw[index + 1] === "\n") index += 1;
+      continue;
+    }
+    if (escaped === "\n") continue;
+
+    const simple: Record<string, number> = {
+      n: 0x0a,
+      r: 0x0d,
+      t: 0x09,
+      b: 0x08,
+      f: 0x0c,
+      "(": 0x28,
+      ")": 0x29,
+      "\\": 0x5c,
+    };
+    if (Object.prototype.hasOwnProperty.call(simple, escaped)) {
+      bytes.push(simple[escaped]);
+      continue;
+    }
+
+    if (/[0-7]/.test(escaped)) {
+      let octal = escaped;
+      while (octal.length < 3 && index + 1 < raw.length && /[0-7]/.test(raw[index + 1])) {
+        index += 1;
+        octal += raw[index];
+      }
+      bytes.push(Number.parseInt(octal, 8) & 0xff);
+      continue;
+    }
+
+    bytes.push(escaped.charCodeAt(0) & 0xff);
+  }
+
+  try {
+    return new TextDecoder("windows-1252").decode(Uint8Array.from(bytes));
+  } catch {
+    return Buffer.from(bytes).toString("latin1");
+  }
+}
+
+function rawPdfFontMap(pdfBinary: string) {
+  const objectFonts = new Map<string, string>();
+  const objectPattern = /(\d+)\s+0\s+obj\b([\s\S]*?)endobj/g;
+  for (const match of pdfBinary.matchAll(objectPattern)) {
+    const objectId = match[1];
+    const body = match[2];
+    const baseFont = body.match(/\/BaseFont\s*\/([^\s/<>\[\]()]+)/i)?.[1] || "";
+    if (baseFont) objectFonts.set(objectId, baseFont);
+  }
+
+  const resources = new Map<string, string>();
+  const referencePattern = /\/([A-Za-z][A-Za-z0-9_.-]*)\s+(\d+)\s+0\s+R/g;
+  for (const match of pdfBinary.matchAll(referencePattern)) {
+    const fontName = objectFonts.get(match[2]);
+    if (fontName) resources.set(match[1], fontName);
+  }
+  return resources;
+}
+
+function rawPdfFlateStreams(buffer: Buffer) {
+  const binary = buffer.toString("latin1");
+  const streams: string[] = [];
+  const streamPattern = /<<([\s\S]*?)>>\s*stream(?:\r\n|\n|\r)/g;
+
+  for (const match of binary.matchAll(streamPattern)) {
+    const dictionary = match[1];
+    if (!/\/FlateDecode\b/.test(dictionary)) continue;
+
+    const streamStart = (match.index || 0) + match[0].length;
+    const streamEnd = binary.indexOf("endstream", streamStart);
+    if (streamEnd < 0) continue;
+
+    let raw = buffer.subarray(streamStart, streamEnd);
+    while (raw.length && (raw[raw.length - 1] === 0x0a || raw[raw.length - 1] === 0x0d)) {
+      raw = raw.subarray(0, raw.length - 1);
+    }
+
+    try {
+      const decoded = inflateSync(raw).toString("latin1");
+      if (/\bBT\b/.test(decoded) && (/\bTj\b/.test(decoded) || /\bTJ\b/.test(decoded))) streams.push(decoded);
+    } catch {
+      // Imagens e outros streams podem usar filtros/estruturas diferentes.
+    }
+  }
+
+  return { binary, streams };
+}
+
+function rawPdfTextFragments(buffer: Buffer) {
+  const { binary, streams } = rawPdfFlateStreams(buffer);
+  const fontMap = rawPdfFontMap(binary);
+  const fragments: RawPdfTextFragment[] = [];
+
+  for (const stream of streams) {
+    const textBlockPattern = /\bBT\b([\s\S]*?)\bET\b/g;
+    for (const blockMatch of stream.matchAll(textBlockPattern)) {
+      const block = blockMatch[1];
+
+      const fontMatches = [...block.matchAll(/\/([A-Za-z][A-Za-z0-9_.-]*)\s+[-+]?\d+(?:\.\d+)?\s+Tf\b/g)];
+      const fontKey = fontMatches.at(-1)?.[1] || "";
+      const fontName = fontMap.get(fontKey) || fontKey;
+      const bold = /(BOLD|BLACK|HEAVY|SEMIBOLD|SEMI-BOLD|DEMI)/i.test(fontName);
+
+      const matrixMatches = [...block.matchAll(
+        /[-+]?\d+(?:\.\d+)?\s+[-+]?\d+(?:\.\d+)?\s+[-+]?\d+(?:\.\d+)?\s+[-+]?\d+(?:\.\d+)?\s+([-+]?\d+(?:\.\d+)?)\s+([-+]?\d+(?:\.\d+)?)\s+Tm\b/g,
+      )];
+      // Jasper/NBS costuma posicionar texto com Td, enquanto o Mobato usado
+      // anteriormente gravava Tm. Suportar ambos mantém o parser RAW sem pdfjs.
+      const tdMatches = [...block.matchAll(/([-+]?\d+(?:\.\d+)?)\s+([-+]?\d+(?:\.\d+)?)\s+Td\b/g)];
+      const position = matrixMatches.at(-1) || tdMatches.at(-1);
+      if (!position) continue;
+      const x = Number(position[1]);
+      const y = Number(position[2]);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+
+      const textParts: string[] = [];
+      const literalPattern = /\(((?:\\.|[^\\)])*)\)\s*Tj\b/g;
+      for (const literal of block.matchAll(literalPattern)) {
+        const decoded = compactLine(decodePdfLiteral(literal[1]));
+        if (decoded) textParts.push(decoded);
+      }
+
+      if (!textParts.length) {
+        const arrayMatch = block.match(/\[((?:.|\r|\n)*?)\]\s*TJ\b/);
+        if (arrayMatch) {
+          for (const literal of arrayMatch[1].matchAll(/\(((?:\\.|[^\\)])*)\)/g)) {
+            const decoded = compactLine(decodePdfLiteral(literal[1]));
+            if (decoded) textParts.push(decoded);
+          }
+        }
+      }
+
+      const text = compactLine(textParts.join(" "));
+      if (!text) continue;
+      fragments.push({ text, x, y, fontKey, bold });
+    }
+  }
+
+  return fragments;
+}
+
+function rawPdfPageWidth(buffer: Buffer) {
+  const binary = buffer.toString("latin1");
+  const match = binary.match(/\/MediaBox\s*\[\s*[-+]?\d+(?:\.\d+)?\s+[-+]?\d+(?:\.\d+)?\s+([-+]?\d+(?:\.\d+)?)\s+([-+]?\d+(?:\.\d+)?)\s*\]/);
+  const width = Number(match?.[1]);
+  return Number.isFinite(width) && width > 100 ? width : 595;
+}
+
+
+async function extractNbsRawTable(fileData: string, requestedSource: string) {
+  if (requestedSource === "MOBATO") {
+    return { source: "MOBATO", ignoredCount: 0, items: [] as ImportedItem[] };
+  }
+
+  const buffer = decodeDataUrl(fileData);
+  const pageWidth = rawPdfPageWidth(buffer);
+  const fragments = rawPdfTextFragments(buffer);
+  const items: ImportedItem[] = [];
+  let ignoredCount = 0;
+  let serviceHeaderFound = false;
+  let partHeaderFound = false;
+  let section: "SERVICO" | "PECA" | null = null;
+
+  const rows: RawPdfTextFragment[][] = [];
+  for (const fragment of [...fragments].sort((a, b) => b.y - a.y || a.x - b.x)) {
+    const row = rows.find((candidate) => Math.abs(candidate[0].y - fragment.y) <= 2.2);
+    if (row) row.push(fragment);
+    else rows.push([fragment]);
+  }
+
+  for (const row of rows.sort((a, b) => b[0].y - a[0].y)) {
+    const ordered = [...row].sort((a, b) => a.x - b.x);
+    const joined = compactLine(ordered.map((item) => item.text).join(" "));
+    const upper = joined.toUpperCase();
+
+    if (/\bSERVI[CÇ]O\b/.test(upper) && /DESCRI[CÇ][ÃA]O\s+DO\s+SERVI[CÇ]O/.test(upper) && /VALOR\s+FINAL/.test(upper)) {
+      section = "SERVICO";
+      serviceHeaderFound = true;
+      continue;
+    }
+    if (/OR[CÇ]AMENTO\s+ITEM/.test(upper) && /DESCRI[CÇ][ÃA]O\s+DO\s+ITEM/.test(upper) && /PRE[CÇ]O\s+UNIT[ÁA]RIO/.test(upper) && /VALOR\s+FINAL/.test(upper)) {
+      section = "PECA";
+      partHeaderFound = true;
+      continue;
+    }
+    if (/^FECHAMENTO\b|^OBSERVA[CÇ][ÃA]O\b|^DIAGN[ÓO]STICO\b/.test(upper)) {
+      section = null;
+      continue;
+    }
+    if (!section) continue;
+    if (looksStruckOrCancelled(joined)) {
+      ignoredCount += 1;
+      continue;
+    }
+
+    const inRange = (minRatio: number, maxRatio: number) => compactLine(
+      ordered.filter((item) => item.x >= pageWidth * minRatio && item.x < pageWidth * maxRatio).map((item) => item.text).join(" "),
+    );
+
+    if (section === "SERVICO") {
+      // Layout NBS validado no relatório real:
+      // It | Serviço | Descrição do Serviço | TP | Valor Final
+      const code = inRange(0.065, 0.24);
+      const name = inRange(0.24, 0.82);
+      const quantityText = inRange(0.82, 0.90);
+      const totalText = inRange(0.90, 1.01);
+      if (!looksLikeCode(code) || !name) continue;
+      const quantity = normalizeNumber(quantityText);
+      const total = normalizeNumber(totalText);
+      if (!(quantity > 0) || !(total > 0)) continue;
+      addUniqueItem(items, createLocalItem(
+        "SERVICO",
+        code,
+        name,
+        quantity,
+        total / quantity,
+        total,
+        0.999,
+        "NBS RAW: serviço lido diretamente da tabela Serviço/Descrição/TP/Valor Final.",
+      ));
+      continue;
+    }
+
+    // Layout NBS peças:
+    // Orçamento Item | Descrição do Item | UN | LD | Qtde | Preço Unitário | Valor Final
+    const code = inRange(0.045, 0.24);
+    const name = inRange(0.24, 0.54);
+    const quantityText = inRange(0.60, 0.72);
+    const unitPriceText = inRange(0.72, 0.88);
+    const totalText = inRange(0.88, 1.01);
+    if (!looksLikeCode(code) || !name) continue;
+    const quantity = normalizeNumber(quantityText);
+    const unitPrice = normalizeNumber(unitPriceText);
+    const total = normalizeNumber(totalText);
+    if (!(quantity > 0) || (!(unitPrice > 0) && !(total > 0))) continue;
+    addUniqueItem(items, createLocalItem(
+      "PECA",
+      code,
+      name,
+      quantity,
+      unitPrice,
+      total,
+      0.999,
+      "NBS RAW: peça lida diretamente da tabela Item/Descrição/Qtde/Preço Unitário/Valor Final.",
+    ));
+  }
+
+  const confirmed = serviceHeaderFound && partHeaderFound && items.length > 0;
+  if (!confirmed && requestedSource !== "NBS") {
+    return { source: "DESCONHECIDO", ignoredCount, items: [] as ImportedItem[] };
+  }
+  return { source: "NBS", ignoredCount, items };
+}
+
+async function extractMobatoRawTable(fileData: string, requestedSource: string) {
+  if (requestedSource === "NBS") {
+    return { source: "NBS", ignoredCount: 0, items: [] as ImportedItem[], boldRows: 0, regularRows: 0 };
+  }
+
+  const buffer = decodeDataUrl(fileData);
+  const pageWidth = rawPdfPageWidth(buffer);
+  const fragments = rawPdfTextFragments(buffer);
+  const items: ImportedItem[] = [];
+  let ignoredCount = 0;
+  let boldRows = 0;
+  let regularRows = 0;
+  let tableDetected = false;
+
+  const rows: RawPdfTextFragment[][] = [];
+  for (const fragment of [...fragments].sort((a, b) => b.y - a.y || a.x - b.x)) {
+    const row = rows.find((candidate) => Math.abs(candidate[0].y - fragment.y) <= 2.8);
+    if (row) row.push(fragment);
+    else rows.push([fragment]);
+  }
+
+  let inBudgetTable = false;
+  for (const row of rows.sort((a, b) => b[0].y - a[0].y)) {
+    const ordered = [...row].sort((a, b) => a.x - b.x);
+    const joined = compactLine(ordered.map((item) => item.text).join(" "));
+    const upper = joined.toUpperCase();
+
+    const hasCodeHeader = /C[ÓO]DIGO/.test(upper);
+    const hasDescriptionHeader = /DESCRI[CÇ][ÃA]O/.test(upper);
+    const hasQuantityHeader = /QTDE\s*\/\s*TEMPO|QTD(?:E)?\.?\s*\/\s*TEMPO/.test(upper);
+    const hasTotalHeader = /\bTOTAL\b/.test(upper);
+    if (hasCodeHeader && hasDescriptionHeader && hasQuantityHeader && hasTotalHeader) {
+      inBudgetTable = true;
+      tableDetected = true;
+      continue;
+    }
+
+    if (!inBudgetTable) continue;
+    if (/SUB\.?\s*GERAL|VALOR\s+TOTAL\s+ESTIMADO|^OBS[:.]|OBSERVA[CÇ][ÕO]ES/.test(upper)) {
+      inBudgetTable = false;
+      continue;
+    }
+    if (looksStruckOrCancelled(joined)) {
+      ignoredCount += 1;
+      continue;
+    }
+
+    const textInRange = (minRatio: number, maxRatio: number) => compactLine(
+      ordered
+        .filter((item) => item.x >= pageWidth * minRatio && item.x < pageWidth * maxRatio)
+        .map((item) => item.text)
+        .join(" "),
+    );
+
+    const code = textInRange(0, 0.15);
+    const name = textInRange(0.15, 0.55);
+    const quantityText = textInRange(0.55, 0.64);
+    const unitPriceText = textInRange(0.64, 0.73);
+    const totalText = textInRange(0.89, 1.01);
+
+    if (!looksLikeCode(code) || !name || !quantityText || !totalText) continue;
+
+    const quantity = normalizeNumber(quantityText);
+    let unitPrice = normalizeNumber(unitPriceText);
+    const total = normalizeNumber(totalText);
+    if (!(quantity > 0)) continue;
+    if (!(unitPrice > 0) && !(total > 0)) continue;
+    if (total > 0 && Math.abs(quantity * unitPrice - total) > 0.02) {
+      unitPrice = total / quantity;
+    }
+
+    const commercialFragments = ordered.filter((item) => item.x < pageWidth * 0.89);
+    const rowIsBold = commercialFragments.some((item) => item.bold);
+    const kind: "SERVICO" | "PECA" = rowIsBold ? "SERVICO" : "PECA";
+
+    if (rowIsBold) boldRows += 1;
+    else regularRows += 1;
+
+    addUniqueItem(items, createLocalItem(
+      kind,
+      code,
+      name,
+      quantity,
+      unitPrice,
+      total,
+      0.999,
+      rowIsBold
+        ? "Mobato: fonte negrito identificada diretamente no stream PDF = mão de obra."
+        : "Mobato: fonte normal identificada diretamente no stream PDF = peça.",
+    ));
+  }
+
+  const confirmedMobato = requestedSource === "MOBATO" || (tableDetected && items.length > 0);
+  if (!confirmedMobato) {
+    return { source: "DESCONHECIDO", ignoredCount, items: [] as ImportedItem[], boldRows, regularRows };
+  }
+
+  return { source: "MOBATO", ignoredCount, items, boldRows, regularRows };
+}
+
+
+async function extractMobatoFontTable(fileData: string, requestedSource: string) {
+  // Regra do PDF original do Mobato:
+  //   - linha em NEGRITO = mão de obra / serviço
+  //   - linha em fonte normal = peça
+  //
+  // O pdfjs preserva a fonte utilizada em cada fragmento. Após carregar o
+  // operator list, page.commonObjs expõe o objeto da fonte e informa `bold`.
+  // Dessa forma não precisamos adivinhar pelo código ou pela descrição.
+  if (requestedSource === "NBS") {
+    return { source: "NBS", ignoredCount: 0, items: [] as ImportedItem[], boldRows: 0, regularRows: 0 };
+  }
+
+  const bytes = new Uint8Array(decodeDataUrl(fileData));
+  const pdfjs: any = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const loadingTask = pdfjs.getDocument({ data: bytes, useSystemFonts: true });
+  const document = await loadingTask.promise;
+  const items: ImportedItem[] = [];
+  let ignoredCount = 0;
+  let boldRows = 0;
+  let regularRows = 0;
+  let tableDetected = false;
+
+  type PositionedItem = {
+    text: string;
+    x: number;
+    y: number;
+    width: number;
+    fontName: string;
+    bold: boolean;
+  };
+
+  try {
+    for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
+      const page = await document.getPage(pageNumber);
+      const viewport = page.getViewport({ scale: 1 });
+      const pageWidth = Math.max(1, Number(viewport.width) || 595);
+      const textContent = await page.getTextContent();
+
+      try {
+        await page.getOperatorList();
+      } catch (operatorError) {
+        console.error("Gerivo Mobato font metadata:", operatorError);
+      }
+
+      const fontIsBold = (fontName: string) => {
+        try {
+          const font = page.commonObjs?.get?.(fontName);
+          if (typeof font?.bold === "boolean") return font.bold;
+          const name = `${font?.name || ""} ${font?.loadedName || ""} ${font?.fallbackName || ""}`;
+          return /\b(BOLD|BLACK|HEAVY|SEMIBOLD|SEMI-BOLD|DEMI)\b/i.test(name);
+        } catch {
+          return false;
+        }
+      };
+
+      const positioned: PositionedItem[] = (Array.isArray(textContent?.items) ? textContent.items : [])
+        .filter((item: any) => item && typeof item.str === "string" && item.str.trim() && Array.isArray(item.transform))
+        .map((item: any): PositionedItem => ({
+          text: compactLine(item.str),
+          x: Number(item.transform[4]) || 0,
+          y: Number(item.transform[5]) || 0,
+          width: Math.max(1, Number(item.width) || 1),
+          fontName: String(item.fontName || ""),
+          bold: fontIsBold(String(item.fontName || "")),
+        }));
+
+      const rows: PositionedItem[][] = [];
+      for (const item of [...positioned].sort((a, b) => b.y - a.y || a.x - b.x)) {
+        const row = rows.find((candidate) => Math.abs(candidate[0].y - item.y) <= 2.8);
+        if (row) row.push(item);
+        else rows.push([item]);
+      }
+
+      let inBudgetTable = false;
+      for (const row of rows.sort((a, b) => b[0].y - a[0].y)) {
+        const ordered = [...row].sort((a, b) => a.x - b.x);
+        const joined = compactLine(ordered.map((item) => item.text).join(" "));
+        const upper = joined.toUpperCase();
+
+        const hasCodeHeader = /C[ÓO]DIGO/.test(upper);
+        const hasDescriptionHeader = /DESCRI[CÇ][ÃA]O/.test(upper);
+        const hasQuantityHeader = /QTDE\s*\/\s*TEMPO|QTD(?:E)?\.?\s*\/\s*TEMPO/.test(upper);
+        const hasTotalHeader = /\bTOTAL\b/.test(upper);
+        if (hasCodeHeader && hasDescriptionHeader && hasQuantityHeader && hasTotalHeader) {
+          inBudgetTable = true;
+          tableDetected = true;
+          continue;
+        }
+
+        if (!inBudgetTable) continue;
+        if (/SUB\.?\s*GERAL|VALOR\s+TOTAL\s+ESTIMADO|^OBS[:.]|OBSERVA[CÇ][ÕO]ES/.test(upper)) {
+          inBudgetTable = false;
+          continue;
+        }
+        if (looksStruckOrCancelled(joined)) {
+          ignoredCount += 1;
+          continue;
+        }
+
+        const textInRange = (minRatio: number, maxRatio: number) => compactLine(
+          ordered
+            .filter((item) => item.x >= pageWidth * minRatio && item.x < pageWidth * maxRatio)
+            .map((item) => item.text)
+            .join(" "),
+        );
+
+        const code = textInRange(0, 0.15);
+        const name = textInRange(0.15, 0.55);
+        const quantityText = textInRange(0.55, 0.64);
+        const unitPriceText = textInRange(0.64, 0.73);
+        const totalText = textInRange(0.89, 1.01);
+
+        if (!looksLikeCode(code) || !name || !quantityText || !totalText) continue;
+
+        const quantity = normalizeNumber(quantityText);
+        let unitPrice = normalizeNumber(unitPriceText);
+        const total = normalizeNumber(totalText);
+        if (!(quantity > 0)) continue;
+
+        // Linhas administrativas do Mobato, como "REQ - REQUISICAO PECAS
+        // MECANICA", podem aparecer em negrito mas com valor zero. Não entram
+        // no orçamento comercial.
+        if (!(unitPrice > 0) && !(total > 0)) continue;
+        if (total > 0 && Math.abs(quantity * unitPrice - total) > 0.02) {
+          unitPrice = total / quantity;
+        }
+
+        const commercialFragments = ordered.filter((item) => item.x < pageWidth * 0.89);
+        const boldVotes = commercialFragments.filter((item) => item.bold).length;
+        const rowIsBold = commercialFragments.length > 0 && boldVotes >= Math.ceil(commercialFragments.length / 2);
+        const kind: "SERVICO" | "PECA" = rowIsBold ? "SERVICO" : "PECA";
+
+        if (rowIsBold) boldRows += 1;
+        else regularRows += 1;
+
+        addUniqueItem(items, createLocalItem(
+          kind,
+          code,
+          name,
+          quantity,
+          unitPrice,
+          total,
+          0.995,
+          rowIsBold
+            ? "Mobato: linha em negrito identificada como mão de obra."
+            : "Mobato: linha em fonte normal identificada como peça.",
+        ));
+      }
+    }
+  } finally {
+    await loadingTask.destroy().catch(() => undefined);
+  }
+
+  const confirmedMobato = requestedSource === "MOBATO" || (tableDetected && boldRows > 0);
+  if (!confirmedMobato) {
+    return { source: "DESCONHECIDO", ignoredCount, items: [] as ImportedItem[], boldRows, regularRows };
+  }
+
+  return { source: "MOBATO", ignoredCount, items, boldRows, regularRows };
+}
+
+
+async function extractNbsCoordinateTable(fileData: string, requestedSource: string) {
+  const bytes = new Uint8Array(decodeDataUrl(fileData));
+  const pdfjs: any = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const loadingTask = pdfjs.getDocument({ data: bytes, useSystemFonts: true });
+  const document = await loadingTask.promise;
+  const items: ImportedItem[] = [];
+  let fullText = "";
+  let ignoredCount = 0;
+
+  type PositionedItem = { text: string; x: number; y: number; width: number };
+
+  try {
+    for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
+      const page = await document.getPage(pageNumber);
+      const viewport = page.getViewport({ scale: 1 });
+      const pageWidth = Math.max(1, Number(viewport.width) || 595);
+      const textContent = await page.getTextContent();
+      const positioned: PositionedItem[] = (Array.isArray(textContent?.items) ? textContent.items : [])
+        .filter((item: any) => item && typeof item.str === "string" && item.str.trim() && Array.isArray(item.transform))
+        .map((item: any): PositionedItem => ({
+          text: compactLine(item.str),
+          x: Number(item.transform[4]) || 0,
+          y: Number(item.transform[5]) || 0,
+          width: Math.max(1, Number(item.width) || 1),
+        }));
+
+      fullText += `\n${positioned.map((item) => item.text).join(" ")}`;
+
+      const rows: PositionedItem[][] = [];
+      for (const item of [...positioned].sort((a, b) => b.y - a.y || a.x - b.x)) {
+        const row = rows.find((candidate) => Math.abs(candidate[0].y - item.y) <= 2.8);
+        if (row) row.push(item);
+        else rows.push([item]);
+      }
+
+      let inBudgetTable = false;
+      for (const row of rows.sort((a, b) => b[0].y - a[0].y)) {
+        const ordered = [...row].sort((a, b) => a.x - b.x);
+        const joined = compactLine(ordered.map((item) => item.text).join(" "));
+        const upper = joined.toUpperCase();
+
+        // O NBS grava uma camada de texto excelente, mas os extratores genéricos
+        // frequentemente devolvem cada coluna em bloco. Aqui reconstruímos a linha
+        // pela posição X real das células da tabela.
+        const hasCodeHeader = /C[ÓO]DIGO/.test(upper);
+        const hasDescriptionHeader = /DESCRI[CÇ][ÃA]O/.test(upper);
+        const hasQuantityHeader = /QTDE\s*\/\s*TEMPO|QTD(?:E)?\.?\s*\/\s*TEMPO/.test(upper);
+        const hasTotalHeader = /\bTOTAL\b/.test(upper);
+        if (hasCodeHeader && hasDescriptionHeader && hasQuantityHeader && hasTotalHeader) {
+          inBudgetTable = true;
+          continue;
+        }
+        if (!inBudgetTable) continue;
+        if (/SUB\.?\s*GERAL|VALOR\s+TOTAL\s+ESTIMADO|^OBS[:.]|OBSERVA[CÇ][ÕO]ES/.test(upper)) {
+          inBudgetTable = false;
+          continue;
+        }
+
+        const textInRange = (minRatio: number, maxRatio: number) => compactLine(ordered
+          .filter((item) => item.x >= pageWidth * minRatio && item.x < pageWidth * maxRatio)
+          .map((item) => item.text)
+          .join(" "));
+        const code = textInRange(0, 0.15);
+        const name = textInRange(0.15, 0.55);
+        const quantityText = textInRange(0.55, 0.64);
+        const unitPriceText = textInRange(0.64, 0.73);
+        const totalText = textInRange(0.89, 1.01);
+
+        if (!looksLikeCode(code) || !name || !quantityText || !totalText) continue;
+        const quantity = normalizeNumber(quantityText);
+        let unitPrice = normalizeNumber(unitPriceText);
+        const total = normalizeNumber(totalText);
+        if (!(quantity > 0)) continue;
+
+        // Linhas administrativas do NBS (ex.: REQ) podem vir com quantidade 1,
+        // porém sem preço e total. Elas não são peça nem mão de obra comercial.
+        if (!(unitPrice > 0) && !(total > 0)) continue;
+        if (total > 0 && Math.abs(quantity * unitPrice - total) > 0.02) unitPrice = total / quantity;
+
+        const kind = inferItemKind(code, name, null);
+        addUniqueItem(items, createLocalItem(
+          kind,
+          code,
+          name,
+          quantity,
+          unitPrice,
+          total,
+          0.98,
+          "Leitura estrutural NBS pela posição das colunas do PDF.",
+        ));
+      }
+    }
+  } finally {
+    await loadingTask.destroy().catch(() => undefined);
+  }
+
+  const source = detectSourceFromText(fullText, requestedSource);
+  // Esta rotina é específica da tabela NBS. Se a origem automática não confirmar
+  // NBS, não intercepta o restante da cadeia de reconhecimento.
+  if (requestedSource !== "NBS" && source !== "NBS") return { source, ignoredCount: 0, items: [] as ImportedItem[] };
+  return { source: "NBS", ignoredCount, items };
 }
 
 async function extractPdfCoordinateText(fileData: string) {
@@ -688,15 +1436,86 @@ export async function POST(request: Request) {
     let engine = "";
 
     if (mimeType === "application/pdf") {
-      try {
-        const pdfDocument = await extractPdfDocument(fileData);
-        if (pdfDocument.tables.length > 0) {
-          const tableResult = parseLocalPdfTables(pdfDocument.tables, pdfDocument.text, requestedSource);
-          if (tableResult.items.length > 0) {
-            result = tableResult;
-            engine = "local-pdf-table";
+      // Cada mecanismo é isolado. Um parser opcional falhar NÃO pode mais
+      // impedir os próximos (foi isso que fazia o NBS nunca ser alcançado).
+
+      // NBS RAW primeiro: lê diretamente os streams Flate/Td do Jasper/NBS,
+      // sem pdfjs, canvas, OCR ou IA.
+      if (!result) {
+        try {
+          const nbsRawResult = await extractNbsRawTable(fileData, requestedSource);
+          if (nbsRawResult.items.length > 0) {
+            result = nbsRawResult;
+            engine = "local-nbs-raw-stream";
           }
+        } catch (nbsRawError) {
+          console.error("Gerivo NBS RAW parser:", nbsRawError);
         }
+      }
+
+      if (!result) {
+        try {
+          const mobatoRawResult = await extractMobatoRawTable(fileData, requestedSource);
+          if (mobatoRawResult.items.length > 0) {
+            result = mobatoRawResult;
+            engine = "local-mobato-raw-stream";
+          }
+        } catch (mobatoRawError) {
+          console.error("Gerivo Mobato RAW parser:", mobatoRawError);
+        }
+      }
+
+      if (!result) {
+        try {
+          const mobatoFontResult = await extractMobatoFontTable(fileData, requestedSource);
+          if (mobatoFontResult.items.length > 0) {
+            result = mobatoFontResult;
+            engine = "local-mobato-font-table";
+          }
+        } catch (mobatoFontError) {
+          console.error("Gerivo Mobato font parser:", mobatoFontError);
+        }
+      }
+
+      let pdfDocument: { text: string; tables: PdfTable[] } | null = null;
+      if (!result) {
+        try {
+          pdfDocument = await extractPdfDocument(fileData);
+          const nbsTextResult = parseNbsRealText(pdfDocument.text, requestedSource);
+          if (nbsTextResult.items.length > 0) {
+            result = nbsTextResult;
+            engine = "local-nbs-real-text";
+          }
+        } catch (pdfTextError) {
+          console.error("Gerivo PDF/NBS text extraction:", pdfTextError);
+        }
+      }
+
+      if (!result) {
+        try {
+          const nbsCoordinateResult = await extractNbsCoordinateTable(fileData, requestedSource);
+          if (nbsCoordinateResult.items.length > 0) {
+            result = nbsCoordinateResult;
+            engine = "local-nbs-coordinate-table";
+          }
+        } catch (nbsCoordinateError) {
+          console.error("Gerivo NBS coordinate parser:", nbsCoordinateError);
+        }
+      }
+
+      if (!result && pdfDocument) {
+        try {
+          if (pdfDocument.tables.length > 0) {
+            const tableResult = parseLocalPdfTables(pdfDocument.tables, pdfDocument.text, requestedSource);
+            if (tableResult.items.length > 0) {
+              result = tableResult;
+              engine = "local-pdf-table";
+            }
+          }
+        } catch (tableError) {
+          console.error("Gerivo generic PDF table parser:", tableError);
+        }
+
         if (!result) {
           try {
             const coordinateText = await extractPdfCoordinateText(fileData);
@@ -711,15 +1530,18 @@ export async function POST(request: Request) {
             console.error("Gerivo PDF coordinate extraction:", coordinateError);
           }
         }
+
         if (!result && pdfDocument.text.length >= 40) {
-          const localResult = parseLocalPdfText(pdfDocument.text, requestedSource);
-          if (localResult.items.length > 0) {
-            result = localResult;
-            engine = "local-pdf-text";
+          try {
+            const localResult = parseLocalPdfText(pdfDocument.text, requestedSource);
+            if (localResult.items.length > 0) {
+              result = localResult;
+              engine = "local-pdf-text";
+            }
+          } catch (localTextError) {
+            console.error("Gerivo generic PDF text parser:", localTextError);
           }
         }
-      } catch (localError) {
-        console.error("Gerivo local PDF import:", localError);
       }
     }
 
@@ -730,7 +1552,7 @@ export async function POST(request: Request) {
 
     if (!result) {
       const error = mimeType === "application/pdf"
-        ? "Não foi possível identificar automaticamente as linhas de peças e mão de obra deste PDF. O importador não depende de grifo: ele procura descrição, quantidade/tempo e valor e ignora linhas riscadas. Tente o PDF original exportado pelo Mobato/NBS."
+        ? "Não foi possível identificar automaticamente as linhas comerciais deste PDF. No Mobato o Gerivo usa a formatação original da tabela (negrito = mão de obra; normal = peça); no NBS usa a estrutura das colunas. Confirme a origem selecionada e use o PDF original exportado pelo sistema."
         : "Esta imagem precisa do reconhecimento visual configurado pela empresa. O reconhecimento considera as linhas ativas e ignora itens riscados; grifos não são obrigatórios.";
       return NextResponse.json({ error }, { status: 422 });
     }

@@ -8053,6 +8053,7 @@ function BudgetImportModal({ context, onClose, onImport }: { context: BudgetImpo
   const [source, setSource] = useState("AUTO");
   const [lines, setLines] = useState<ImportedBudgetLine[]>([]);
   const [ignoredCount, setIgnoredCount] = useState(0);
+  const [recognitionEngine, setRecognitionEngine] = useState("");
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -8086,6 +8087,7 @@ function BudgetImportModal({ context, onClose, onImport }: { context: BudgetImpo
       if (!response.ok) throw new Error(payload.error || "Não foi possível reconhecer o orçamento.");
       const recognized = Array.isArray(payload.items) ? payload.items : [];
       setIgnoredCount(Math.max(0, Number(payload.ignoredCount) || 0));
+      setRecognitionEngine(String(payload.engine || ""));
       setLines(recognized.map((item: any) => ({
         id: uid(),
         selected: true,
@@ -8134,12 +8136,12 @@ function BudgetImportModal({ context, onClose, onImport }: { context: BudgetImpo
         <section className="budget-import-upload">
           <div className="budget-import-source"><Field label="Origem do documento"><select value={source} onChange={(event) => setSource(event.target.value)}><option value="AUTO">Identificar automaticamente</option><option value="MOBATO">Mobato</option><option value="NBS">NBS</option></select></Field></div>
           <button type="button" className="budget-file-picker" onClick={() => fileInputRef.current?.click()}><PremiumIcon name="file" size={24} /><span><strong>{file ? file.name : "Selecionar PDF ou imagem"}</strong><small>PDF, PNG, JPG ou WEBP · até 4 MB para PDF</small></span></button>
-          <input ref={fileInputRef} className="budget-import-file-input" type="file" accept="application/pdf,image/png,image/jpeg,image/webp" onChange={(event) => { setFile(event.target.files?.[0] || null); setLines([]); setIgnoredCount(0); setError(""); }} />
-          <div className="budget-import-rules"><span>✓ Não depende de grifo ou marca-texto</span><span>✓ Lê descrição, quantidade/tempo e valor</span><span>✓ Linhas riscadas ou canceladas são ignoradas</span></div>
-          <button type="button" className="primary" disabled={!file || processing} onClick={() => void recognize()}>{processing ? "Lendo estrutura do documento..." : "Ler peças e mão de obra"}</button>
+          <input ref={fileInputRef} className="budget-import-file-input" type="file" accept="application/pdf,image/png,image/jpeg,image/webp" onChange={(event) => { setFile(event.target.files?.[0] || null); setLines([]); setIgnoredCount(0); setRecognitionEngine(""); setError(""); }} />
+          <div className="budget-import-rules"><span>✓ Mobato: negrito = mão de obra; normal = peça</span><span>✓ NBS: separa as tabelas Serviços e Itens automaticamente</span><span>✓ Linhas riscadas ou canceladas são ignoradas</span></div>
+          <button type="button" className="primary" disabled={!file || processing} onClick={() => void recognize()}>{processing ? "Analisando linhas do orçamento..." : "Analisar orçamento"}</button>
         </section>
         {error && <div className="budget-import-error">{error}</div>}
-        {lines.length > 0 && <section className="budget-import-preview"><header><div><small>PRÉVIA EDITÁVEL</small><h3>{lines.length} item(ns) reconhecido(s)</h3></div><div><span>{selectedCount} selecionado(s)</span>{ignoredCount > 0 && <span>{ignoredCount} riscado(s) ignorado(s)</span>}</div></header><div className="budget-import-lines">{lines.map((line, index) => <article key={line.id} className={!line.selected ? "disabled" : ""}>
+        {lines.length > 0 && <section className="budget-import-preview"><header><div><small>PRÉVIA EDITÁVEL</small><h3>{lines.length} item(ns) reconhecido(s)</h3><p>{recognitionEngine === "local-mobato-raw-stream" ? "Mobato reconhecido diretamente no PDF, sem OCR/IA: negrito = mão de obra e fonte normal = peça." : recognitionEngine === "local-mobato-font-table" ? "Mobato reconhecido pela formatação original: negrito = mão de obra e fonte normal = peça." : recognitionEngine === "local-nbs-coordinate-table" ? "NBS reconhecido pela estrutura original das colunas do PDF." : "Confira os itens antes de adicionar ao orçamento."}</p></div><div><span>{lines.filter((line) => line.kind === "PECA").length} peça(s)</span><span>{lines.filter((line) => line.kind === "SERVICO").length} serviço(s)</span><span>{money(lines.reduce((total, line) => total + line.quantity * line.unitPrice, 0))}</span><span>{selectedCount} selecionado(s)</span>{ignoredCount > 0 && <span>{ignoredCount} riscado(s) ignorado(s)</span>}</div></header><div className="budget-import-lines">{lines.map((line, index) => <article key={line.id} className={!line.selected ? "disabled" : ""}>
           <label className="budget-import-select"><input type="checkbox" checked={line.selected} onChange={(event) => updateLine(line.id, { selected: event.target.checked })} /><span>{index + 1}</span></label>
           <label><span>Tipo</span><select value={line.kind} onChange={(event) => updateLine(line.id, { kind: event.target.value as "SERVICO" | "PECA" })}><option value="SERVICO">Mão de obra</option><option value="PECA">Peça</option></select></label>
           <label className="budget-import-description"><span>Descrição</span><input value={line.name} onChange={(event) => updateLine(line.id, { name: event.target.value })} /></label>
