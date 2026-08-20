@@ -15,6 +15,13 @@ async function requireMaster(request: Request) {
   return { admin, userId: authData.user.id };
 }
 
+
+function cleanModules(value: unknown, fallback: Record<string, boolean>) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return fallback;
+  const source = value as Record<string, unknown>;
+  return Object.fromEntries(Object.keys({ ...fallback, ...source }).map((key) => [key, Boolean(source[key] ?? fallback[key])])) as Record<string, boolean>;
+}
+
 function cleanFeatures(value: unknown) {
   if (!Array.isArray(value)) return [];
   return value.map((item) => String(item || "").trim()).filter(Boolean).slice(0, 20);
@@ -44,6 +51,7 @@ export async function POST(request: Request) {
       public_features: cleanFeatures(body.publicFeatures),
       public_cta_label: String(body.publicCtaLabel || "Tenho interesse").trim() || "Tenho interesse",
       recommended: Boolean(body.recommended),
+      modules: cleanModules(body.modules, (previous.modules || {}) as Record<string, boolean>),
       public_visible: body.publicVisible !== false,
       public_sort_order: Math.max(0, Math.floor(Number(body.publicSortOrder) || 0)),
       updated_at: new Date().toISOString(),
@@ -55,6 +63,33 @@ export async function POST(request: Request) {
     if (payload.recommended) {
       await admin.from("subscription_plans").update({ recommended: false, updated_at: new Date().toISOString() }).neq("id", planId);
       await admin.from("subscription_plans").update({ recommended: true, updated_at: new Date().toISOString() }).eq("id", planId);
+    }
+
+    // Planos STANDARD herdam o catálogo de módulos do plano. Ao alterar um módulo
+    // no MASTER (ex.: Selling), propaga para contratos STANDARD já vigentes e suas lojas.
+    const { data: standardSubscriptions, error: standardError } = await admin
+      .from("company_subscriptions")
+      .select("id,company_id,group_id,contract_scope")
+      .eq("plan_id", planId)
+      .eq("plan_mode", "STANDARD")
+      .in("status", ["ACTIVE", "GRACE", "READ_ONLY", "DEMO", "AWAITING_ACTIVATION"]);
+    if (standardError) throw standardError;
+    if (standardSubscriptions?.length) {
+      const subscriptionIds = standardSubscriptions.map((subscription: any) => subscription.id);
+      const { error: subscriptionUpdateError } = await admin.from("company_subscriptions").update({ modules: payload.modules, updated_by: userId, updated_at: new Date().toISOString() }).in("id", subscriptionIds);
+      if (subscriptionUpdateError) throw subscriptionUpdateError;
+      const companyIds = new Set<string>();
+      for (const subscription of standardSubscriptions as any[]) {
+        if (subscription.contract_scope === "GROUP" && subscription.group_id) {
+          const { data: companies, error: companiesError } = await admin.from("companies").select("id").eq("group_id", subscription.group_id);
+          if (companiesError) throw companiesError;
+          (companies || []).forEach((company: any) => companyIds.add(company.id));
+        } else if (subscription.company_id) companyIds.add(subscription.company_id);
+      }
+      if (companyIds.size) {
+        const { error: settingsError } = await admin.from("store_settings").update({ modules: payload.modules, updated_by: userId, updated_at: new Date().toISOString() }).in("company_id", Array.from(companyIds));
+        if (settingsError) throw settingsError;
+      }
     }
 
     await admin.from("audit_logs").insert({

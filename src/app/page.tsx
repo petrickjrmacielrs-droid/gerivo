@@ -10,6 +10,7 @@ import {
   useState,
 } from "react";
 import { getSupabaseBrowserClient } from "../lib/supabase";
+import { MasterSellingManager, SellingOperationPage } from "./selling";
 
 type Page =
   | "dashboard"
@@ -25,7 +26,9 @@ type Page =
   | "management"
   | "catalog"
   | "inventory"
-  | "master";
+  | "selling"
+  | "master"
+  | "master-selling";
 type SettingsTab = "IDENTITY" | "MODULES" | "CHECKLIST" | "QUOTES" | "PRICING" | "PARTS_ORDERS";
 type IconName =
   | "home"
@@ -53,7 +56,7 @@ type IconName =
   | "shield"
   | "truck"
   | "image";
-type CompanyModule = "APPOINTMENTS" | "CATALOG" | "INVENTORY" | "CHECKLIST" | "ORDERS" | "QUOTES" | "PARTS_ORDERS" | "ASSISTANT" | "BI" | "MESSAGES" | "BUDGET_IMPORT";
+type CompanyModule = "APPOINTMENTS" | "CATALOG" | "INVENTORY" | "CHECKLIST" | "ORDERS" | "QUOTES" | "PARTS_ORDERS" | "ASSISTANT" | "BI" | "MESSAGES" | "BUDGET_IMPORT" | "SELLING";
 type CompanyProfile = "FULL" | "QUOTE_ONLY" | "CUSTOM";
 type QuoteDeliveryMode = "LINK" | "MESSAGE" | "BOTH";
 type ReportMode = "SUMMARY" | "FULL" | "MODULAR";
@@ -537,6 +540,7 @@ const NAV: Array<{ id: Page; label: string; icon: IconName; module?: CompanyModu
   { id: "checklist", label: "Checklist", icon: "clipboard", module: "CHECKLIST" },
   { id: "orders", label: "Ordens de serviço", icon: "wrench", module: "ORDERS" },
   { id: "quotes", label: "Orçamentos", icon: "file", module: "QUOTES" },
+  { id: "selling", label: "Selling", icon: "sparkle", module: "SELLING" },
   { id: "parts-orders", label: "Pedidos de peças", icon: "box", module: "PARTS_ORDERS" },
   { id: "assistant", label: "Assistente Gerivo", icon: "sparkle", module: "ASSISTANT" },
   { id: "bi", label: "Gerivo BI", icon: "chart", module: "BI" },
@@ -544,6 +548,7 @@ const NAV: Array<{ id: Page; label: string; icon: IconName; module?: CompanyModu
   { id: "knowledge", label: "Conhecimento da IA", icon: "sparkle", hidden: true },
   { id: "management", label: "Gestão", icon: "settings" },
   { id: "master", label: "Gerivo MASTER", icon: "shield", masterOnly: true },
+  { id: "master-selling", label: "Selling MASTER", icon: "sparkle", masterOnly: true, hidden: true },
   { id: "catalog", label: "Catálogo", icon: "layers", module: "CATALOG", hidden: true },
   { id: "inventory", label: "Estoque", icon: "box", module: "INVENTORY", hidden: true },
 ];
@@ -570,6 +575,7 @@ const MODULE_INFO: Record<CompanyModule, { label: string; description: string }>
   BI: { label: "Gerivo BI", description: "Indicadores, filtros personalizados, comparativos e visão executiva." },
   MESSAGES: { label: "Central de mensagens", description: "Modelos comerciais, oportunidades e comunicação com clientes." },
   BUDGET_IMPORT: { label: "Importador Mobato / NBS", description: "Recurso adicional com implantação inicial exclusiva para a IESA, liberado individualmente pelo MASTER." },
+  SELLING: { label: "Selling", description: "Revisões obrigatórias e pacotes agregados configurados pelo MASTER." },
 };
 
 function catalogSeedItem(
@@ -1124,6 +1130,7 @@ function seedCompanySettings(segment = "OUTRO"): CompanySettings {
     BI: true,
     MESSAGES: true,
     BUDGET_IMPORT: false,
+    SELLING: false,
   };
   return {
     profile: "CUSTOM",
@@ -1433,6 +1440,7 @@ function normalizeStoreData(parsed: Partial<StoreData>, storeId: string): StoreD
           BI: parsed.companySettings.modules?.BI ?? parsed.companySettings.modules?.ASSISTANT ?? true,
           MESSAGES: parsed.companySettings.modules?.MESSAGES ?? parsed.companySettings.modules?.ASSISTANT ?? true,
           BUDGET_IMPORT: parsed.companySettings.modules?.BUDGET_IMPORT ?? false,
+          SELLING: parsed.companySettings.modules?.SELLING ?? false,
         },
         quoteDeliveryMode: parsed.companySettings.quoteDeliveryMode ?? "BOTH",
         quoteMessageTemplate: parsed.companySettings.quoteMessageTemplate ?? "PROFISSIONAL",
@@ -3140,7 +3148,8 @@ export default function Home() {
   if (needsOnboarding) return platformRole === "MASTER" ? <CompanyOnboarding onSubmit={bootstrapCompany} onLogout={logout} error={authError} /> : <NoAccess onLogout={logout} />;
   if (!ready || (!stores.length && platformRole !== "MASTER")) return <EnvironmentRecovery error={authError || "Não foi possível terminar de carregar seu ambiente."} onRetry={() => session?.user && loadAccessContext(session.user.id)} onLogout={logout} />;
 
-  if (page === "master" && platformRole === "MASTER") {
+  if ((page === "master" || page === "master-selling") && platformRole === "MASTER") {
+    const masterSellingActive = page === "master-selling";
     return (
       <main className="master-control-shell">
         <aside className="master-control-sidebar">
@@ -3149,8 +3158,9 @@ export default function Home() {
             <span>CONTROL CENTER</span>
           </div>
           <nav>
-            <button type="button" className="active"><PremiumIcon name="shield" size={18} /><span>Central de empresas</span></button>
-            <button type="button" onClick={() => window.dispatchEvent(new CustomEvent("gerivo:master-open-plans"))}><PremiumIcon name="layers" size={18} /><span>Planos e módulos</span></button>
+            <button type="button" className={!masterSellingActive ? "active" : ""} onClick={() => setPage("master")}><PremiumIcon name="shield" size={18} /><span>Central de empresas</span></button>
+            <button type="button" onClick={() => { if (masterSellingActive) { setPage("master"); window.setTimeout(() => window.dispatchEvent(new CustomEvent("gerivo:master-open-plans")), 30); } else window.dispatchEvent(new CustomEvent("gerivo:master-open-plans")); }}><PremiumIcon name="layers" size={18} /><span>Planos e módulos</span></button>
+            <button type="button" className={masterSellingActive ? "active master-selling-nav" : "master-selling-nav"} onClick={() => setPage("master-selling")}><PremiumIcon name="sparkle" size={18} /><span>Selling <em>BETA</em></span></button>
             <button type="button" disabled={!stores.length} onClick={() => { if (stores.length) void changeStore(storeId).then(() => setPage("dashboard")); }}><PremiumIcon name="store" size={18} /><span>Abrir operação atual</span></button>
           </nav>
           <div className="master-control-sidebar-foot">
@@ -3160,21 +3170,25 @@ export default function Home() {
         </aside>
         <section className="master-control-workspace">
           <header className="master-control-topbar">
-            <div><small>GERIVO / MASTER</small><h1>Painel de controle</h1></div>
+            <div><small>GERIVO / MASTER</small><h1>{masterSellingActive ? "Selling" : "Painel de controle"}</h1></div>
             <div className="master-control-top-actions">
               <span><i /> Plataforma online</span>
               <button type="button" disabled={!stores.length} onClick={() => { if (stores.length) void changeStore(storeId).then(() => setPage("dashboard")); }}>Entrar na operação</button>
             </div>
           </header>
           <div className="master-control-content">
-            <MasterCommercialPage
-              stores={stores}
-              currentStore={brandedStore}
-              sessionAccessToken={session?.access_token || ""}
-              onCreateCompany={(input) => bootstrapCompany(input.companyName, input.storeName, input.segment, input.groupId, input.groupName, input.document, input.planScope)}
-              onRefresh={() => loadAccessContext(session.user.id)}
-              onOpenStore={async (targetStoreId) => { await changeStore(targetStoreId); setPage("dashboard"); }}
-            />
+            {masterSellingActive ? (
+              <MasterSellingManager sessionAccessToken={session?.access_token || ""} />
+            ) : (
+              <MasterCommercialPage
+                stores={stores}
+                currentStore={brandedStore}
+                sessionAccessToken={session?.access_token || ""}
+                onCreateCompany={(input) => bootstrapCompany(input.companyName, input.storeName, input.segment, input.groupId, input.groupName, input.document, input.planScope)}
+                onRefresh={() => loadAccessContext(session.user.id)}
+                onOpenStore={async (targetStoreId) => { await changeStore(targetStoreId); setPage("dashboard"); }}
+              />
+            )}
           </div>
         </section>
         {inactivityWarning > 0 && <InactivityWarningModal seconds={inactivityWarning} onContinue={continueActiveSession} onLogout={() => void logout()} />}
@@ -3283,7 +3297,7 @@ export default function Home() {
       </aside>
 
       <section className="workspace">
-        <header className="topbar">
+        {page !== "selling" && <header className="topbar">
           <div className="topbar-title">
             <button
               className="mobile-menu-trigger"
@@ -3310,9 +3324,9 @@ export default function Home() {
               <button className="primary" onClick={() => window.dispatchEvent(new CustomEvent("gerivo:new-catalog-item"))}>+ Novo item</button>
             ) : null}
           </div>
-        </header>
+        </header>}
 
-        <div className="content">
+        <div className={page === "selling" ? "content selling-content-shell" : "content"}>
           <div className="page-view" key={`${page}-${activeAttendanceId || activeOrderId || activeQuoteId || "index"}`}>
           {page === "dashboard" && (
             <Dashboard
@@ -3343,6 +3357,21 @@ export default function Home() {
               onAppointmentsChange={(appointments) => setData({ ...data, appointments })}
               onSettingsChange={(appointmentSettings) => setData({ ...data, appointmentSettings })}
               onBlocksChange={(appointmentBlocks) => setData({ ...data, appointmentBlocks })}
+            />
+          )}
+
+          {page === "selling" && (
+            <SellingOperationPage
+              companyId={brandedStore.companyId}
+              storeId={brandedStore.id}
+              accessToken={session?.access_token || ""}
+              customers={data.customers.map((customer) => ({ id: customer.id, name: customer.name, phone: customer.phone, email: customer.email }))}
+              vehicles={data.vehicles.map((vehicle) => ({ id: vehicle.id, customerId: vehicle.customerId, plate: vehicle.plate, description: vehicle.description }))}
+              currentUserName={userProfile.preferredName || "Usuário"}
+              currentUserPhone={userProfile.phone || ""}
+              storeName={brandedStore.name}
+              companyName={brandedStore.companyName}
+              identity={{ displayName: data.companyIdentity.displayName, logo: data.companyIdentity.logo, selectionColor: data.companyIdentity.selectionColor }}
             />
           )}
 
@@ -6793,6 +6822,7 @@ function MasterCommercialPage({
         userLimit: plan.user_limit,
         storageGb: plan.storage_gb,
         aiQueriesMonthly: plan.ai_queries_monthly,
+        modules: plan.modules || {},
         publicDescription: plan.public_description,
         publicFeatures: String(plan.public_features_text || "").split(/\n|;/).map((item) => item.trim()).filter(Boolean),
         publicCtaLabel: plan.public_cta_label,
@@ -7072,7 +7102,7 @@ function MasterCommercialPage({
         <footer><button type="button" className="outline" disabled={saving} onClick={() => setGroupEditOpen(false)}>Cancelar</button><button type="button" className="primary" disabled={saving || groupEditName.trim().length < 2} onClick={() => void saveGroupEditor()}>{saving ? "Salvando grupo..." : "Salvar grupo"}</button></footer>
       </section>
     </div>}
-    {plansOpen && <div className="modal-backdrop master-control-backdrop"><section className="compact-modal master-plans-modal"><header><div><small>PLANOS GERIVO</small><h2>Valores e conteúdo do site de vendas</h2><p>As alterações publicadas aqui aparecem automaticamente na página comercial.</p></div><button type="button" onClick={() => setPlansOpen(false)}>×</button></header><div className="master-plan-editor-grid">{planDrafts.map((plan) => <article key={plan.id} className={plan.recommended ? "master-plan-editor recommended" : "master-plan-editor"}><header><div><small>{plan.code}</small><input value={plan.name} onChange={(event) => patchPlanDraft(plan.id, { name: event.target.value })} /></div><label><input type="checkbox" checked={plan.public_visible} onChange={(event) => patchPlanDraft(plan.id, { public_visible: event.target.checked })} /> Exibir no site</label></header><div className="master-plan-price-row"><Field label="Mensal"><CurrencyInput value={plan.monthly_price} onChange={(monthly_price) => patchPlanDraft(plan.id, { monthly_price })} /></Field><Field label="Anual"><CurrencyInput value={plan.annual_price} onChange={(annual_price) => patchPlanDraft(plan.id, { annual_price })} /></Field></div><div className="master-plan-limits"><Field label="Empresas"><input type="number" min="1" value={plan.company_limit} onChange={(event) => patchPlanDraft(plan.id, { company_limit: Number(event.target.value) })} /></Field><Field label="Unidades"><input type="number" min="1" value={plan.store_limit} onChange={(event) => patchPlanDraft(plan.id, { store_limit: Number(event.target.value) })} /></Field><Field label="Usuários"><input type="number" min="1" value={plan.user_limit} onChange={(event) => patchPlanDraft(plan.id, { user_limit: Number(event.target.value) })} /></Field><Field label="IA/mês"><input type="number" min="0" value={plan.ai_queries_monthly} onChange={(event) => patchPlanDraft(plan.id, { ai_queries_monthly: Number(event.target.value) })} /></Field></div><Field label="Descrição pública"><input value={plan.public_description} onChange={(event) => patchPlanDraft(plan.id, { public_description: event.target.value })} /></Field><Field label="Benefícios — um por linha"><textarea rows={4} value={plan.public_features_text} onChange={(event) => patchPlanDraft(plan.id, { public_features_text: event.target.value })} /></Field><div className="master-plan-publish"><label><input type="checkbox" checked={plan.recommended} onChange={(event) => patchPlanDraft(plan.id, { recommended: event.target.checked })} /> Mais indicado</label><Field label="Texto do botão"><input value={plan.public_cta_label} onChange={(event) => patchPlanDraft(plan.id, { public_cta_label: event.target.value })} /></Field><Field label="Ordem"><input type="number" value={plan.public_sort_order} onChange={(event) => patchPlanDraft(plan.id, { public_sort_order: Number(event.target.value) })} /></Field></div><button type="button" className="primary" disabled={Boolean(savingPlanId)} onClick={() => void savePlanDraft(plan)}>{savingPlanId === plan.id ? "Salvando..." : "Salvar este plano"}</button></article>)}</div><footer><button type="button" className="outline" onClick={() => setPlansOpen(false)}>Fechar</button></footer></section></div>}
+    {plansOpen && <div className="modal-backdrop master-control-backdrop"><section className="compact-modal master-plans-modal"><header><div><small>PLANOS GERIVO</small><h2>Valores e conteúdo do site de vendas</h2><p>As alterações publicadas aqui aparecem automaticamente na página comercial.</p></div><button type="button" onClick={() => setPlansOpen(false)}>×</button></header><div className="master-plan-editor-grid">{planDrafts.map((plan) => <article key={plan.id} className={plan.recommended ? "master-plan-editor recommended" : "master-plan-editor"}><header><div><small>{plan.code}</small><input value={plan.name} onChange={(event) => patchPlanDraft(plan.id, { name: event.target.value })} /></div><label><input type="checkbox" checked={plan.public_visible} onChange={(event) => patchPlanDraft(plan.id, { public_visible: event.target.checked })} /> Exibir no site</label></header><div className="master-plan-price-row"><Field label="Mensal"><CurrencyInput value={plan.monthly_price} onChange={(monthly_price) => patchPlanDraft(plan.id, { monthly_price })} /></Field><Field label="Anual"><CurrencyInput value={plan.annual_price} onChange={(annual_price) => patchPlanDraft(plan.id, { annual_price })} /></Field></div><div className="master-plan-limits"><Field label="Empresas"><input type="number" min="1" value={plan.company_limit} onChange={(event) => patchPlanDraft(plan.id, { company_limit: Number(event.target.value) })} /></Field><Field label="Unidades"><input type="number" min="1" value={plan.store_limit} onChange={(event) => patchPlanDraft(plan.id, { store_limit: Number(event.target.value) })} /></Field><Field label="Usuários"><input type="number" min="1" value={plan.user_limit} onChange={(event) => patchPlanDraft(plan.id, { user_limit: Number(event.target.value) })} /></Field><Field label="IA/mês"><input type="number" min="0" value={plan.ai_queries_monthly} onChange={(event) => patchPlanDraft(plan.id, { ai_queries_monthly: Number(event.target.value) })} /></Field></div><div className="master-plan-module-editor"><small>MÓDULOS INCLUÍDOS NO PLANO</small><div>{MASTER_MODULES.map((module) => <button type="button" key={module} className={plan.modules?.[module] ? "active" : ""} onClick={() => patchPlanDraft(plan.id, { modules: { ...(plan.modules || {}), [module]: !plan.modules?.[module] } })}><span>{MODULE_INFO[module].label}</span><b>{plan.modules?.[module] ? "Ativo" : "Bloqueado"}</b></button>)}</div></div><Field label="Descrição pública"><input value={plan.public_description} onChange={(event) => patchPlanDraft(plan.id, { public_description: event.target.value })} /></Field><Field label="Benefícios — um por linha"><textarea rows={4} value={plan.public_features_text} onChange={(event) => patchPlanDraft(plan.id, { public_features_text: event.target.value })} /></Field><div className="master-plan-publish"><label><input type="checkbox" checked={plan.recommended} onChange={(event) => patchPlanDraft(plan.id, { recommended: event.target.checked })} /> Mais indicado</label><Field label="Texto do botão"><input value={plan.public_cta_label} onChange={(event) => patchPlanDraft(plan.id, { public_cta_label: event.target.value })} /></Field><Field label="Ordem"><input type="number" value={plan.public_sort_order} onChange={(event) => patchPlanDraft(plan.id, { public_sort_order: Number(event.target.value) })} /></Field></div><button type="button" className="primary" disabled={Boolean(savingPlanId)} onClick={() => void savePlanDraft(plan)}>{savingPlanId === plan.id ? "Salvando..." : "Salvar este plano"}</button></article>)}</div><footer><button type="button" className="outline" onClick={() => setPlansOpen(false)}>Fechar</button></footer></section></div>}
     {replicateOpen && replicateGroup && <div className="modal-backdrop master-control-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setReplicateOpen(false); }}>
       <section role="dialog" aria-modal="true" className="compact-modal master-replicate-modal">
         <header>
@@ -7623,11 +7653,11 @@ function CompanySettingsModal({
 
   function setProfile(profile: CompanyProfile) {
     if (profile === "FULL") {
-      setCompanyDraft({ ...companyDraft, profile, modules: { APPOINTMENTS: true, CATALOG: true, INVENTORY: true, CHECKLIST: true, ORDERS: true, QUOTES: true, PARTS_ORDERS: false, ASSISTANT: true, BI: true, MESSAGES: true, BUDGET_IMPORT: false } });
+      setCompanyDraft({ ...companyDraft, profile, modules: { APPOINTMENTS: true, CATALOG: true, INVENTORY: true, CHECKLIST: true, ORDERS: true, QUOTES: true, PARTS_ORDERS: false, ASSISTANT: true, BI: true, MESSAGES: true, BUDGET_IMPORT: false, SELLING: false } });
       return;
     }
     if (profile === "QUOTE_ONLY") {
-      setCompanyDraft({ ...companyDraft, profile, modules: { APPOINTMENTS: false, CATALOG: true, INVENTORY: false, CHECKLIST: false, ORDERS: false, QUOTES: true, PARTS_ORDERS: false, ASSISTANT: false, BI: false, MESSAGES: true, BUDGET_IMPORT: false } });
+      setCompanyDraft({ ...companyDraft, profile, modules: { APPOINTMENTS: false, CATALOG: true, INVENTORY: false, CHECKLIST: false, ORDERS: false, QUOTES: true, PARTS_ORDERS: false, ASSISTANT: false, BI: false, MESSAGES: true, BUDGET_IMPORT: false, SELLING: false } });
       return;
     }
     setCompanyDraft({ ...companyDraft, profile });
