@@ -4788,3 +4788,325 @@ button:active:not(:disabled){transform:scale(.985)}
 @media(max-width:1280px){.selling-package-showcase-v3{grid-template-columns:repeat(3,minmax(300px,1fr));min-width:980px}.selling-fullscreen-body-v3{overflow-x:auto}.selling-showcase-top-v3{grid-template-columns:1fr auto}.selling-showcase-top-v3>.selling-stepper{display:none}.selling-item-category-row{grid-template-columns:1fr 1fr}.selling-item-category-row .selling-item-individual{justify-content:flex-start}}
 @media(max-width:900px){.selling-setup-v3{align-content:start;padding:18px 12px}.selling-setup-v3-card{grid-template-columns:1fr;padding:22px}.selling-setup-v3-card>button{grid-column:auto}.selling-package-showcase-v3{min-width:0;grid-template-columns:1fr}.selling-fullscreen-body-v3{overflow-x:hidden}.selling-showcase-top-v3{grid-template-columns:1fr auto;padding:10px 14px}.selling-checkout-v3-body{grid-template-columns:1fr;padding:14px}.selling-checkout-summary-v3{position:static}.selling-payment-rules>header,.selling-payment-rules>div{grid-template-columns:1fr 1fr}.selling-payment-rules>header span:nth-child(3),.selling-payment-rules>header span:nth-child(4){display:none}.selling-item-category-row{grid-template-columns:1fr}.selling-fullscreen-footer-v3{position:sticky;bottom:0}.selling-showcase-card-v3{max-width:none}}
 @media(max-width:620px){.selling-setup-v3-card h2{font-size:27px}.selling-checkout-v3-grid{grid-template-columns:1fr}.selling-showcase-top-v3>button{font-size:0}.selling-showcase-top-v3>button:after{content:'←';font-size:18px}.selling-required-v3 p{font-size:10px}.selling-benefits-v3>button span b{font-size:11px}.selling-card-price-v3 strong{font-size:32px}}
+
+/* =========================================================
+   Gerivo v1.7.19 — Selling BETA 04 / Pós-venda
+   Layout fluido, informação de benefícios, avulsos, pneus,
+   histórico por placa e importação de peças Mobato/NBS.
+   ========================================================= */
+.selling-fullscreen-v3{width:100%;max-width:none}.selling-fullscreen-body-v3{width:100%;max-width:none;overflow-x:hidden;padding:clamp(14px,1.7vw,28px)}
+.selling-package-showcase-v3{width:100%;max-width:none;margin:0;grid-template-columns:repeat(3,minmax(0,1fr));gap:clamp(12px,1.4vw,24px);min-width:0!important}
+.selling-showcase-card-v3{min-width:0;max-width:none;width:100%;overflow:hidden}.selling-showcase-card-v3>header b{font-size:clamp(17px,1.3vw,24px)}
+.selling-card-price-v3 strong{font-size:clamp(32px,2.6vw,48px)}.selling-required-v3 p{font-size:clamp(10px,.76vw,13px)}
+.selling-benefits-v3>div{width:100%;display:grid;grid-template-columns:24px minmax(0,1fr) auto auto;gap:9px;align-items:center;padding:10px 2px;border-bottom:1px solid #edf1f3;color:var(--selling-color);background:transparent;text-align:left;cursor:pointer}
+.selling-benefits-v3>div:last-of-type{border-bottom:0}.selling-benefits-v3>div>i{width:19px;height:19px;display:grid;place-items:center;border-radius:50%;color:#fff;background:var(--selling-color);font-style:normal;font-size:11px;font-weight:950}
+.selling-benefits-v3>div span b{display:block;font-size:clamp(11px,.86vw,14px);line-height:1.2}.selling-benefits-v3>div span small{display:block;margin-top:3px;color:#7d8d96;font-size:clamp(9px,.64vw,11px);line-height:1.3}.selling-benefits-v3>div>em{white-space:nowrap;color:var(--selling-color);font-size:10px;font-style:normal;font-weight:950}.selling-benefits-v3>div.disabled{opacity:.42;filter:grayscale(.78)}.selling-benefits-v3>div.disabled span b,.selling-benefits-v3>div.disabled span small{text-decoration:line-through}
+.selling-unit-info{width:25px;height:25px;border:1px solid color-mix(in srgb,var(--selling-color) 40%,#dce4e8);border-radius:50%;color:var(--selling-color);background:#fff;font-weight:950;cursor:pointer}
+.selling-add-avulso-v4{margin:0 15px 10px;min-height:38px;border:1px dashed color-mix(in srgb,var(--selling-color) 55%,#d9e1e5);border-radius:9px;color:var(--selling-color);background:color-mix(in srgb,var(--selling-color) 4%,#fff);font-weight:900;cursor:pointer}
+.selling-info-modal-v4,.selling-extra-modal-v4{width:min(580px,94vw);border:1px solid #d8e3e8;border-radius:20px;padding:20px;background:#fff;box-shadow:0 32px 90px rgba(0,0,0,.28)}.selling-info-modal-v4 header,.selling-extra-modal-v4 header{display:flex;justify-content:space-between;gap:15px;align-items:flex-start}.selling-info-modal-v4 header small,.selling-extra-modal-v4 header small{color:#0bb49c;font-size:9px;font-weight:950;letter-spacing:.1em}.selling-info-modal-v4 h3,.selling-extra-modal-v4 h3{margin:4px 0;font-size:24px}.selling-info-modal-v4 header button,.selling-extra-modal-v4 header button{width:34px;height:34px;border:1px solid #d8e3e8;border-radius:9px;background:#fff;font-size:20px}.selling-info-modal-v4 img{width:100%;max-height:300px;object-fit:cover;margin:14px 0;border-radius:14px}.selling-info-modal-v4 p{font-size:14px;line-height:1.55;color:#51646f}
+.selling-extra-grid-v4{display:grid;grid-template-columns:1fr 1fr;gap:11px;margin-top:15px}.selling-extra-grid-v4 label{display:grid;gap:5px;color:#60747f;font-size:9px;font-weight:950;text-transform:uppercase}.selling-extra-grid-v4 label.wide{grid-column:1/-1}.selling-extra-grid-v4 input,.selling-extra-grid-v4 select{height:43px;border:1px solid #d3dfe5;border-radius:9px;padding:0 10px;background:#f9fbfc}.selling-tire-check-v4{display:flex!important;grid-template-columns:auto 1fr!important;align-items:center;gap:8px!important;text-transform:none!important}.selling-extra-modal-v4 footer{display:flex;justify-content:flex-end;gap:9px;margin-top:16px}.selling-extra-modal-v4 footer button{min-height:40px;padding:0 14px;border-radius:9px;font-weight:900}
+.selling-manufacturer-recs-v4{display:grid;gap:7px;margin:0 15px 8px;padding:11px;border:1px solid #f1d8a5;border-radius:12px;background:#fffbf2}.selling-manufacturer-recs-v4>small{color:#a56c00;font-size:9px;font-weight:950;letter-spacing:.08em}.selling-manufacturer-recs-v4>div{display:grid;grid-template-columns:24px 1fr;gap:8px}.selling-manufacturer-recs-v4 i{width:21px;height:21px;display:grid;place-items:center;border-radius:50%;background:#ffae21;color:#fff;font-style:normal;font-weight:950}.selling-manufacturer-recs-v4 b{display:block;font-size:11px;color:#6a4b0f}.selling-manufacturer-recs-v4 span small{display:block;margin-top:2px;color:#846c42;font-size:9px;line-height:1.3}
+.selling-closing-identity-v4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;margin:0 0 18px}.selling-closing-identity-v4 span{padding:11px;border:1px solid #e0e8ec;border-radius:10px;background:#f8fafb}.selling-closing-identity-v4 small,.selling-closing-identity-v4 b{display:block}.selling-closing-identity-v4 small{color:#7a8b94;font-size:8px;text-transform:uppercase;font-weight:900}.selling-closing-identity-v4 b{margin-top:3px;color:#243943}.selling-checkout-v4-grid{grid-template-columns:1fr 1fr!important}
+.selling-item-category-row-v4{grid-template-columns:minmax(160px,.7fr) minmax(220px,1fr) minmax(260px,1.3fr) minmax(220px,1fr) auto auto!important}
+.selling-recommendations-master{display:grid;grid-template-columns:minmax(360px,.8fr) minmax(440px,1.2fr);gap:16px;padding:18px 0}.selling-rec-form,.selling-rec-list{padding:20px;border:1px solid #dbe5ea;border-radius:16px;background:#fff}.selling-rec-form>small{color:#e19a12;font-size:9px;font-weight:950}.selling-rec-form h3{margin:5px 0 15px}.selling-rec-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.selling-rec-grid label{display:grid;gap:5px;color:#60747f;font-size:9px;font-weight:900}.selling-rec-grid label.wide{grid-column:1/-1}.selling-rec-grid input,.selling-rec-grid select,.selling-rec-grid textarea{border:1px solid #d6e1e6;border-radius:9px;padding:9px;background:#f9fbfc}.selling-rec-form>.primary{margin-top:12px;min-height:42px;padding:0 15px;border:0;border-radius:9px;background:#0db99f;color:#fff;font-weight:900}.selling-rec-list{display:grid;gap:8px;align-content:start}.selling-rec-list>article{display:grid;grid-template-columns:28px 1fr auto auto;gap:8px;align-items:center;padding:11px;border:1px solid #e5eaed;border-radius:10px}.selling-rec-list>article>i{width:24px;height:24px;display:grid;place-items:center;border-radius:50%;background:#ffae21;color:#fff;font-style:normal;font-weight:950}.selling-rec-list b,.selling-rec-list span,.selling-rec-list small{display:block}.selling-rec-list span{color:#60727d;font-size:10px}.selling-rec-list small{color:#8a989f;font-size:9px}.selling-rec-list button{border:1px solid #d9e2e6;border-radius:8px;padding:7px 9px;background:#fff;font-weight:850}.selling-rec-list button.danger{color:#c43a50;border-color:#efcbd1}
+.parts-create-header-actions{display:flex;gap:8px;align-items:center}.parts-import-budget{border-color:#0cae9a!important;color:#087c70!important;background:#f3fffc!important}
+.quote-plate-history-panel{overflow:hidden}.quote-plate-history-panel>header{display:flex;align-items:center;justify-content:space-between;gap:15px}.quote-plate-history-panel>header select{min-width:210px;height:40px;border:1px solid #d4dfe5;border-radius:9px;padding:0 10px;background:#fff}.quote-plate-history-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:15px}.quote-plate-history-grid>div{display:grid;gap:7px;align-content:start}.quote-plate-history-grid>div>b{font-size:11px;text-transform:uppercase;color:#657883}.quote-plate-history-grid span{display:block;padding:9px;border:1px solid #e3e9ec;border-radius:9px;background:#fbfcfd}.quote-plate-history-grid span strong,.quote-plate-history-grid span small{display:block}.quote-plate-history-grid span small{margin-top:2px;color:#7d8c94;font-size:9px}.quote-pending-recommendations span{display:grid;grid-template-columns:24px 1fr;column-gap:7px}.quote-pending-recommendations span i{grid-row:1/3;width:21px;height:21px;display:grid;place-items:center;border-radius:50%;background:#ffae21;color:#fff;font-style:normal;font-weight:950}.quote-pending-recommendations em{padding:15px;color:#74848d;font-size:11px}
+.quote-row-v179{grid-template-columns:minmax(90px,.55fr) minmax(280px,1.6fr) minmax(170px,.8fr) minmax(110px,.5fr) auto!important}.quote-row-v179 .document-main small{font-size:10px}.quotes-overview-v1715+ .quote-plate-history-panel{margin-top:12px}
+@media(max-width:1500px){.selling-item-category-row-v4{grid-template-columns:1fr 1fr 1fr}.selling-package-showcase-v3{gap:12px}.selling-benefits-v3>div{grid-template-columns:22px minmax(0,1fr) auto auto}.selling-benefits-v3>div span b{font-size:11px}.selling-required-v3 p{font-size:10px}}
+@media(max-width:1100px){.selling-package-showcase-v3{grid-template-columns:repeat(3,minmax(0,1fr))!important;min-width:0!important}.selling-fullscreen-body-v3{overflow-x:hidden!important}.selling-showcase-card-v3{min-width:0!important}.selling-closing-identity-v4{grid-template-columns:1fr 1fr}.selling-recommendations-master{grid-template-columns:1fr}.quote-plate-history-grid{grid-template-columns:1fr}}
+@media(max-width:780px){.selling-package-showcase-v3{grid-template-columns:1fr!important}.selling-item-category-row-v4,.selling-extra-grid-v4,.selling-rec-grid{grid-template-columns:1fr!important}.selling-closing-identity-v4{grid-template-columns:1fr}.selling-checkout-v4-grid{grid-template-columns:1fr!important}.quote-plate-history-panel>header{align-items:stretch;flex-direction:column}.quote-plate-history-panel>header select{width:100%}}
+.quote-main-v4 em{display:block;margin-top:4px;color:#8a989f;font-size:9px;font-style:normal;font-weight:750}.quote-document-row{border-left:4px solid #dce5ea!important}.quote-document-row:has(select[value="APROVADO"]){border-left-color:#19b58f!important}.quote-document-row:has(select[value="NAO_APROVADO"]){border-left-color:#d94b62!important}.quote-document-row:has(select[value="AGUARDANDO_RETORNO_CLIENTE"]),.quote-document-row:has(select[value="AGUARDANDO_APROVACAO"]){border-left-color:#e5a21d!important}
+
+/* =========================================================
+   GERIVO v1.7.20 · SELLING BETA 05
+   Cortesias + pacotes de troca de óleo
+   ========================================================= */
+.selling-master-create-actions{display:flex;gap:8px;align-items:center}
+.selling-master-create-actions .selling-new-package.oil{border-color:#f0a72d;background:linear-gradient(135deg,#ffbd43,#e88a14);box-shadow:0 10px 28px rgba(232,138,20,.16)}
+.selling-oil-master-note{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:14px;padding:12px 14px;border:1px solid #5d4720;border-radius:12px;background:#201a0b;color:#eec16b}
+.selling-oil-master-note b,.selling-oil-master-note span{display:block}.selling-oil-master-note span{color:#a98a50;font-size:11px}
+.selling-item-individual.courtesy{color:#ffd57d!important;border:1px solid #63471a;border-radius:9px;padding:8px 10px;background:#22190a}
+.selling-item-category-row-v4{grid-template-columns:minmax(145px,.7fr) minmax(190px,1fr) minmax(220px,1.2fr) minmax(190px,.9fr) auto auto auto!important}
+.selling-service-mode-v5{display:flex;gap:8px;margin-top:18px;padding:5px;border-radius:12px;background:#f0f5f7;border:1px solid #d9e3e8;width:max-content}
+.selling-service-mode-v5 button{min-height:36px;padding:0 14px;border:0;border-radius:9px;background:transparent;color:#637681;font-weight:900;cursor:pointer}
+.selling-service-mode-v5 button.active{background:#0d2e3b;color:#fff;box-shadow:0 6px 16px rgba(13,46,59,.14)}
+.selling-oil-setup-note-v5{display:grid;align-content:center;min-height:78px;padding:12px 14px;border:1px solid #ead6ad;border-radius:11px;background:#fffbf1}
+.selling-oil-setup-note-v5 small{color:#b47b18;font-size:8px;font-weight:950;letter-spacing:.08em}.selling-oil-setup-note-v5 b{color:#60481e}.selling-oil-setup-note-v5 span{margin-top:3px;color:#8b7853;font-size:10px}
+.selling-benefits-v3>div.has-courtesy{grid-template-columns:28px 24px minmax(0,1fr) auto auto}
+.selling-courtesy-star-v5{width:24px;height:24px;border:1px solid #d59b23;border-radius:7px;background:#fff8e8;color:#bb7d00;font-size:17px;font-weight:950;line-height:1;cursor:pointer;box-shadow:0 3px 10px rgba(188,128,0,.12)}
+.selling-courtesy-star-v5:hover{background:#ffedbf}
+.selling-courtesy-modal-v5{width:min(520px,92vw);border:1px solid #e5d09f;border-radius:20px;padding:20px;background:#fffdf8;box-shadow:0 32px 90px rgba(0,0,0,.28)}
+.selling-courtesy-modal-v5 header{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}.selling-courtesy-modal-v5 header small{color:#b17b12;font-size:9px;font-weight:950;letter-spacing:.1em}.selling-courtesy-modal-v5 h3{margin:4px 0;font-size:24px;color:#463313}.selling-courtesy-modal-v5 header button{width:34px;height:34px;border:1px solid #e4d5b5;border-radius:9px;background:#fff;font-size:20px}.selling-courtesy-modal-v5>p{color:#695b40;line-height:1.55}.selling-courtesy-reference-v5{display:flex;align-items:center;justify-content:space-between;gap:15px;margin:14px 0;padding:13px;border-radius:11px;background:#fff5d8;border:1px solid #eed18b}.selling-courtesy-reference-v5 span{color:#806326;font-size:11px;font-weight:850}.selling-courtesy-reference-v5 strong{color:#b77a00;font-size:21px}.selling-courtesy-modal-v5 ul{margin:10px 0 0;padding-left:19px;color:#63563e;font-size:12px}.selling-courtesy-modal-v5 li+li{margin-top:5px}
+@media(max-width:1500px){.selling-item-category-row-v4{grid-template-columns:1fr 1fr 1fr!important}.selling-benefits-v3>div.has-courtesy{grid-template-columns:24px 22px minmax(0,1fr) auto auto}}
+@media(max-width:800px){.selling-master-create-actions{flex-direction:column;align-items:stretch}.selling-master-create-actions button{width:100%}.selling-service-mode-v5{width:100%}.selling-service-mode-v5 button{flex:1}.selling-benefits-v3>div.has-courtesy{grid-template-columns:24px 22px minmax(0,1fr) auto}.selling-benefits-v3>div.has-courtesy>em{grid-column:3/-1}}
+
+/* Gerivo v1.7.20 · catálogo de kits / vínculo peça + M.O. */
+.selling-kits-master-v6{display:grid;gap:14px}.selling-kits-master-head-v6{display:flex;align-items:end;justify-content:space-between;gap:18px;padding:18px;border:1px solid #18394b;border-radius:16px;background:#091925}.selling-kits-master-head-v6 small{color:#42dfd6;font-size:9px;font-weight:950;letter-spacing:.1em}.selling-kits-master-head-v6 h3{margin:4px 0;color:#edf7fb}.selling-kits-master-head-v6 p{margin:0;color:#7695a7;font-size:11px}.selling-kits-grid-v6{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.selling-kits-grid-v6>article{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;padding:17px;border:1px solid #1b3a4b;border-radius:15px;background:#091722}.selling-kits-grid-v6 article small{color:#59d9cf;font-size:8px;font-weight:950}.selling-kits-grid-v6 h4{margin:4px 0;color:#eff8fc}.selling-kits-grid-v6 p{margin:0;color:#708d9f;font-size:10px}.selling-kits-grid-v6 article>strong{color:#46e0cd;align-self:center;font-size:18px}.selling-kits-grid-v6 footer{grid-column:1/-1;display:flex;gap:8px}.selling-kits-grid-v6 footer button{flex:1;padding:8px;border:1px solid #284b5e;border-radius:8px;background:#0b202c;color:#d5e6ee;font-weight:850}.selling-kits-grid-v6 footer button.danger{color:#ff7189;border-color:#542736}
+.selling-kit-editor-v6{width:min(1050px,95vw);height:min(820px,92vh);display:grid;grid-template-rows:auto minmax(0,1fr) auto;overflow:hidden;border:1px solid #1b4a61;border-radius:20px;background:#07141e;box-shadow:0 35px 90px rgba(0,0,0,.55)}.selling-kit-editor-v6>header{display:flex;justify-content:space-between;padding:18px 22px;border-bottom:1px solid #173143;background:#091b27}.selling-kit-editor-v6>header small{color:#41ded6;font-size:9px;font-weight:950}.selling-kit-editor-v6>header h2{margin:4px 0;color:#fff}.selling-kit-editor-v6>header p{margin:0;color:#7696a9;font-size:11px}.selling-kit-editor-v6>header>button{width:38px;height:38px;border:1px solid #23465b;border-radius:10px;background:#0c2635;color:#c5d9e4;font-size:22px}.selling-kit-editor-body-v6{min-height:0;overflow:auto;padding:18px;display:grid;gap:15px}.selling-kit-editor-body-v6 h3{color:#dcebf3;margin:5px 0}.selling-kit-components-v6{display:grid;gap:7px}.selling-kit-components-v6>div{display:grid;grid-template-columns:130px 120px minmax(220px,1fr) 80px 110px 100px 34px;gap:7px;align-items:center}.selling-kit-components-v6 input,.selling-kit-components-v6 select{min-width:0;border:1px solid #24485c;background:#081722;color:#eaf5fb;border-radius:9px;padding:9px}.selling-kit-components-v6 label{display:flex;align-items:center;gap:5px;color:#d6b765;font-size:10px}.selling-kit-editor-v6>footer{display:flex;justify-content:flex-end;gap:9px;padding:14px 18px;border-top:1px solid #173143;background:#091b27}.selling-kit-editor-v6>footer button{min-width:130px;min-height:42px;border-radius:9px;font-weight:900}.selling-kit-editor-v6>footer .primary{border:0;background:#10bda3;color:#fff}.selling-catalog-picker-v6{display:grid;grid-template-columns:1fr auto;gap:8px;margin-top:14px;padding:12px;border:1px solid #cce7df;border-radius:11px;background:#f4fffb}.selling-catalog-picker-v6 label{display:grid;gap:5px;color:#5b756c;font-size:9px;font-weight:950;text-transform:uppercase}.selling-catalog-picker-v6 select{height:40px;border:1px solid #c9dcd6;border-radius:8px;background:#fff;padding:0 9px}.selling-catalog-picker-v6 button{align-self:end;height:40px;border:0;border-radius:8px;background:#0db99f;color:#fff;padding:0 14px;font-weight:900}.selling-catalog-picker-v6 button:disabled{opacity:.45}
+.selling-item-category-row-v4{grid-template-columns:repeat(3,minmax(0,1fr))!important}
+@media(max-width:1150px){.selling-kits-grid-v6{grid-template-columns:1fr 1fr}.selling-kit-components-v6>div{grid-template-columns:1fr 1fr 2fr 80px 100px}.selling-kit-components-v6>div>*:nth-child(n+6){grid-column:auto}}
+@media(max-width:760px){.selling-kits-grid-v6{grid-template-columns:1fr}.selling-kits-master-head-v6{align-items:stretch;flex-direction:column}.selling-kit-components-v6>div{grid-template-columns:1fr}.selling-catalog-picker-v6{grid-template-columns:1fr}.selling-item-category-row-v4{grid-template-columns:1fr!important}}
+
+/* =========================================================
+   GERIVO v1.7.21 · SELLING BETA 06
+   Tela comercial fluida + cortesia dinâmica + recomendação recorrente
+   ========================================================= */
+.selling-fullscreen-body-v3{
+  width:100%!important;
+  max-width:none!important;
+  padding:clamp(12px,1.25vw,24px) clamp(12px,1.35vw,30px) 108px!important;
+}
+.selling-package-showcase-v3{
+  width:100%!important;
+  max-width:none!important;
+  margin:0!important;
+  grid-template-columns:repeat(3,minmax(0,1fr))!important;
+  gap:clamp(14px,1.25vw,28px)!important;
+}
+.selling-showcase-card-v3{width:100%!important;max-width:none!important;min-width:0!important}
+.selling-showcase-card-v3>header{padding:clamp(14px,1vw,20px);font-size:clamp(19px,1.25vw,27px)}
+.selling-card-price-v3{padding:clamp(16px,1.2vw,24px) 14px}
+.selling-card-price-v3 strong{font-size:clamp(38px,2.75vw,58px)!important}
+.selling-card-price-v3 small,.selling-card-price-v3 span{font-size:clamp(10px,.72vw,13px)}
+.selling-required-v3{margin:clamp(11px,.9vw,17px);padding:clamp(12px,.8vw,17px)}
+.selling-required-v3>div small{font-size:clamp(9px,.62vw,12px)}
+.selling-required-v3>div b{font-size:clamp(12px,.8vw,15px)}
+.selling-required-v3 p{padding:clamp(4px,.32vw,7px) 0;font-size:clamp(11px,.72vw,14px)!important}
+.selling-required-v3 p em{font-size:clamp(9px,.6vw,12px)}
+.selling-benefits-v3{padding:3px clamp(12px,.9vw,18px) 14px}
+.selling-benefits-v3>small{font-size:clamp(9px,.64vw,12px)}
+.selling-benefits-v3>div{
+  display:flex!important;
+  grid-template-columns:none!important;
+  width:100%;
+  gap:8px!important;
+  align-items:center;
+  min-height:clamp(48px,3vw,62px);
+  padding:clamp(8px,.55vw,12px) 2px!important;
+}
+.selling-benefits-v3>div>span:not(.selling-recommended-badge-v6){flex:1;min-width:0}
+.selling-benefits-v3>div span b{font-size:clamp(12px,.82vw,15px)!important}
+.selling-benefits-v3>div span small{font-size:clamp(9px,.64vw,12px)!important;white-space:normal}
+.selling-benefits-v3>div>em{margin-left:auto;font-size:clamp(10px,.68vw,13px)!important}
+.selling-unit-info{flex:0 0 auto}
+.selling-courtesy-star-v6{
+  flex:0 0 22px;width:22px;height:22px;border:1px solid color-mix(in srgb,var(--selling-color) 35%,#cad5da);
+  border-radius:6px;background:#fff;color:#8b99a0;font-size:15px;font-weight:950;line-height:1;cursor:pointer;
+  opacity:.56;transition:.15s ease;
+}
+.selling-courtesy-star-v6:hover{opacity:1;color:var(--selling-color);border-color:var(--selling-color);background:color-mix(in srgb,var(--selling-color) 7%,#fff)}
+.selling-courtesy-star-v6.active{opacity:1;color:#855a00;border-color:#e2a11e;background:#fff3ce;box-shadow:0 0 0 3px rgba(226,161,30,.10)}
+.selling-courtesy-price-v6{display:flex;align-items:flex-end;flex-direction:column;gap:1px}
+.selling-courtesy-price-v6 s{color:#9ba7ad;font-size:.86em;font-weight:700}
+.selling-courtesy-price-v6 b{color:#c18100;font-size:.92em}
+.selling-recommended-badge-v6{
+  flex:0 0 22px;width:22px;height:22px;display:grid;place-items:center;border-radius:50%;
+  background:#ffab20;color:#fff;font-size:13px;font-weight:950;box-shadow:0 4px 10px rgba(255,171,32,.22)
+}
+.selling-benefits-v3>div.recommended-item-v6{
+  margin:2px 0 5px;padding-left:7px!important;padding-right:7px!important;border:1px solid #f1d294!important;border-radius:10px;
+  background:#fffaf0;color:#b47500;
+}
+.selling-benefits-v3>div.recommended-item-v6 span b{color:#9b6500}
+.selling-benefits-v3>div.recommended-item-v6 span small{color:#8d7855}
+.selling-rec-options-v6{display:grid;gap:8px;margin:12px 0}
+.selling-rec-options-v6 label{display:flex;align-items:center;gap:8px;padding:10px 12px;border:1px solid #dce5e9;border-radius:10px;background:#f8fbfc;color:#50636e;font-size:11px;font-weight:850}
+.selling-rec-form>p{margin:0 0 13px;color:#71848f;font-size:11px;line-height:1.5}
+.selling-item-category-row-v4 select{min-height:39px;border:1px solid #24485c;border-radius:8px;background:#081722;color:#eaf5fb;padding:0 9px}
+.selling-add-avulso-v4{font-size:clamp(10px,.7vw,13px)!important}
+
+@media(min-width:1800px){
+  .selling-fullscreen-body-v3{padding-left:20px!important;padding-right:20px!important}
+  .selling-package-showcase-v3{gap:24px!important}
+  .selling-benefits-v3>div{min-height:58px}
+}
+@media(max-width:980px){
+  .selling-package-showcase-v3{grid-template-columns:1fr!important}
+  .selling-fullscreen-body-v3{overflow-x:hidden!important}
+}
+.selling-fullscreen.selling-fullscreen-v3{position:fixed!important;inset:0!important;z-index:99999!important;width:100vw!important;height:100dvh!important;max-width:none!important}
+
+/* =========================================================
+   GERIVO v1.7.21.1 · SELLING RESPONSIVE HOTFIX
+   A apresentação ocupa SEMPRE a área disponível do seu
+   containing block. Nunca soma sidebar + 100vw.
+   ========================================================= */
+.selling-fullscreen.selling-fullscreen-v3,
+.selling-fullscreen.selling-checkout-v3{
+  inset:0!important;
+  width:auto!important;
+  height:auto!important;
+  max-width:none!important;
+  min-width:0!important;
+  margin:0!important;
+  box-sizing:border-box!important;
+  overflow:hidden!important;
+}
+.selling-showcase-top-v3,
+.selling-fullscreen-body-v3,
+.selling-package-showcase-v3,
+.selling-showcase-card-v3{
+  width:100%!important;
+  max-width:100%!important;
+  min-width:0!important;
+  box-sizing:border-box!important;
+}
+.selling-fullscreen-body-v3{
+  overflow-x:hidden!important;
+  padding-left:clamp(10px,1.15vw,22px)!important;
+  padding-right:clamp(10px,1.15vw,22px)!important;
+}
+.selling-package-showcase-v3{
+  grid-template-columns:repeat(3,minmax(0,1fr))!important;
+  gap:clamp(10px,1vw,20px)!important;
+  margin:0!important;
+}
+.selling-showcase-card-v3,
+.selling-showcase-card-v3>*{
+  min-width:0!important;
+}
+.selling-required-v3 p span,
+.selling-benefits-v3>div span,
+.selling-benefits-v3>div span b,
+.selling-benefits-v3>div span small{
+  min-width:0!important;
+  overflow-wrap:anywhere;
+}
+.selling-showcase-card-v3>header{
+  font-size:clamp(17px,1.15vw,24px)!important;
+}
+.selling-card-price-v3 strong{
+  font-size:clamp(32px,2.25vw,50px)!important;
+  line-height:1.02!important;
+}
+.selling-required-v3{
+  margin-left:clamp(8px,.75vw,14px)!important;
+  margin-right:clamp(8px,.75vw,14px)!important;
+}
+.selling-benefits-v3{
+  padding-left:clamp(8px,.75vw,14px)!important;
+  padding-right:clamp(8px,.75vw,14px)!important;
+}
+
+/* Tablet / janela estreita: mantém comparação lado a lado até onde é legível. */
+@media (max-width:1050px){
+  .selling-package-showcase-v3{
+    grid-template-columns:repeat(3,minmax(0,1fr))!important;
+    gap:8px!important;
+  }
+  .selling-card-price-v3 strong{font-size:clamp(26px,3.4vw,38px)!important}
+  .selling-required-v3 p{font-size:10px!important}
+  .selling-benefits-v3>div span b{font-size:11px!important}
+  .selling-benefits-v3>div span small{font-size:9px!important}
+}
+
+/* Celular de verdade: aí sim empilha; nunca cria scroll horizontal. */
+@media (max-width:720px){
+  .selling-package-showcase-v3{grid-template-columns:1fr!important}
+  .selling-showcase-top-v3{grid-template-columns:minmax(0,1fr) auto!important;gap:8px!important}
+  .selling-fullscreen-body-v3{padding:10px 8px 90px!important}
+}
+
+/* =========================================================
+   GERIVO v1.7.21.2 · SELLING FIT + STATE FIX
+   Conteúdo legível em 100%, adição imediata e reset por revisão.
+   ========================================================= */
+.selling-fullscreen.selling-fullscreen-v3{
+  container-type:inline-size;
+}
+.selling-fullscreen-body-v3{
+  padding-top:clamp(8px,1vh,14px)!important;
+  padding-bottom:clamp(68px,8vh,92px)!important;
+}
+.selling-package-showcase-v3{
+  align-items:stretch!important;
+}
+.selling-showcase-card-v3{
+  align-self:start!important;
+}
+.selling-showcase-notice-v7{
+  position:fixed;
+  z-index:100002;
+  top:86px;
+  left:50%;
+  transform:translateX(-50%);
+  padding:10px 16px;
+  border:1px solid #bce6d9;
+  border-radius:999px;
+  background:#eafff8;
+  color:#087b67;
+  box-shadow:0 12px 30px rgba(13,68,57,.18);
+  font-size:12px;
+  font-weight:900;
+  pointer-events:none;
+}
+
+/* O preconizado continua COMPLETO, mas usa a largura do card para reduzir altura. */
+@media (min-width:1180px){
+  .selling-required-v3{
+    display:grid!important;
+    grid-template-columns:repeat(2,minmax(0,1fr));
+    column-gap:clamp(10px,.8vw,16px);
+    row-gap:0;
+  }
+  .selling-required-v3>div{grid-column:1/-1}
+  .selling-required-v3>p{
+    min-width:0;
+    margin:0!important;
+    padding:5px 0!important;
+  }
+
+  /* Pacotes longos ficam em duas colunas somente nos BENEFÍCIOS.
+     Essencial curto continua em uma coluna. */
+  .selling-showcase-card-v3.dense-benefits-v7 .selling-benefits-v3{
+    display:grid!important;
+    grid-template-columns:repeat(2,minmax(0,1fr));
+    column-gap:10px;
+    align-content:start;
+  }
+  .selling-showcase-card-v3.dense-benefits-v7 .selling-benefits-v3>small{
+    grid-column:1/-1;
+  }
+  .selling-showcase-card-v3.dense-benefits-v7 .selling-benefits-v3>div{
+    min-width:0;
+    min-height:42px!important;
+    margin:0!important;
+    padding:6px 2px!important;
+  }
+  .selling-showcase-card-v3.dense-benefits-v7 .selling-benefits-v3>div.recommended-item-v6{
+    grid-column:1/-1;
+    padding-left:7px!important;
+    padding-right:7px!important;
+  }
+}
+
+/* Em notebooks/altura menor, compacta espaços — não a informação. */
+@media (min-width:1180px) and (max-height:900px){
+  .selling-showcase-top-v3{min-height:62px!important;padding-top:7px!important;padding-bottom:7px!important}
+  .selling-showcase-card-v3>header{padding:10px 12px!important;font-size:clamp(17px,1.05vw,21px)!important}
+  .selling-card-price-v3{padding:10px 10px 9px!important}
+  .selling-card-price-v3 strong{font-size:clamp(32px,2.15vw,44px)!important}
+  .selling-card-price-v3 span{margin-top:2px!important}
+  .selling-required-v3{margin-top:9px!important;margin-bottom:7px!important;padding-top:9px!important;padding-bottom:9px!important}
+  .selling-required-v3>p{font-size:10.5px!important;line-height:1.15!important;padding:4px 0!important}
+  .selling-benefits-v3{padding-bottom:8px!important}
+  .selling-benefits-v3>div{min-height:40px!important;padding:6px 2px!important}
+  .selling-benefits-v3>div span b{font-size:11.5px!important;line-height:1.1!important}
+  .selling-benefits-v3>div span small{font-size:9px!important;line-height:1.12!important}
+  .selling-add-avulso-v4,.selling-select-plan-v3{min-height:40px!important;padding-top:8px!important;padding-bottom:8px!important}
+}
+
+/* Janela menor: preserve 3 cards enquanto ainda houver espaço comercial. */
+@media (min-width:840px) and (max-width:1179px){
+  .selling-package-showcase-v3{gap:7px!important}
+  .selling-card-price-v3 strong{font-size:clamp(28px,3vw,38px)!important}
+  .selling-required-v3 p{font-size:9.8px!important}
+  .selling-benefits-v3>div{min-height:41px!important;padding:6px 1px!important}
+  .selling-benefits-v3>div span b{font-size:10.5px!important}
+  .selling-benefits-v3>div span small{font-size:8.5px!important}
+}
+
+/* Só empilha quando realmente não existe largura útil para comparação. */
+@media (max-width:839px){
+  .selling-package-showcase-v3{grid-template-columns:1fr!important}
+}

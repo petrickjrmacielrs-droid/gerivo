@@ -2353,7 +2353,7 @@ export default function Home() {
     };
   }, [supabase]);
 
-  async function loadAccessContext(userId: string) {
+  async function loadAccessContext(userId: string, jwtFutureRetry = 0) {
     const sequence = ++accessLoadSequenceRef.current;
     setAuthLoading(true);
     setAuthError("");
@@ -2453,9 +2453,29 @@ export default function Home() {
       setReady(true);
     } catch (error) {
       if (sequence !== accessLoadSequenceRef.current) return;
+      const message = error instanceof Error ? error.message : "Não foi possível preparar seu ambiente.";
+      const jwtIssuedAtFuture = message.toLowerCase().includes("jwt issued at future");
+
+      // O Supabase pode, por alguns segundos, emitir o JWT em um nó de Auth cujo relógio
+      // esteja ligeiramente à frente do nó do PostgREST. Nesse caso o token é válido, mas
+      // o Data API responde PGRST303/JWT issued at future. Não derrubamos o Gerivo: damos
+      // tempo para os relógios convergirem e repetimos o bootstrap com a mesma sessão.
+      if (jwtIssuedAtFuture && jwtFutureRetry < 4) {
+        const waitMs = 1500 + jwtFutureRetry * 1500;
+        setAuthStage(`Sincronizando sessão com o servidor... tentativa ${jwtFutureRetry + 1}/4`);
+        setAuthError("");
+        await new Promise((resolve) => window.setTimeout(resolve, waitMs));
+        if (sequence !== accessLoadSequenceRef.current) return;
+        return loadAccessContext(userId, jwtFutureRetry + 1);
+      }
+
       console.error("Gerivo bootstrap:", error);
       setReady(false);
-      setAuthError(error instanceof Error ? error.message : "Não foi possível preparar seu ambiente.");
+      setAuthError(
+        jwtIssuedAtFuture
+          ? "O Supabase ainda está sincronizando o horário da sessão. Aguarde alguns segundos e tente novamente."
+          : message,
+      );
     } finally {
       if (sequence === accessLoadSequenceRef.current) setAuthLoading(false);
     }
@@ -3383,6 +3403,7 @@ export default function Home() {
               currentUserName={userProfile.preferredName}
               currentStoreId={brandedStore.id}
               settings={data.companySettings.partOrderSettings}
+              importContext={{ companyId: brandedStore.companyId, storeId: brandedStore.id, accessToken: session?.access_token || "" }}
               onChange={(partOrders) => setData({ ...data, partOrders })}
             />
           )}
@@ -3521,6 +3542,7 @@ export default function Home() {
               <QuotesPage
                 quotes={data.quotes}
                 attendances={data.attendances}
+                orders={data.orders}
                 deliveryMode={data.companySettings.quoteDeliveryMode}
                 companyName={data.companyIdentity.displayName}
                 currentUserName={userProfile.preferredName}
@@ -3695,7 +3717,7 @@ function normalizePartOrderReservation(order: PartOrder): PartOrder {
   return { ...order, fullyReservedAt: allReserved ? (order.fullyReservedAt || new Date().toISOString()) : "", updatedAt: new Date().toISOString() };
 }
 
-function PartsOrdersPage({ orders, customers, consultants, currentUserName, currentStoreId, settings, onChange }: { orders: PartOrder[]; customers: Customer[]; consultants: ConsultantOption[]; currentUserName: string; currentStoreId: string; settings: PartOrderSettings; onChange: (orders: PartOrder[]) => void }) {
+function PartsOrdersPage({ orders, customers, consultants, currentUserName, currentStoreId, settings, importContext, onChange }: { orders: PartOrder[]; customers: Customer[]; consultants: ConsultantOption[]; currentUserName: string; currentStoreId: string; settings: PartOrderSettings; importContext: BudgetImportContext; onChange: (orders: PartOrder[]) => void }) {
   const [search, setSearch] = useState("");
   const [orderType, setOrderType] = useState<"TODOS" | PartOrderType>("TODOS");
   const [businessType, setBusinessType] = useState<"TODOS" | PartOrderBusinessType>("TODOS");
@@ -3703,6 +3725,7 @@ function PartsOrdersPage({ orders, customers, consultants, currentUserName, curr
   const [responsible, setResponsible] = useState("TODOS");
   const [draft, setDraft] = useState<PartOrder | null>(null);
   const [editorMode, setEditorMode] = useState<"CREATE" | "TRACK" | "EDIT">("CREATE");
+  const [partsImportOpen, setPartsImportOpen] = useState(false);
   const fieldRules = normalizePartOrderSettings(settings).fields;
   const persistedDraft = draft ? orders.find((item) => item.id === draft.id) : undefined;
 
@@ -3835,6 +3858,17 @@ function PartsOrdersPage({ orders, customers, consultants, currentUserName, curr
     setDraft(null);
   }
 
+  function importPartsFromBudget(items: DocumentLine[]) {
+    if (!draft) return;
+    const parts = items.filter((item) => item.kind === "PECA").map((item) => {
+      const codeMatch = item.description.match(/(?:Código\s+)?([A-Z0-9][A-Z0-9._/-]{2,})/i);
+      return { ...emptyPartOrderItem(), id: uid(), code: codeMatch?.[1] || "", description: item.name.trim(), quantity: Math.max(1, Number(item.quantity) || 1) };
+    }).filter((item) => item.description);
+    if (!parts.length) return window.alert("Nenhuma peça foi encontrada no orçamento importado.");
+    const existingEmpty = draft.items.length === 1 && !draft.items[0].code.trim() && !draft.items[0].description.trim();
+    setDraft({ ...draft, items: [...(existingEmpty ? [] : draft.items), ...parts] });
+  }
+
   function deleteDraft() {
     if (!draft || !orders.some((item) => item.id === draft.id)) return setDraft(null);
     if (!window.confirm(`Excluir definitivamente o pedido #${draft.orderNumber}?`)) return;
@@ -3857,7 +3891,7 @@ function PartsOrdersPage({ orders, customers, consultants, currentUserName, curr
         <Field label="Responsável"><input list="parts-responsibles" value={draft.responsible} onChange={(event) => setDraft({ ...draft, responsible: event.target.value })} /><datalist id="parts-responsibles">{responsibleOptions.map((item) => <option key={item} value={item} />)}</datalist></Field>
         {fieldRules.productive.enabled && <Field label={`Produtivo / oficina${fieldRules.productive.required ? " *" : ""}`}><input value={draft.productive} onChange={(event) => setDraft({ ...draft, productive: event.target.value })} /></Field>}
       </div></section>
-      <section className="panel parts-create-items"><header><div><small>ITENS DO PEDIDO</small><h3>{draft.items.length} peça(s)</h3></div><button type="button" className="outline" onClick={() => setDraft({ ...draft, items: [...draft.items, emptyPartOrderItem()] })}>+ Adicionar peça</button></header><div className="parts-create-item-list">{draft.items.map((item, index) => <article key={item.id} className="parts-create-item"><header><b>{String(index + 1).padStart(2, "0")}</b><strong>Peça {index + 1}</strong><button type="button" title={editorMode === "EDIT" && persistedDraft?.items.some((current) => current.id === item.id) ? "Peça já cadastrada; altere o status no acompanhamento." : "Remover peça"} disabled={draft.items.length === 1 || (editorMode === "EDIT" && !!persistedDraft?.items.some((current) => current.id === item.id))} onClick={() => setDraft({ ...draft, items: draft.items.filter((current) => current.id !== item.id) })}><PremiumIcon name="trash" size={16} /></button></header><div>
+      <section className="panel parts-create-items"><header><div><small>ITENS DO PEDIDO</small><h3>{draft.items.length} peça(s)</h3></div><div className="parts-create-header-actions"><button type="button" className="outline parts-import-budget" onClick={() => setPartsImportOpen(true)}>Importar Mobato / NBS</button><button type="button" className="outline" onClick={() => setDraft({ ...draft, items: [...draft.items, emptyPartOrderItem()] })}>+ Adicionar peça</button></div></header><div className="parts-create-item-list">{draft.items.map((item, index) => <article key={item.id} className="parts-create-item"><header><b>{String(index + 1).padStart(2, "0")}</b><strong>Peça {index + 1}</strong><button type="button" title={editorMode === "EDIT" && persistedDraft?.items.some((current) => current.id === item.id) ? "Peça já cadastrada; altere o status no acompanhamento." : "Remover peça"} disabled={draft.items.length === 1 || (editorMode === "EDIT" && !!persistedDraft?.items.some((current) => current.id === item.id))} onClick={() => setDraft({ ...draft, items: draft.items.filter((current) => current.id !== item.id) })}><PremiumIcon name="trash" size={16} /></button></header><div>
         <Field label="Código / referência"><input value={item.code} onChange={(event) => updateItem(item.id, { code: event.target.value })} /></Field>
         <Field label="Descrição da peça"><input value={item.description} onChange={(event) => updateItem(item.id, { description: event.target.value })} /></Field>
         <Field label="Quantidade"><input type="number" min="0.01" step="1" value={item.quantity} onChange={(event) => updateItem(item.id, { quantity: Math.max(0.01, Number(event.target.value) || 1) })} /></Field>
@@ -3866,6 +3900,7 @@ function PartsOrdersPage({ orders, customers, consultants, currentUserName, curr
       <section className="panel parts-general-comments"><Field label="Comentários / observações gerais"><textarea value={draft.comments} onChange={(event) => setDraft({ ...draft, comments: event.target.value })} maxLength={1000} placeholder="Informações gerais do pedido..." /></Field></section>
     </div>
     <footer className="parts-workspace-footer"><button type="button" className="outline" onClick={() => { if (editorMode === "EDIT") setEditorMode("TRACK"); else setDraft(null); }}>Cancelar</button><button type="button" className="primary" onClick={saveDraft}>{editorMode === "EDIT" ? "Salvar alterações" : "Salvar pedido"}</button></footer>
+    {partsImportOpen && <BudgetImportModal context={importContext} partsOnly onClose={() => setPartsImportOpen(false)} onImport={importPartsFromBudget} />}
   </section>;
 
   if (draft && editorMode === "TRACK") {
@@ -7843,6 +7878,7 @@ function ChecklistIndex({
   return (
     <section className="module-list-page">
       <div className="module-intro compact"><div><small>CONTROLE DE CHECKLISTS</small><h2>Recepções e inspeções</h2></div></div>
+      
       <FilterToolbar
         search={search}
         onSearch={setSearch}
@@ -7894,6 +7930,7 @@ function OrdersPage({
   return (
     <section className="module-list-page">
       <div className="module-intro compact"><div><small>EXECUÇÃO E CONTROLE</small><h2>Gestão de ordens de serviço</h2></div></div>
+      
       <FilterToolbar
         search={search}
         onSearch={setSearch}
@@ -7919,6 +7956,7 @@ function OrdersPage({
 function QuotesPage({
   quotes,
   attendances,
+  orders,
   deliveryMode,
   companyName,
   currentUserName,
@@ -7928,6 +7966,7 @@ function QuotesPage({
 }: {
   quotes: Quote[];
   attendances: Attendance[];
+  orders: ServiceOrder[];
   deliveryMode: QuoteDeliveryMode;
   companyName: string;
   currentUserName: string;
@@ -7938,6 +7977,7 @@ function QuotesPage({
   const [filter, setFilter] = useState<QuoteListStatus>("TODOS");
   const [search, setSearch] = useState("");
   const [messageQuoteId, setMessageQuoteId] = useState<string | null>(null);
+  const [historyPlate, setHistoryPlate] = useState("");
   const normalizedSearch = search.trim().toLowerCase();
   const filtered = quotes.filter((quote) => {
     const statusMatches = filter === "TODOS" || quote.status === filter;
@@ -7951,6 +7991,12 @@ function QuotesPage({
     approved: quotes.filter((quote) => quoteIsApproved(quote.status)).length,
     openValue: quotes.filter((quote) => !quoteIsTerminal(quote.status)).reduce((sum, quote) => sum + Number(quote.total || 0), 0),
   };
+
+  const historyPlates = Array.from(new Set([...quotes.map((quote) => quote.plate), ...orders.map((order) => order.plate)].map((value) => value.trim().toUpperCase()).filter(Boolean))).sort();
+  const plateQuotes = historyPlate ? quotes.filter((quote) => quote.plate.trim().toUpperCase() === historyPlate) : [];
+  const plateOrders = historyPlate ? orders.filter((order) => order.plate.trim().toUpperCase() === historyPlate) : [];
+  const executedNames = new Set(plateOrders.filter((order) => order.status === "FECHADA").flatMap((order) => order.items.map((item) => normalizeAssistantText(item.name))));
+  const pendingRecommendations = Array.from(new Map(plateQuotes.filter((quote) => quote.status === "NAO_APROVADO" || quote.status === "AGUARDANDO_RETORNO_CLIENTE").flatMap((quote) => quote.items).filter((item) => item.name.trim() && !executedNames.has(normalizeAssistantText(item.name))).map((item) => [normalizeAssistantText(item.name), item])).values());
 
   function updateStatus(id: string, status: QuoteStatus) {
     const now = new Date().toISOString();
@@ -7983,6 +8029,7 @@ function QuotesPage({
         <article><small>APROVADOS</small><strong>{quoteOverview.approved}</strong><span>negócios confirmados</span></article>
         <article className="value"><small>VALOR EM ABERTO</small><strong>{money(quoteOverview.openValue)}</strong><span>potencial comercial atual</span></article>
       </section>
+      <section className="quote-plate-history-panel panel"><header><div><small>HISTÓRICO POR PLACA</small><h3>Recorrência e oportunidades não executadas</h3></div><select value={historyPlate} onChange={(event) => setHistoryPlate(event.target.value)}><option value="">Selecione uma placa...</option>{historyPlates.map((plate) => <option key={plate} value={plate}>{plate}</option>)}</select></header>{historyPlate && <div className="quote-plate-history-grid"><div><b>Atendimentos / documentos</b>{[...plateOrders.map((order) => ({ id: order.id, date: order.updatedAt, title: order.code, detail: order.status === "FECHADA" ? "O.S. fechada · serviço executado" : `O.S. ${order.status.toLowerCase()}` })), ...plateQuotes.map((quote) => ({ id: quote.id, date: quote.updatedAt, title: quote.code, detail: `Orçamento · ${quoteStatusLabel(quote.status)}` }))].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,8).map((entry)=><span key={entry.id}><strong>{entry.title}</strong><small>{entry.detail} · {formatDate(entry.date)}</small></span>)}</div><div className="quote-pending-recommendations"><b>Recomendações pendentes</b>{pendingRecommendations.length ? pendingRecommendations.slice(0,12).map((item)=><span key={item.id}><i>!</i><strong>{item.name}</strong><small>Oferecido anteriormente e sem execução confirmada em O.S. fechada.</small></span>) : <em>Nenhuma recomendação pendente identificada.</em>}</div></div>}</section>
       <FilterToolbar
         search={search}
         onSearch={setSearch}
@@ -8008,7 +8055,7 @@ function QuotesPage({
           const attendance = attendances.find((item) => item.id === quote.attendanceId);
           return <article key={quote.id} className="document-row quote-document-row quote-row-v179">
             <div className="document-code"><strong>{quote.code}</strong><small>{formatDate(quote.createdAt)}</small></div>
-            <div className="document-main"><strong>{quote.customer || "Cliente não informado"}</strong><small>{quote.vehicle || "Veículo não informado"} · {quote.plate || "Sem placa"}{attendance ? ` · ${attendance.code}` : ""}</small></div>
+            <div className="document-main quote-main-v4"><strong>{quote.customer || "Cliente não informado"}</strong><small>{quote.vehicle || "Veículo não informado"} · {quote.plate || "Sem placa"}{attendance ? ` · ${attendance.code}` : ""}</small><em>{quote.items.length} item(ns) · {daysSince(quote.createdAt)} dia(s) desde a abertura</em></div>
             <label className="inline-status-select quote-status-select"><span>Status</span><select value={quote.status} onChange={(event) => updateStatus(quote.id, event.target.value as QuoteStatus)}><QuoteStatusOptions /></select></label>
             <strong className="document-total">{money(quote.total)}</strong>
             <div className="quote-row-actions">
@@ -8078,7 +8125,7 @@ function QuoteMessageDrawer({ quote, companyName, currentUserName, deliveryMode,
   </aside></div>;
 }
 
-function BudgetImportModal({ context, onClose, onImport }: { context: BudgetImportContext; onClose: () => void; onImport: (items: DocumentLine[]) => void }) {
+function BudgetImportModal({ context, onClose, onImport, partsOnly = false }: { context: BudgetImportContext; onClose: () => void; onImport: (items: DocumentLine[]) => void; partsOnly?: boolean }) {
   const [file, setFile] = useState<File | null>(null);
   const [source, setSource] = useState("AUTO");
   const [lines, setLines] = useState<ImportedBudgetLine[]>([]);
@@ -8120,7 +8167,7 @@ function BudgetImportModal({ context, onClose, onImport }: { context: BudgetImpo
       setRecognitionEngine(String(payload.engine || ""));
       setLines(recognized.map((item: any) => ({
         id: uid(),
-        selected: true,
+        selected: partsOnly ? item.kind !== "SERVICO" : true,
         kind: item.kind === "SERVICO" ? "SERVICO" : "PECA",
         code: String(item.code || "").trim(),
         name: String(item.name || item.description || "").trim(),
@@ -8143,7 +8190,7 @@ function BudgetImportModal({ context, onClose, onImport }: { context: BudgetImpo
   }
 
   function confirmImport() {
-    const selected = lines.filter((line) => line.selected && line.name.trim() && line.quantity > 0).map<DocumentLine>((line) => ({
+    const selected = lines.filter((line) => line.selected && line.name.trim() && line.quantity > 0 && (!partsOnly || line.kind === "PECA")).map<DocumentLine>((line) => ({
       id: uid(),
       catalogItemId: null,
       name: line.name.trim(),
@@ -8153,15 +8200,15 @@ function BudgetImportModal({ context, onClose, onImport }: { context: BudgetImpo
       quantity: line.quantity,
       unitPrice: line.unitPrice || (line.quantity ? line.total / line.quantity : 0),
     }));
-    if (!selected.length) return setError("Selecione ao menos um item reconhecido.");
+    if (!selected.length) return setError(partsOnly ? "Selecione ao menos uma peça reconhecida." : "Selecione ao menos um item reconhecido.");
     onImport(selected);
     onClose();
   }
 
-  const selectedCount = lines.filter((line) => line.selected).length;
+  const selectedCount = lines.filter((line) => line.selected && (!partsOnly || line.kind === "PECA")).length;
   return <div className="modal-backdrop budget-import-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !processing) onClose(); }}>
     <section className="compact-modal budget-import-modal">
-      <header><div><small>IMPORTAÇÃO DE ORÇAMENTO</small><h2>Mobato ou NBS</h2><p>O Gerivo importa somente peças e mão de obra. Cliente, veículo e placa permanecem os já selecionados.</p></div><button type="button" disabled={processing} onClick={onClose}>×</button></header>
+      <header><div><small>{partsOnly ? "IMPORTAR PEÇAS DO ORÇAMENTO" : "IMPORTAÇÃO DE ORÇAMENTO"}</small><h2>Mobato ou NBS</h2><p>{partsOnly ? "O Gerivo lê código, descrição e quantidade das peças e prepara a inclusão no pedido de peças. Mão de obra é ignorada nesta etapa." : "O Gerivo importa somente peças e mão de obra. Cliente, veículo e placa permanecem os já selecionados."}</p></div><button type="button" disabled={processing} onClick={onClose}>×</button></header>
       <div className="budget-import-scroll">
         <section className="budget-import-upload">
           <div className="budget-import-source"><Field label="Origem do documento"><select value={source} onChange={(event) => setSource(event.target.value)}><option value="AUTO">Identificar automaticamente</option><option value="MOBATO">Mobato</option><option value="NBS">NBS</option></select></Field></div>
@@ -8181,7 +8228,7 @@ function BudgetImportModal({ context, onClose, onImport }: { context: BudgetImpo
           <div className="budget-import-line-total"><span>Total</span><strong>{money(line.quantity * line.unitPrice)}</strong><small>{line.confidence >= .8 ? "Leitura alta" : line.confidence >= .55 ? "Revisar leitura" : "Baixa confiança"}</small></div>
         </article>)}</div></section>}
       </div>
-      <footer><button className="outline" type="button" disabled={processing} onClick={onClose}>Cancelar</button><button className="primary" type="button" disabled={!selectedCount || processing} onClick={confirmImport}>Adicionar {selectedCount || ""} ao orçamento</button></footer>
+      <footer><button className="outline" type="button" disabled={processing} onClick={onClose}>Cancelar</button><button className="primary" type="button" disabled={!selectedCount || processing} onClick={confirmImport}>{partsOnly ? "Adicionar peças ao pedido" : `Adicionar ${selectedCount || ""} ao orçamento`}</button></footer>
     </section>
   </div>;
 }

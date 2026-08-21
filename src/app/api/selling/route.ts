@@ -33,7 +33,7 @@ export async function GET(request: Request) {
     if (!companyId || !storeId) return NextResponse.json({ error: "Empresa e unidade são obrigatórias." }, { status: 400 });
     const { admin, groupId } = await requireOperationAccess(request, companyId, storeId);
 
-    const [revisionsResult, revisionItemsResult, packagesResult, packageItemsResult, packageModelsResult, packageRevisionsResult, paymentSettingsResult] = await Promise.all([
+    const [revisionsResult, revisionItemsResult, packagesResult, packageItemsResult, packageModelsResult, packageRevisionsResult, paymentSettingsResult, recommendationsResult, catalogKitsResult, catalogKitItemsResult] = await Promise.all([
       admin.from("selling_revision_templates").select("*").eq("active", true).eq("fuel_type", "FLEX").order("model_name").order("revision_km"),
       admin.from("selling_revision_items").select("*").order("display_order"),
       admin.from("selling_packages").select("*").eq("active", true).eq("published", true).eq("fuel_type", "FLEX").order("display_order"),
@@ -41,8 +41,11 @@ export async function GET(request: Request) {
       admin.from("selling_package_models").select("*"),
       admin.from("selling_package_revisions").select("*"),
       groupId ? admin.from("selling_payment_settings").select("*").eq("group_id", groupId).maybeSingle() : Promise.resolve({ data: null, error: null } as any),
+      admin.from("selling_recommendations").select("*").eq("active", true).eq("fuel_type", "FLEX").order("priority").order("min_km"),
+      admin.from("selling_catalog_kits").select("*").eq("active",true).eq("fuel_type","FLEX").order("display_order").order("name"),
+      admin.from("selling_catalog_kit_items").select("*").order("display_order"),
     ]);
-    for (const result of [revisionsResult, revisionItemsResult, packagesResult, packageItemsResult, packageModelsResult, packageRevisionsResult, paymentSettingsResult]) if (result.error) throw result.error;
+    for (const result of [revisionsResult, revisionItemsResult, packagesResult, packageItemsResult, packageModelsResult, packageRevisionsResult, paymentSettingsResult, recommendationsResult, catalogKitsResult, catalogKitItemsResult]) if (result.error) throw result.error;
 
     const revisionItems = revisionItemsResult.data || [];
     const packageItems = packageItemsResult.data || [];
@@ -54,6 +57,8 @@ export async function GET(request: Request) {
       return true;
     });
 
+    const catalogKits=(catalogKitsResult.data || []).filter((kit:any)=>{ if(kit.target_company_id) return kit.target_company_id===companyId; if(kit.target_group_id) return kit.target_group_id===groupId; return true; }).map((kit:any)=>({ ...kit, items:(catalogKitItemsResult.data || []).filter((item:any)=>item.kit_id===kit.id) }));
+
     return NextResponse.json({
       revisions: (revisionsResult.data || []).map((revision: any) => ({ ...revision, items: revisionItems.filter((item: any) => item.revision_id === revision.id) })),
       packages: packages.map((pkg: any) => ({
@@ -62,6 +67,8 @@ export async function GET(request: Request) {
         model_keys: packageModels.filter((item: any) => item.package_id === pkg.id).map((item: any) => item.model_key),
         revision_kms: packageRevisions.filter((item: any) => item.package_id === pkg.id).map((item: any) => Number(item.revision_km)),
       })),
+      recommendations: recommendationsResult.data || [],
+      catalogKits,
       paymentSettings: paymentSettingsResult.data || {
         group_id: groupId,
         allow_pix: true,
