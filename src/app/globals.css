@@ -5110,3 +5110,41 @@ button:active:not(:disabled){transform:scale(.985)}
 @media (max-width:839px){
   .selling-package-showcase-v3{grid-template-columns:1fr!important}
 }
+
+/* =========================================================
+   GERIVO v1.7.21.3 · SELLING VERTICAL LIST HOTFIX
+   Dentro de cada pacote, revisão e benefícios permanecem
+   SEMPRE em uma única coluna, item abaixo de item.
+   Os três pacotes continuam lado a lado no desktop.
+   ========================================================= */
+.selling-required-v3{
+  display:block!important;
+}
+.selling-required-v3>div,
+.selling-required-v3>p{
+  width:100%!important;
+  grid-column:auto!important;
+}
+.selling-benefits-v3,
+.selling-showcase-card-v3.dense-benefits-v7 .selling-benefits-v3{
+  display:block!important;
+  grid-template-columns:none!important;
+}
+.selling-benefits-v3>small,
+.selling-showcase-card-v3.dense-benefits-v7 .selling-benefits-v3>small{
+  display:block!important;
+  width:100%!important;
+  grid-column:auto!important;
+}
+.selling-benefits-v3>div,
+.selling-showcase-card-v3.dense-benefits-v7 .selling-benefits-v3>div,
+.selling-showcase-card-v3.dense-benefits-v7 .selling-benefits-v3>div.recommended-item-v6{
+  display:flex!important;
+  width:100%!important;
+  grid-column:auto!important;
+  margin:0!important;
+  box-sizing:border-box!important;
+}
+.selling-showcase-card-v3.dense-benefits-v7 .selling-benefits-v3>div.recommended-item-v6{
+  margin:2px 0 5px!important;
+}
