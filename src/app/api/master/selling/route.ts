@@ -160,7 +160,11 @@ export async function POST(request: Request) {
       let savedId=kitId;
       if(kitId){ const {error}=await admin.from("selling_catalog_kits").update(payload).eq("id",kitId); if(error) throw error; }
       else { const {data,error}=await admin.from("selling_catalog_kits").insert({...payload,created_by:userId}).select("id").single(); if(error) throw error; savedId=data.id; }
-      const items=cleanItems(body.items);
+      const kitShowPrice=body.showPrice!==false;
+      const kitInfoTitle=String(body.infoTitle||body.visualName||name).trim()||name;
+      const kitInfoText=String(body.infoText||body.description||"").trim()||null;
+      const kitInfoImageUrl=String(body.infoImageUrl||"").trim()||null;
+      const items=cleanItems(body.items).map((item)=>({ ...item, show_price:kitShowPrice, info_title:kitInfoTitle, info_text:kitInfoText, info_image_url:kitInfoImageUrl }));
       await admin.from("selling_catalog_kit_items").delete().eq("kit_id",savedId);
       if(items.length){ const {error}=await admin.from("selling_catalog_kit_items").insert(items.map((item)=>({ ...item, kit_id:savedId }))); if(error) throw error; }
       await admin.from("audit_logs").insert({user_id:userId,action:kitId?"SELLING_KIT_UPDATED":"SELLING_KIT_CREATED",entity:"selling_catalog_kit",entity_id:savedId,new_value:{...payload,itemCount:items.length}});

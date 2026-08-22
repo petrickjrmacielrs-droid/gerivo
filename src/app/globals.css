@@ -5162,3 +5162,76 @@ button:active:not(:disabled){transform:scale(.985)}
   position:relative;
   z-index:100011!important;
 }
+
+/* =========================================================
+   GERIVO v1.7.21.5 · CORTESIA DISCRETA + INFO MULTIMÍDIA
+   ========================================================= */
+.selling-benefits-v3>div{gap:6px!important}
+.selling-courtesy-star-v6{
+  flex:0 0 15px!important;
+  width:15px!important;
+  height:15px!important;
+  min-width:15px!important;
+  padding:0!important;
+  border:0!important;
+  border-radius:50%!important;
+  background:transparent!important;
+  color:#97a5ab!important;
+  font-size:10px!important;
+  line-height:15px!important;
+  text-align:center!important;
+  opacity:.48!important;
+  box-shadow:none!important;
+}
+.selling-courtesy-star-v6:hover{
+  opacity:1!important;
+  color:var(--selling-color)!important;
+  background:color-mix(in srgb,var(--selling-color) 8%,transparent)!important;
+}
+.selling-courtesy-star-v6.active{
+  opacity:1!important;
+  color:#c38300!important;
+  background:#fff4cf!important;
+  box-shadow:0 0 0 2px rgba(226,161,30,.10)!important;
+}
+.selling-unit-info{
+  flex:0 0 23px!important;
+  width:23px!important;
+  height:23px!important;
+  min-width:23px!important;
+  padding:0!important;
+  display:grid!important;
+  place-items:center!important;
+  font-size:13px!important;
+  line-height:1!important;
+}
+.selling-unit-info.empty{opacity:.42}
+.selling-unit-info.empty:hover{opacity:1}
+.selling-info-modal-v4{max-height:92vh;overflow:auto}
+.selling-info-modal-v4 iframe,
+.selling-info-modal-v4 video{
+  display:block;
+  width:100%;
+  aspect-ratio:16/9;
+  max-height:360px;
+  margin:14px 0;
+  border:0;
+  border-radius:14px;
+  background:#07141e;
+}
+.selling-kit-show-price-v8{
+  display:flex!important;
+  align-items:center!important;
+  justify-content:flex-start!important;
+  gap:8px!important;
+  min-height:46px;
+  padding:0 12px;
+  border:1px solid #24485c;
+  border-radius:10px;
+  background:#081722;
+  color:#dcebf3!important;
+  font-size:11px!important;
+  font-weight:800;
+  text-transform:none!important;
+}
+.selling-kit-show-price-v8 input{width:17px!important;height:17px!important;min-width:17px!important;margin:0!important}
