@@ -5148,3 +5148,17 @@ button:active:not(:disabled){transform:scale(.985)}
 .selling-showcase-card-v3.dense-benefits-v7 .selling-benefits-v3>div.recommended-item-v6{
   margin:2px 0 5px!important;
 }
+
+/* =========================================================
+   GERIVO v1.7.21.4 · SELLING MODAL LAYER FIX
+   Os modais da apresentação precisam ficar acima do fullscreen.
+   ========================================================= */
+.selling-payment-backdrop{
+  z-index:100010!important;
+}
+.selling-payment-modal,
+.selling-extra-modal-v4,
+.selling-info-modal-v4{
+  position:relative;
+  z-index:100011!important;
+}
