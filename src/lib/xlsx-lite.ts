@@ -61,8 +61,8 @@ function readZipEntries(buffer: Buffer) {
 
 function parseSharedStrings(xml: string) {
   const result: string[] = [];
-  for (const match of xml.matchAll(/<si\b[^>]*>([\s\S]*?)<\/si>/g)) {
-    const pieces = Array.from(match[1].matchAll(/<t\b[^>]*>([\s\S]*?)<\/t>/g)).map((part) => decodeXml(part[1]));
+  for (const match of xml.matchAll(/<(?:\w+:)?si\b[^>]*>([\s\S]*?)<\/(?:\w+:)?si>/g)) {
+    const pieces = Array.from(match[1].matchAll(/<(?:\w+:)?t\b[^>]*>([\s\S]*?)<\/(?:\w+:)?t>/g)).map((part) => decodeXml(part[1]));
     result.push(pieces.join(""));
   }
   return result;
@@ -70,7 +70,7 @@ function parseSharedStrings(xml: string) {
 
 function parseSheet(xml: string, shared: string[]) {
   const rows = new Map<number, XlsxCell[]>();
-  const cellPattern = /<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g;
+  const cellPattern = /<(?:\w+:)?c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/(?:\w+:)?c>)/g;
   for (const match of xml.matchAll(cellPattern)) {
     const attrs = match[1];
     const body = match[2] || "";
@@ -82,10 +82,10 @@ function parseSheet(xml: string, shared: string[]) {
     let value: XlsxCell = null;
 
     if (type === "inlineStr") {
-      const text = Array.from(body.matchAll(/<t\b[^>]*>([\s\S]*?)<\/t>/g)).map((part) => decodeXml(part[1])).join("");
+      const text = Array.from(body.matchAll(/<(?:\w+:)?t\b[^>]*>([\s\S]*?)<\/(?:\w+:)?t>/g)).map((part) => decodeXml(part[1])).join("");
       value = text;
     } else {
-      const raw = body.match(/<v\b[^>]*>([\s\S]*?)<\/v>/)?.[1];
+      const raw = body.match(/<(?:\w+:)?v\b[^>]*>([\s\S]*?)<\/(?:\w+:)?v>/)?.[1];
       if (raw == null) continue;
       if (type === "s") value = shared[Number(raw)] ?? "";
       else if (type === "b") value = raw === "1";
@@ -114,7 +114,7 @@ export function readXlsx(buffer: Buffer): XlsxSheet[] {
   const sharedXml = entries.get("xl/sharedStrings.xml")?.toString("utf8") || "";
   const shared = parseSharedStrings(sharedXml);
   const relMap = new Map<string, string>();
-  for (const match of relsXml.matchAll(/<Relationship\b([^>]*)\/?\s*>/g)) {
+  for (const match of relsXml.matchAll(/<(?:\w+:)?Relationship\b([^>]*)\/?\s*>/g)) {
     const attrs = match[1];
     const id = attrs.match(/\bId="([^"]+)"/)?.[1];
     const target = attrs.match(/\bTarget="([^"]+)"/)?.[1];
@@ -122,7 +122,7 @@ export function readXlsx(buffer: Buffer): XlsxSheet[] {
   }
 
   const sheets: XlsxSheet[] = [];
-  for (const match of workbookXml.matchAll(/<sheet\b([^>]*)\/?\s*>/g)) {
+  for (const match of workbookXml.matchAll(/<(?:\w+:)?sheet\b([^>]*)\/?\s*>/g)) {
     const attrs = match[1];
     const name = decodeXml(attrs.match(/\bname="([^"]+)"/)?.[1] || "Planilha");
     const rid = attrs.match(/\br:id="([^"]+)"/)?.[1];

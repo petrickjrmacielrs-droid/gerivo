@@ -99,6 +99,8 @@ function cleanItems(value: unknown) {
       is_courtesy: Boolean(item.isCourtesy ?? item.is_courtesy ?? false),
       courtesy_label: String(item.courtesyLabel || item.courtesy_label || "Cortesia").trim() || "Cortesia",
       courtesy_note: String(item.courtesyNote || item.courtesy_note || "").trim() || null,
+      is_tire: Boolean(item.isTire ?? item.is_tire ?? false),
+      max_installments: Boolean(item.isTire ?? item.is_tire ?? false) ? Math.min(24, Math.max(1, Math.floor(Number(item.maxInstallments ?? item.max_installments) || 4))) : null,
     };
   }).filter((item) => item.description.length >= 2);
 }
